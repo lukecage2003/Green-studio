@@ -7,7 +7,9 @@ const { chromium } = require('playwright'); const assert = require('assert');
   if (process.env.LANDSCAPE) await p.addInitScript(() => { const g = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
     navigator.mediaDevices.getUserMedia = (c) => g(c.video ? { ...c, video: { width: { exact: 1440 }, height: { exact: 1080 } } } : c); });
   p.on('pageerror', (e) => errs.push(e.message)); p.on('dialog', (d) => d.accept());
-  await p.goto('http://localhost:5173/'); await p.click('#go'); await p.waitForSelector('#rec:not([hidden])');
+  await p.goto('http://localhost:5173/');
+  await p.evaluate(() => { window.__seen = new Set(); setInterval(() => window.gsDebug && window.__seen.add(window.gsDebug.model), 100); }); // modèles vus dès le départ
+  await p.click('#go'); await p.waitForSelector('#rec:not([hidden])');
   // Micro : puce visible avec le nom du micro
   await p.waitForSelector('#micChip:not([hidden])'); console.log('micro :', await p.textContent('#micChip'));
   // Plein écran : la caméra (simulée, en paysage 4:3) remplit le cadre 9:16 ; l'IA n'analyse que la zone visible
@@ -33,7 +35,7 @@ const { chromium } = require('playwright'); const assert = require('assert');
   }
   console.log('changement de décor (ms) :', times); assert.ok(Math.max(...times) < 30, 'instantané');
   // IA : modèle Précis chargé en arrière-plan (puis éventuellement Rapide si l'appareil est lent : ici GPU logiciel)
-  const seen = new Set(); for (let i = 0; i < 40; i++) { seen.add(await p.evaluate(() => window.gsDebug.model)); await p.waitForTimeout(500); }
+  await p.waitForTimeout(8000); const seen = new Set(await p.evaluate(() => [...window.__seen]));
   console.log('modèles utilisés :', [...seen], '· inférence', Math.round(await p.evaluate(() => window.gsDebug.inferMs)), 'ms · synchro', await p.evaluate(() => window.gsDebug.sync));
   assert.ok(seen.has('hq'), 'le modèle Précis se charge et tourne');
   if (process.env.LANDSCAPE) { console.log('erreurs :', errs); assert.equal(errs.length, 0); console.log('OK'); return b.close(); }
