@@ -3,175 +3,293 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta name="theme-color" content="#0b0d0c" />
+<meta name="theme-color" content="#000000" />
 <link rel="manifest" href="/manifest.webmanifest" />
 <link rel="icon" href="/icons/icon-192.png" />
 <link rel="apple-touch-icon" href="/icons/icon-192.png" />
 <title>Green Studio</title>
 <style>
-:root{--bg:#070b09;--fg:#eef4f0;--muted:#8fa196;--accent:#34e08b;--line:rgba(255,255,255,.09);--glass:rgba(12,18,15,.62);color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+/* ===== Green Studio — interface inspirée d'iOS : sobre, sombre, matières floutées, un seul geste par action ===== */
+:root{
+  --bg:#000;--fg:#fff;--muted:rgba(235,235,245,.6);--muted2:rgba(235,235,245,.3);--accent:#30d158;--red:#ff453a;
+  --line:rgba(84,84,88,.6);--fill:rgba(118,118,128,.24);--fill2:rgba(118,118,128,.16);--glass:rgba(30,30,32,.72);
+  --font:"Inter Variable",-apple-system,"SF Pro Text",system-ui,Roboto,sans-serif;
+  --st:env(safe-area-inset-top,0px);--sb:env(safe-area-inset-bottom,0px);color-scheme:dark;
+}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Roboto,sans-serif;overflow:hidden}
-.stage{position:relative;height:100%;margin:0 auto;aspect-ratio:9/16;max-width:100vw;background:#000;overflow:hidden}
-canvas{width:100%;height:100%;display:block}
-.top{position:absolute;top:8px;left:8px;right:8px;display:flex;justify-content:space-between;gap:6px;pointer-events:none}
-.chip{background:var(--glass);padding:6px 10px;border-radius:999px;font-size:12px}
-.chip.ok{color:var(--accent)}.chip.err{color:#ff6b6b}
-.ov{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;background:var(--bg)}
-.ov h1{margin:0;font-size:28px}.ov p{margin:0;color:var(--muted);font-size:14px}
-.error{color:#ff6b6b!important}
-button{font:inherit;color:inherit;border:0;cursor:pointer}
-button:disabled{opacity:.5}
-.primary{background:var(--accent);color:#04120a;font-weight:600;padding:14px 22px;border-radius:14px}
-.bar{position:absolute;bottom:14px;left:0;right:0;display:flex;justify-content:center;gap:10px}
-.round{background:var(--glass);padding:12px 16px;border-radius:999px;font-size:13px}
-.round[aria-pressed="true"]{outline:1px solid var(--accent)}
-.panel{position:absolute;left:0;right:0;bottom:0;max-height:64%;overflow-y:auto;background:var(--glass);backdrop-filter:blur(14px);border-radius:18px 18px 0 0;padding:14px 16px 20px;display:flex;flex-direction:column;gap:10px}
-.panel label{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px;color:var(--muted)}
-.panel input[type=range]{flex:1;accent-color:var(--accent)}
-.head{display:flex;justify-content:space-between;align-items:center}
-.x{background:none;font-size:18px}
-hr{border:0;border-top:1px solid #ffffff1a;width:100%;margin:2px 0}
-.top{flex-wrap:wrap}.bar{flex-wrap:wrap;padding:0 6px;gap:6px}.round{padding:10px 12px;font-size:12px}
-.recbtn{position:absolute;bottom:64px;left:50%;transform:translateX(-50%);width:64px;height:64px;border-radius:50%;background:#ffffff22;border:3px solid #fff;display:grid;place-items:center;padding:0}
-.recbtn i{width:36px;height:36px;border-radius:50%;background:#ff3b30;transition:.15s}.recbtn.on i{width:22px;height:22px;border-radius:5px}
-#tp span.rd{opacity:.38;transition:opacity .25s}#tp.talk{box-shadow:inset 4px 0 0 var(--accent)}
-#tp{position:absolute;left:0;right:0;top:12%;height:30%;overflow-y:auto;background:rgba(0,0,0,.5);padding:10px 16px;text-align:center;font-weight:600;font-size:26px;line-height:1.4;white-space:pre-wrap;touch-action:pan-y;scrollbar-width:none}
-#tp::-webkit-scrollbar{display:none}
-#toast{position:absolute;top:46px;left:8px;right:8px;text-align:center;white-space:normal;pointer-events:none;z-index:6}
-.meter{height:8px;border-radius:4px;background:#ffffff1a;overflow:hidden}.meter b{display:block;height:100%;width:0;background:var(--accent)}.meter.clip b{background:#ff3b30}
-select,textarea,button.sm{background:#ffffff14;color:var(--fg);border:1px solid #ffffff22;border-radius:8px;padding:6px 8px;font:inherit;font-size:13px}
-textarea{width:100%;min-height:90px}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.pv{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;gap:10px;padding:12px;z-index:58}
-.cd{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:140px;font-weight:900;color:#fff;text-shadow:0 6px 40px #000;pointer-events:none;z-index:6}
-.cd.pop{animation:cdpop .9s ease-out}@keyframes cdpop{from{transform:scale(1.6);opacity:0}30%{opacity:1}to{transform:scale(1);opacity:.9}}.pv video{flex:1;min-height:0;width:100%;object-fit:contain}
-#out{touch-action:none}#ai{pointer-events:auto}
-#strip{position:absolute;left:0;right:0;bottom:140px;display:flex;gap:8px;padding:0 12px;overflow-x:auto;scrollbar-width:none;scroll-snap-type:x proximity}
-#strip::-webkit-scrollbar{display:none}
-#strip .th{flex:0 0 auto;width:48px;height:48px;border-radius:12px;border:2px solid transparent;padding:0;scroll-snap-align:center;background:#222}
-#strip .th.on{border-color:#fff}
-#strip .add{display:grid;place-items:center;font-size:24px;background:var(--glass);color:#fff}
-#panel:not(.adv) label:has(input[type=range]){display:none}
+html,body{margin:0;height:100%;background:#000;color:var(--fg);font-family:var(--font);overflow:hidden;-webkit-font-smoothing:antialiased;letter-spacing:-.011em;font-feature-settings:"cv11","ss01"}
+button,a.btn{font:inherit;color:inherit;border:0;background:none;cursor:pointer;padding:0;-webkit-user-select:none;user-select:none}
+button:disabled{opacity:.4}
 [hidden]{display:none!important}
+.error{color:var(--red)!important}
+svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:none}
 
-/* --- Refonte v3 : rail latéral façon appli caméra, dock d'enregistrement, panneau simplifié --- */
-body{font-family:ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;letter-spacing:-.005em}
-.chip{backdrop-filter:blur(10px);border:1px solid var(--line)}
-.round,.panel{backdrop-filter:blur(16px) saturate(1.3);border:1px solid var(--line)}
-.bar{inset:auto 10px auto auto;top:58px;left:auto;right:10px;bottom:auto;flex-direction:column;align-items:stretch;gap:8px;padding:0;width:62px;top:96px}
-.bar .round{padding:11px 4px;text-align:center;font-size:12px;font-weight:600;border-radius:16px}
-#gmode{position:absolute;left:14px;bottom:36px;z-index:3;padding:12px 16px;font-size:13px;font-weight:600}
-#bar[hidden]+#gmode{display:none}
-.recbtn{bottom:26px;width:72px;height:72px;border-width:4px;background:#ffffff14;transition:transform .12s}
-.recbtn:active{transform:translateX(-50%) scale(.93)}
-.recbtn:not(.on){animation:breathe 3.2s ease-in-out infinite}
-@keyframes breathe{50%{box-shadow:0 0 0 9px #34e08b22}}
-#strip{bottom:118px}#strip .th.on{border-color:var(--accent)}
-.primary{box-shadow:0 8px 30px #34e08b40;font-size:16px;padding:16px 28px;border-radius:18px}
-.ov{background:radial-gradient(120% 70% at 50% 0%,#0f2a1d 0%,var(--bg) 62%)}
-.ov h1{font-size:40px;font-weight:700;letter-spacing:-.03em}
-.ov .how{display:flex;flex-direction:column;gap:6px;color:var(--fg);font-size:15px;opacity:.9}
-.panel{border-radius:24px 24px 0 0;padding:16px 16px 22px;gap:12px}
-.look{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-.look button{padding:14px 6px;border-radius:14px;background:#ffffff10;border:1px solid var(--line);font-weight:600;font-size:14px}
-.look button small{display:block;font-weight:400;color:var(--muted);font-size:11px;margin-top:2px}
-.look button.on{border-color:var(--accent);background:#34e08b1f}
-#panel:not(.adv) .advonly{display:none}
+/* --- Viseur : toujours exactement le cadre 9:16 enregistré, sans déformation, quel que soit l'écran --- */
+.stage{position:fixed;inset:0;padding:var(--st) 0 var(--sb);display:grid;place-items:center;container-type:size}
+.frame{position:relative;width:min(100cqw,100cqh*9/16);height:min(100cqh,100cqw*16/9);overflow:hidden;background:#000}
+@media (min-width:600px){.frame{border-radius:22px}}
+#out{width:100%;height:100%;display:block;touch-action:none}
+
+/* --- Barre du haut --- */
+.topbar{position:fixed;top:0;left:0;right:0;padding:calc(var(--st) + 8px) 12px 18px;display:flex;align-items:center;gap:8px;z-index:6;pointer-events:none;
+  background:linear-gradient(rgba(0,0,0,.55),rgba(0,0,0,0))}
+.topbar>*{pointer-events:auto}
+.topbar .mid{flex:1;display:flex;justify-content:center;gap:6px;pointer-events:none}.topbar .mid>*{pointer-events:auto}
+.iconbtn{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;background:rgba(0,0,0,.32);backdrop-filter:blur(20px) saturate(1.6);-webkit-backdrop-filter:blur(20px);transition:transform .15s}
+.iconbtn:active,.chip:active{transform:scale(.92)}
+.iconbtn b{font-size:17px;font-weight:650;letter-spacing:-.02em}
+.chip{height:30px;padding:0 12px;border-radius:15px;display:inline-flex;align-items:center;gap:6px;background:rgba(0,0,0,.36);backdrop-filter:blur(20px) saturate(1.6);
+  font-size:13px;font-weight:600;white-space:nowrap;max-width:46vw;overflow:hidden;text-overflow:ellipsis;transition:transform .15s}
+.chip.ok::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.chip.err{color:var(--red)}
+#recChip{background:var(--red);color:#fff;font-variant-numeric:tabular-nums}
+#perf{position:fixed;top:calc(var(--st) + 56px);left:50%;transform:translateX(-50%);z-index:6;font-size:11px;font-weight:500;color:var(--muted);height:auto;padding:4px 10px;max-width:92vw}
+
+/* --- Bas : décors, déclencheur --- */
+.controls{position:fixed;left:0;right:0;bottom:0;padding:40px 0 calc(var(--sb) + 16px);z-index:5;pointer-events:none;
+  background:linear-gradient(rgba(0,0,0,0),rgba(0,0,0,.5) 45%)}
+.controls>*{pointer-events:auto}
+#strip{display:flex;gap:10px;padding:4px 20px 14px;overflow-x:auto;scrollbar-width:none;scroll-snap-type:x proximity}
+#strip::-webkit-scrollbar{display:none}
+#strip .th{flex:0 0 auto;width:48px;height:48px;border-radius:14px;border:2px solid rgba(255,255,255,.22);scroll-snap-align:center;background:#1c1c1e;transition:transform .18s,border-color .18s}
+#strip .th.on{border:3px solid #fff;transform:scale(1.1)}
+#strip .add{display:grid;place-items:center;font-size:26px;font-weight:300;background:rgba(255,255,255,.12);backdrop-filter:blur(20px);border-style:dashed}
+.dock{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:0 28px}
+.dock .lib{justify-self:start;width:48px;height:48px;border-radius:12px;display:grid;place-items:center;background:rgba(255,255,255,.14);backdrop-filter:blur(20px);border:1.5px solid rgba(255,255,255,.35)}
+.dock #bFlip{justify-self:end;width:48px;height:48px;background:rgba(255,255,255,.14)}
+.recbtn{width:80px;height:80px;border-radius:50%;border:4px solid #fff;display:grid;place-items:center;transition:transform .12s}
+.recbtn:active{transform:scale(.92)}
+.recbtn i{width:64px;height:64px;border-radius:32px;background:var(--red);transition:all .28s cubic-bezier(.3,.9,.3,1)}
+.recbtn.on i{width:30px;height:30px;border-radius:8px}
+#gmode{position:absolute;left:16px;top:0;height:30px;padding:0 12px;border-radius:15px;font-size:13px;font-weight:600;background:rgba(0,0,0,.36);backdrop-filter:blur(20px)}
+body:has(#bar[hidden]) #gmode,body:has(.panel:not([hidden])) #gmode{display:none}
+
+/* --- Dans le viseur : prompteur, compte à rebours --- */
+#tp{position:absolute;left:12px;right:12px;top:12%;height:30%;overflow-y:auto;border-radius:20px;background:rgba(0,0,0,.46);backdrop-filter:blur(10px);
+  padding:14px 18px;text-align:center;font-weight:650;font-size:26px;line-height:1.38;letter-spacing:-.015em;white-space:pre-wrap;touch-action:pan-y;scrollbar-width:none;z-index:2}
+#tp::-webkit-scrollbar{display:none}
+#tp span.rd{opacity:.35;transition:opacity .25s}#tp.talk{box-shadow:inset 0 0 0 2px var(--accent)}
+.cd{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:150px;font-weight:200;color:#fff;text-shadow:0 8px 40px rgba(0,0,0,.6);pointer-events:none;z-index:3;font-variant-numeric:tabular-nums}
+.cd.pop{animation:cdpop .9s cubic-bezier(.2,.8,.3,1)}@keyframes cdpop{from{transform:scale(1.5);opacity:0}25%{opacity:1}to{transform:scale(1);opacity:.85}}
+
+/* --- Message flottant --- */
+#toast{position:fixed;top:calc(var(--st) + 60px);left:50%;transform:translateX(-50%);width:max-content;max-width:88vw;padding:11px 18px;border-radius:20px;
+  background:rgba(44,44,46,.9);backdrop-filter:blur(30px) saturate(1.6);font-size:14px;font-weight:550;text-align:center;line-height:1.35;z-index:70;
+  box-shadow:0 10px 30px rgba(0,0,0,.35);pointer-events:none;animation:toastIn .3s cubic-bezier(.2,.9,.3,1)}
 #toast.ok{color:var(--accent)}
-.stage:has(.panel:not([hidden])) #gmode{display:none}
-#panel:not(.adv) label:has(#inv){display:none}
-@media (prefers-reduced-motion:reduce){.recbtn{animation:none!important}}
+@keyframes toastIn{from{opacity:0;transform:translate(-50%,-8px)}}
+
+/* --- Feuilles (réglages) façon iOS --- */
+.panel{position:fixed;left:0;right:0;bottom:0;max-height:min(80dvh,720px);overflow-y:auto;overscroll-behavior:contain;z-index:20;
+  background:rgba(28,28,30,.88);backdrop-filter:blur(40px) saturate(1.8);-webkit-backdrop-filter:blur(40px) saturate(1.8);
+  border-radius:24px 24px 0 0;padding:0 16px calc(var(--sb) + 24px);box-shadow:0 -12px 40px rgba(0,0,0,.45);animation:sheetIn .32s cubic-bezier(.2,.9,.3,1)}
+@media (min-width:600px){.panel{left:50%;right:auto;width:480px;transform:translateX(-50%)}}
+@keyframes sheetIn{from{transform:translateY(40%);opacity:0}}
+@media (min-width:600px){@keyframes sheetIn{from{transform:translate(-50%,40%);opacity:0}}}
+.panel .head{position:sticky;top:0;z-index:1;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:16px 0 10px;background:inherit}
+.panel .head::before{content:"";position:absolute;top:6px;left:50%;width:36px;height:5px;border-radius:3px;background:rgba(235,235,245,.3);transform:translateX(-50%)}
+.panel .head strong{grid-column:2;font-size:17px;font-weight:650}
+.panel .head .x{grid-column:3;justify-self:end;color:var(--accent);font-size:17px;font-weight:650}
+.gh{font-size:13px;font-weight:500;color:var(--muted);margin:20px 16px 7px;text-transform:uppercase;letter-spacing:.01em}
+.foot{font-size:13px;color:var(--muted);margin:7px 16px 0;line-height:1.4}
+.group{background:var(--fill2);border-radius:14px;overflow:hidden}
+.group>label,.group>.item{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:48px;padding:8px 16px;font-size:16px;color:var(--fg)}
+.group>*+*{border-top:.5px solid var(--line)}
+.group .sub{display:block;font-size:12px;color:var(--muted);margin-top:1px}
+.panel input[type=range]{-webkit-appearance:none;appearance:none;flex:1;max-width:58%;height:30px;background:transparent}
+.panel input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:rgba(120,120,128,.4)}
+.panel input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:27px;height:27px;margin-top:-11.5px;border-radius:50%;background:#fff;box-shadow:0 3px 8px rgba(0,0,0,.3),0 0 0 .5px rgba(0,0,0,.04)}
+.panel input[type=checkbox],button.sw{-webkit-appearance:none;appearance:none;flex:none;position:relative;width:51px;height:31px;border-radius:16px;background:rgba(120,120,128,.32);transition:background .22s;margin:0}
+.panel input[type=checkbox]::after,button.sw::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 3px 8px rgba(0,0,0,.15),0 3px 1px rgba(0,0,0,.06);transition:left .22s cubic-bezier(.3,.9,.3,1)}
+.panel input[type=checkbox]:checked,button.sw[aria-pressed=true]{background:var(--accent)}
+.panel input[type=checkbox]:checked::after,button.sw[aria-pressed=true]::after{left:22px}
+.panel select{-webkit-appearance:none;appearance:none;background:transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 20'%3E%3Cpath d='M3 7l3-3 3 3M3 13l3 3 3-3' fill='none' stroke='%23ebebf599' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") right center/10px no-repeat;
+  border:0;color:var(--muted);font:inherit;font-size:16px;text-align:right;text-align-last:right;padding:4px 18px 4px 0;max-width:62%;min-width:0}
+.panel select option{background:#2c2c2e;color:#fff}
+textarea{width:100%;min-height:120px;resize:vertical;background:var(--fill2);border:0;border-radius:14px;padding:14px 16px;font:inherit;font-size:16px;line-height:1.4;color:#fff;outline:none}
+textarea:focus{box-shadow:0 0 0 2px var(--accent)}
+.seg{display:flex;gap:2px;padding:2px;border-radius:10px;background:var(--fill)}
+.seg button{flex:1;padding:8px 4px;border-radius:8px;font-size:14px;font-weight:600;transition:background .2s}
+.seg button.on,.seg button[aria-pressed=true]{background:#636366;box-shadow:0 3px 8px rgba(0,0,0,.12)}
+.seg button small{display:block;font-size:11px;font-weight:450;color:var(--muted);margin-top:1px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:50px;padding:0 20px;border-radius:14px;background:var(--fill);font-size:17px;font-weight:600;text-decoration:none;transition:transform .12s,opacity .12s}
+.btn:active{transform:scale(.97);opacity:.85}
+.btn.prim{background:var(--accent);color:#000}
+.btn.sm{height:36px;padding:0 14px;font-size:15px;border-radius:10px}
+.btns{display:flex;gap:10px}.btns>.btn{flex:1}
+.meter{height:6px;border-radius:3px;background:var(--fill);overflow:hidden;flex:1}.meter b{display:block;height:100%;width:0;background:var(--accent);transition:width .06s}.meter.clip b{background:var(--red)}
+.disclose{width:100%;display:flex;justify-content:space-between;align-items:center;min-height:48px;padding:8px 16px;margin-top:20px;border-radius:14px;background:var(--fill2);font-size:16px;color:var(--accent)}
+.disclose::after{content:"›";font-size:22px;color:var(--muted2);transition:transform .2s}
+#panel.adv .disclose::after{transform:rotate(90deg)}
+#panel:not(.adv) .advonly{display:none}
+
+/* --- Écran d'accueil --- */
+.ov{position:fixed;inset:0;z-index:50;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:calc(var(--st) + 24px) 24px calc(var(--sb) + 24px);
+  background:radial-gradient(110% 60% at 50% 0%,#0e2a1c 0%,#000 65%)}
+.ov .in{width:100%;max-width:400px;display:flex;flex-direction:column;gap:14px;text-align:center}
+.ov img{width:92px;height:92px;border-radius:22px;align-self:center;box-shadow:0 12px 40px rgba(48,209,88,.25)}
+.ov h1{margin:10px 0 0;font-size:36px;font-weight:750;letter-spacing:-.035em}
+.ov .lead{margin:0 0 14px;color:var(--muted);font-size:17px;line-height:1.4}
+.ov .group{text-align:left;margin-top:8px}
+.ov .group>button{width:100%;display:flex;align-items:center;gap:14px;min-height:54px;padding:8px 16px;font-size:17px;text-align:left}
+.ov .group>button svg.i{color:var(--accent)}
+.ov .group>button span{flex:1}
+.ov .group>button::after{content:"›";font-size:22px;color:var(--muted2)}
+.ov .foot{text-align:center;margin-top:10px}
+
+/* --- Aperçu après enregistrement --- */
+.pv{position:fixed;inset:0;z-index:58;background:#000;display:flex;flex-direction:column;padding:var(--st) 0 calc(var(--sb) + 14px)}
+.nav{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;height:52px;padding:0 16px}
+.nav strong{font-size:17px;font-weight:650}
+.nav .l{justify-self:start;color:var(--accent);font-size:17px}.nav .r{justify-self:end;color:var(--accent);font-size:17px;font-weight:650}
+.pv video{flex:1;min-height:0;width:100%;object-fit:contain;background:#000}
+.pv .info{margin:10px 16px;font-size:13px;color:var(--muted);text-align:center}
+.pv .btns{padding:0 16px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
 <main class="stage">
-  <canvas id="out" width="1080" height="1920"></canvas>
+  <div class="frame">
+    <canvas id="out" width="1080" height="1920"></canvas>
+    <div id="tp" hidden></div>
+    <div class="cd" id="cd" hidden></div>
+  </div>
   <video id="cam" playsinline muted autoplay hidden></video>
-  <div class="top"><span class="chip" id="ai">IA : en attente</span><span class="chip" id="perf" hidden>—</span><span class="chip err" id="recChip" hidden></span><button class="chip" id="micChip" hidden style="pointer-events:auto;border:0;color:inherit;font:inherit;font-size:12px" aria-label="Choisir le micro"></button></div>
+</main>
 
-  <section class="ov" id="start">
-    <h1>Green Studio</h1>
-    <div class="how"><span>Votre décor, en direct, sans fond vert.</span><span>Glissez pour vous placer, pincez pour agrandir.</span></div>
-    <p>Tout reste sur votre téléphone : aucune vidéo n’est envoyée.</p>
-    <button class="primary" id="go">Activer la caméra</button>
-    <button class="round" id="openEdit">✂ Monter une vidéo existante</button>
-    <button class="round" id="openLib">📁 Mes prises</button>
-    <input type="file" id="editFile" accept="video/*" hidden />
-    <p class="error" id="err" hidden></p>
-  </section>
+<header class="topbar">
+  <button class="iconbtn" id="bDecor" aria-label="Réglages du décor et de la caméra"><svg class="i" viewBox="0 0 24 24"><path d="M4 7h9M18 7h2M4 17h3M12 17h8"/><circle cx="15.5" cy="7" r="2.5"/><circle cx="9.5" cy="17" r="2.5"/></svg></button>
+  <div class="mid"><button class="chip" id="ai">IA</button><span class="chip" id="recChip" hidden></span></div>
+  <button class="iconbtn" id="bScript" aria-label="Prompteur"><b>Aa</b></button>
+  <button class="chip" id="micChip" hidden aria-label="Choisir le micro"></button>
+  <button id="bAudio" hidden aria-label="Audio"></button>
+</header>
+<span class="chip" id="perf" hidden>—</span>
 
-  <nav class="bar" id="bar" hidden>
-        <button class="round" id="bDecor">Décor</button><button class="round" id="bScript">Script</button><button class="round" id="bAudio">Audio</button>
-    <button class="round" id="bFlip">Caméra</button>
-    <button class="round" id="bMirror" aria-pressed="true">Miroir</button>
-    <button class="round" id="bLib">Prises</button>
-  </nav>
-  <button class="round" id="gmode" aria-pressed="true">✋ Sujet</button>
-
+<div class="controls">
+  <button id="gmode" aria-pressed="true">✋ Sujet</button>
   <div id="strip" hidden></div>
-  <div id="tp" hidden></div>
-  <div class="chip err" id="toast" hidden></div>
-  <div class="cd" id="cd" hidden></div>
-  <button class="recbtn" id="rec" hidden aria-label="Enregistrer"><i></i></button>
-  <aside class="panel" id="pScript" hidden>
-    <div class="head"><strong>Téléprompteur</strong><button class="x" data-close aria-label="Fermer">✕</button></div>
-    <textarea id="tpIn" placeholder="Collez votre script ici…"></textarea>
-    <label>Défilement <select id="tpMode"><option value="voice">Suit ma voix (s’arrête quand je me tais)</option><option value="words">Suit mes mots (reconnaissance Chrome)</option><option value="fixed">Vitesse fixe</option></select></label>
-    <p class="hint" id="tpHint" style="margin:0;font-size:12px;color:var(--muted)"></p>
+  <nav class="dock" id="bar" hidden>
+    <button class="lib" id="bLib" aria-label="Mes prises"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="7" width="14" height="14" rx="3"/><path d="M7 3.5h10.5A3.5 3.5 0 0 1 21 7v10.5"/></svg></button>
+    <button class="recbtn" id="rec" hidden aria-label="Enregistrer"><i></i></button>
+    <button class="iconbtn" id="bFlip" aria-label="Changer de caméra"><svg class="i" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8M4 3.5V8h4.5M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20.5V16h-4.5"/></svg></button>
+  </nav>
+</div>
+
+<div id="toast" hidden></div>
+
+<section class="ov" id="start">
+  <div class="in">
+    <img src="/icons/icon-192.png" alt="" />
+    <h1>Green Studio</h1>
+    <p class="lead">Votre décor en direct, sans fond vert. Prompteur, sous-titres et montage, sur votre téléphone.</p>
+    <button class="btn prim" id="go">Commencer</button>
+    <div class="group">
+      <button id="openEdit"><svg class="i" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.6 7.6 20 18M8.6 16.4 20 6"/></svg><span>Monter une vidéo existante</span></button>
+      <button id="openLib"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="7" width="14" height="14" rx="3"/><path d="M7 3.5h10.5A3.5 3.5 0 0 1 21 7v10.5"/></svg><span>Mes prises</span></button>
+    </div>
+    <input type="file" id="editFile" accept="video/*" hidden />
+    <p class="foot">Tout reste sur votre téléphone : aucune vidéo n’est envoyée.</p>
+    <p class="foot error" id="err" hidden></p>
+  </div>
+</section>
+
+<aside class="panel" id="panel" hidden>
+  <div class="head"><strong>Décor et caméra</strong><button class="x" id="bClose">OK</button></div>
+  <div class="gh">Rendu</div>
+  <div class="seg look" id="look"><button data-look="nat">Naturel<small>discret</small></button><button data-look="stu" class="on">Studio<small>recommandé</small></button><button data-look="net">Net<small>bord précis</small></button></div>
+  <div class="gh">Détourage</div>
+  <div class="group">
+    <label>Qualité <select id="qSel"><option value="auto">Auto</option><option value="hq">Précis</option><option value="fast">Rapide</option></select></label>
+    <label>Miroir <button class="sw" id="bMirror" aria-pressed="true" aria-label="Miroir"></button></label>
+    <label class="item">Importer un décor<span class="sub">Image ou vidéo</span><input type="file" id="file" accept="image/*,video/*" hidden><span style="color:var(--muted2);font-size:22px">›</span></label>
+  </div>
+  <div class="gh">Vidéo</div>
+  <div class="group">
+    <label>Format <span style="color:var(--muted)">9:16 vertical</span></label>
+    <label>Résolution <select id="res"><option value="1920">1080p</option><option value="2560">1440p</option><option value="1280">720p</option></select></label>
+  </div>
+  <p class="foot">Glissez sur l’image pour vous placer, pincez pour vous agrandir. Double-tap : recentrer.</p>
+  <button class="disclose" id="advBtn">Réglages avancés</button>
+  <div class="advonly">
+    <div class="gh">Cadrage caméra</div>
+    <div class="group">
+      <label>Zoom <input type="range" id="cz" min="0.3" max="3" step="0.01" value="1"></label>
+      <div class="item"><span>Image</span><div class="seg" style="flex:1;max-width:62%"><button id="czFill">Plein cadre</button><button id="czFit">Entière</button></div></div>
+    </div>
+    <div class="gh">Décor</div>
+    <div class="group">
+      <label>Zoom <input type="range" id="zoom" min="1" max="3" step="0.01" value="1"></label>
+      <label>Position X <input type="range" id="px" min="-1" max="1" step="0.01" value="0"></label>
+      <label>Position Y <input type="range" id="py" min="-1" max="1" step="0.01" value="0"></label>
+      <label>Luminosité <input type="range" id="br" min="-0.5" max="0.5" step="0.01" value="0"></label>
+      <label>Contraste <input type="range" id="ct" min="0.5" max="1.5" step="0.01" value="1"></label>
+      <label>Saturation <input type="range" id="sa" min="0" max="2" step="0.01" value="1"></label>
+    </div>
+    <div class="gh">Contour</div>
+    <div class="group">
+      <label>Anti-halo <input type="range" id="dsp" min="0" max="1" step="0.01" value="0.6"></label>
+      <label>Lumière du décor <input type="range" id="wrap" min="0" max="1" step="0.01" value="0.3"></label>
+      <label>Ombre douce <input type="range" id="shd" min="0" max="1" step="0.01" value="0.25"></label>
+      <label>Stabilité <input type="range" id="stab" min="0" max="1" step="0.01" value="0.6"></label>
+      <label>Seuil bas <input type="range" id="lo" min="0" max="0.8" step="0.01" value="0.35"></label>
+      <label>Seuil haut <input type="range" id="hi" min="0.2" max="1" step="0.01" value="0.65"></label>
+      <label>Inverser le masque <input type="checkbox" id="inv"></label>
+      <div class="item" hidden><span>Contours</span><button class="btn sm" data-e="0.28,0.62">Doux</button><button class="btn sm" data-e="0.4,0.62">Normal</button><button class="btn sm" data-e="0.5,0.7">Net</button></div>
+    </div>
+    <div class="gh">Profils</div>
+    <div class="group">
+      <label>Profil <select id="preSel"></select></label>
+      <div class="item" style="gap:8px;flex-wrap:wrap;justify-content:flex-start"><button class="btn sm" id="preSave">Enregistrer</button><button class="btn sm" id="preNew">Nouveau</button><button class="btn sm" id="preDup">Dupliquer</button><button class="btn sm" id="preDel" style="color:var(--red)">Supprimer</button></div>
+    </div>
+  </div>
+</aside>
+
+<aside class="panel" id="pScript" hidden>
+  <div class="head"><strong>Prompteur</strong><button class="x" data-close>OK</button></div>
+  <div class="btns" style="margin-top:6px"><button class="btn prim" id="tpPlay">▶ Lancer</button><button class="btn" id="tpTop">Revenir au début</button></div>
+  <div class="gh">Texte</div>
+  <textarea id="tpIn" placeholder="Collez ou écrivez votre script ici…"></textarea>
+  <div class="group" style="margin-top:12px">
+    <label>Afficher sur l’écran <input type="checkbox" id="tpShow"></label>
+    <label>Compte à rebours 3 s<span class="sub" style="display:none"></span><input type="checkbox" id="cdOn" checked></label>
+  </div>
+  <div class="gh">Défilement</div>
+  <div class="group">
+    <label>Mode <select id="tpMode"><option value="voice">Suit ma voix</option><option value="words">Suit mes mots</option><option value="fixed">Vitesse fixe</option></select></label>
     <label>Vitesse <input type="range" id="tpSpd" min="5" max="200" step="1" value="40"></label>
     <label>Taille du texte <input type="range" id="tpSize" min="16" max="48" step="1" value="26"></label>
     <label>Position <input type="range" id="tpPos" min="0" max="60" step="1" value="12"></label>
-    <div class="row"><button class="round" id="tpPlay">▶ Lancer</button><button class="round" id="tpTop">⏮ Début</button><label style="gap:6px">Afficher <input type="checkbox" id="tpShow"></label></div>
-    <label class="row" style="gap:6px"><input type="checkbox" id="cdOn" checked> Compte à rebours 3 s, puis lancement du prompteur avec l’enregistrement</label>
-    <p style="margin:0;font-size:12px;color:var(--muted)">Le texte n’apparaît jamais dans la vidéo enregistrée. Touchez le texte pour lancer ou mettre en pause.</p>
-  </aside>
-  <aside class="panel" id="pAudio" hidden>
-    <div class="head"><strong>Audio</strong><button class="x" data-close aria-label="Fermer">✕</button></div>
-    <label>Micro <select id="micSel"><option>—</option></select></label>
-    <div class="meter" id="meter"><b></b></div>
+  </div>
+  <p class="foot" id="tpHint"></p>
+  <p class="foot">Le texte n’apparaît jamais dans la vidéo. Touchez-le pour lancer ou mettre en pause. Avec le compte à rebours, il démarre en même temps que l’enregistrement.</p>
+</aside>
+
+<aside class="panel" id="pAudio" hidden>
+  <div class="head"><strong>Audio</strong><button class="x" data-close>OK</button></div>
+  <div class="gh">Micro</div>
+  <div class="group">
+    <label>Source <select id="micSel"><option>—</option></select></label>
+    <div class="item"><span>Niveau</span><div class="meter" id="meter" style="max-width:58%"><b></b></div></div>
     <label>Volume <input type="range" id="gain" min="0" max="2" step="0.01" value="1"></label>
+  </div>
+  <div class="group" style="margin-top:12px">
     <label>Réduction du bruit <input type="checkbox" id="ns"></label>
     <label>Écoute au casque <input type="checkbox" id="mon"></label>
-    <p style="margin:0;font-size:12px;color:var(--muted)">La voix n’est pas modifiée par défaut. Le niveau devient rouge en cas de saturation. N’activez l’écoute qu’avec un casque.</p>
-  </aside>
-  <section class="pv" id="pv" hidden>
-    <video id="pvVid" controls playsinline></video>
-    <p id="pvInfo" style="margin:0;font-size:12px;color:var(--muted)"></p>
-    <div class="row"><a id="dl" class="round primary" style="text-decoration:none">Télécharger</a><button class="round" id="pvShare" hidden>Partager</button><button class="round" id="pvEdit">✂ Monter</button><button class="round" id="pvClose">Fermer</button></div>
-  </section>
-  <aside class="panel" id="panel" hidden>
-    <div class="head"><strong>Décor et détourage</strong><button class="x" id="bClose" aria-label="Fermer">✕</button></div>
-    <div class="look" id="look"><button data-look="nat">Naturel<small>discret</small></button><button data-look="stu" class="on">Studio<small>recommandé</small></button><button data-look="net">Net<small>bord précis</small></button></div>
-    <label>Détourage <select id="qSel"><option value="auto">Auto (recommandé)</option><option value="hq">Précis : cheveux, contours</option><option value="fast">Rapide : économise la batterie</option></select></label>
-    <div class="advonly"><label>Profil <select id="preSel"></select></label>
-    <div class="row"><button class="sm" id="preSave">Enregistrer</button><button class="sm" id="preNew">Nouveau</button><button class="sm" id="preDup">Dupliquer</button><button class="sm" id="preDel">Supprimer</button></div>
-    <label>Zoom caméra <input type="range" id="cz" min="0.3" max="3" step="0.01" value="1"></label>
-    <div class="row"><button class="sm" id="czFit">Vue large (image complète)</button><button class="sm" id="czFill">Plein écran</button></div>
-    <div class="row" hidden><span>Contours</span><button class="sm" data-e="0.28,0.62">Doux</button><button class="sm" data-e="0.4,0.62">Normal</button><button class="sm" data-e="0.5,0.7">Net</button></div>
-    
-    <label>Qualité de sortie <select id="res"><option value="1920">1080p (recommandé)</option><option value="2560">1440p (fichiers plus lourds)</option><option value="1280">720p (léger)</option></select></label>
-    <hr>
-    </div>
-    <button class="sm" id="advBtn">Plus de réglages</button>
-    <label>Importer image ou vidéo <input type="file" id="file" accept="image/*,video/*" style="max-width:55%"></label>
-    <label>Zoom <input type="range" id="zoom" min="1" max="3" step="0.01" value="1"></label>
-    <label>Position X <input type="range" id="px" min="-1" max="1" step="0.01" value="0"></label>
-    <label>Position Y <input type="range" id="py" min="-1" max="1" step="0.01" value="0"></label>
-    <label>Luminosité <input type="range" id="br" min="-0.5" max="0.5" step="0.01" value="0"></label>
-    <label>Contraste <input type="range" id="ct" min="0.5" max="1.5" step="0.01" value="1"></label>
-    <label>Saturation <input type="range" id="sa" min="0" max="2" step="0.01" value="1"></label>
-    <hr>
-    <label>Anti-halo (bord) <input type="range" id="dsp" min="0" max="1" step="0.01" value="0.6"></label>
-    <label>Lumière du décor <input type="range" id="wrap" min="0" max="1" step="0.01" value="0.3"></label>
-    <label>Ombre douce <input type="range" id="shd" min="0" max="1" step="0.01" value="0.25"></label>
-    <label>Stabilité du contour <input type="range" id="stab" min="0" max="1" step="0.01" value="0.6"></label>
-    <label>Seuil bas <input type="range" id="lo" min="0" max="0.8" step="0.01" value="0.35"></label>
-    <label>Seuil haut <input type="range" id="hi" min="0.2" max="1" step="0.01" value="0.65"></label>
-    <label>Inverser le masque <input type="checkbox" id="inv"></label>
-  </aside>
-</main>
+  </div>
+  <p class="foot">Un micro branché (USB, Bluetooth, cravate) est utilisé automatiquement. Le niveau devient rouge en cas de saturation. N’activez l’écoute qu’avec un casque.</p>
+</aside>
+
+<section class="pv" id="pv" hidden>
+  <div class="nav"><button class="l" id="pvClose">Fermer</button><strong>Aperçu</strong><button class="r" id="pvEdit">Monter</button></div>
+  <video id="pvVid" controls playsinline></video>
+  <p class="info" id="pvInfo"></p>
+  <div class="btns"><a id="dl" class="btn prim">Télécharger</a><button class="btn" id="pvShare" hidden>Partager</button></div>
+</section>
 
 <script type="module">
+import "@fontsource-variable/inter/index.css"; // police façon Apple, incluse dans l’app (hors ligne)
 // App Android (Capacitor) : tout est déjà dans l'APK, pas de service worker ; enregistrement vers la Galerie et partage natif.
 const NATIVE = !!window.Capacitor?.isNativePlatform?.();
 const nativeP = NATIVE ? import("/src/native.ts") : null;
@@ -373,7 +491,7 @@ function visibleRect() {
 let busy = false, busySince = 0, wOpts = "", held = null, sync = true, curModel = "fast", slowSince = 0, fastSince = 0;
 let pendingModel = null;
 function setModel(id) { if (!segWorker || id === curModel || id === pendingModel) return; pendingModel = id; segWorker.postMessage({ type: "model", model: MODELS[id] }); }
-const aiChip = () => setAi("ok", `IA : ${curModel === "hq" ? "Précis" : "Rapide"} · ${backend}`);
+const aiChip = () => setAi("ok", curModel === "hq" ? "Précis" : "Rapide");
 /* Gestion des performances : masque synchronisé tant que l'IA suit (≥ 30 i/s) ; en Auto, passe en Rapide si le Précis est lent
    pendant 2 s, et revient en Précis si le Rapide a beaucoup de marge pendant 8 s. */
 function adapt() {
@@ -517,7 +635,7 @@ setInterval(() => { for (const k in cnt) { rate[k] = cnt[k] * 2; cnt[k] = 0; }
 // L'IA se prépare dès l'ouverture de la page (pendant que vous lisez l'écran d'accueil) : prête quand la caméra s'allume.
 const segP = (async () => { try { await initSeg(); return true; } catch (e) { console.error(e); segmenter = null; return false; } })();
 $("go").onclick = async () => {
-  $("go").disabled = true; showErr(null); setAi("", "IA : chargement…");
+  $("go").disabled = true; showErr(null); setAi("", "Préparation…");
   try {
     if (!navigator.mediaDevices?.getUserMedia) throw new Error("Caméra indisponible dans ce contexte (HTTPS requis).");
     if (!("requestVideoFrameCallback" in video)) throw new Error("Chrome récent requis.");
@@ -527,11 +645,11 @@ $("go").onclick = async () => {
     running = true; video.requestVideoFrameCallback(camLoop);
     segP.then((ok) => {
       if (ok && segWorker) aiChip(); else if (ok) setAi("ok", "IA : " + backend);
-      else { setAi("err", "IA indisponible"); toast("Détourage indisponible (modèle non chargé, internet requis au premier lancement) : caméra seule.", 9000); }
+      else { setAi("err", "Détourage indisponible"); toast("Détourage indisponible (modèle non chargé, internet requis au premier lancement) : caméra seule.", 9000); }
     });
     import("/src/ui/quick-edit.ts").catch(() => {}); import("/src/ui/library.ts").catch(() => {}); // préchargés : « Monter » et « Mes prises » s'ouvrent sans attente
   } catch (e) {
-    setAi("err", "IA : erreur");
+    setAi("err", "Erreur");
     const n = e?.name;
     showErr(!isSecureContext ? "Page non sécurisée (" + location.protocol + "). Chrome bloque la caméra : ouvrez la page en https:// ou http://localhost." : n === "NotAllowedError" ? "Accès caméra refusé. Autorisez la caméra pour ce site (icône à gauche de l’adresse), ou ouvrez la page hors d’un aperçu intégré." : n === "NotReadableError" ? "Caméra utilisée par une autre application : fermez-la puis réessayez."
       : n === "NotFoundError" ? "Aucune caméra détectée."
@@ -566,7 +684,7 @@ let actx, micSrc, gainN, analyser, dest, micStream, hasMic = false;
 let micId = ""; try { micId = localStorage.getItem("gs.mic") || ""; } catch {}
 let knownMics = new Set();
 const listMics = async () => (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "audioinput");
-const shortMic = (l) => (l || "Micro").replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)/i, "").slice(0, 28);
+const shortMic = (l) => (!l || /^(default|défaut|built-in|internal)/i.test(l) ? "Micro du téléphone" : l).replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)/i, "").slice(0, 28);
 async function initMic(id = micId) {
   try {
     micStream?.getTracks().forEach((t) => t.stop());
@@ -580,9 +698,9 @@ async function initMic(id = micId) {
     knownMics = new Set(devs.map((d) => d.deviceId));
     $("micSel").replaceChildren(...devs.map((d, i) => new Option(d.label || "Micro " + (i + 1), d.deviceId)));
     if (cur) $("micSel").value = cur;
-    $("micChip").textContent = "🎙 " + shortMic(tr.label); $("micChip").hidden = false;
+    $("micChip").innerHTML = `<svg class="i" viewBox="0 0 24 24" style="width:16px;height:16px"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg><span></span>`; $("micChip").lastChild.textContent = shortMic(tr.label); $("micChip").hidden = false;
     tr.addEventListener("ended", () => { if (micStream?.getAudioTracks()[0] !== tr) return; hasMic = false; toast("Micro interrompu : micro du téléphone utilisé."); initMic(""); });
-  } catch { hasMic = false; $("micSel").replaceChildren(new Option("Micro indisponible", "")); $("micChip").textContent = "🎙 aucun micro"; $("micChip").hidden = false; }
+  } catch { hasMic = false; $("micSel").replaceChildren(new Option("Micro indisponible", "")); $("micChip").innerHTML = `<svg class="i" viewBox="0 0 24 24" style="width:16px;height:16px"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg><span>Aucun micro</span>`; $("micChip").hidden = false; }
 }
 const rememberMic = (id) => { micId = id; try { localStorage.setItem("gs.mic", id); } catch {} };
 $("micSel").onchange = (e) => { rememberMic(e.target.value); initMic(e.target.value).then(() => toast("Micro : " + shortMic(micStream?.getAudioTracks()[0]?.label), 2000)); };
@@ -648,7 +766,7 @@ async function startRec() {
   await actx?.resume();
   r.start(1000); t0r = performance.now();
   $("rec").classList.add("on"); $("recChip").hidden = false;
-  recTimer = setInterval(() => { const s = ((performance.now() - t0r) / 1000) | 0; $("recChip").textContent = `● REC ${String((s / 60) | 0).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; }, 250);
+  recTimer = setInterval(() => { const s = ((performance.now() - t0r) / 1000) | 0; $("recChip").textContent = `${String((s / 60) | 0).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; }, 250);
 }
 function stopRec() { clearInterval(recTimer); if (rec.state !== "inactive") rec.stop(); $("rec").classList.remove("on"); $("recChip").hidden = true; }
 async function finishRec() {
@@ -676,7 +794,7 @@ $("dl").addEventListener("click", (e) => {
   pvSaved = true; if (!NATIVE) return;
   e.preventDefault(); saveBlob(pvBlob, $("dl").download).catch((err) => { pvSaved = false; toast("Échec de l’enregistrement : " + (err?.message ?? err), 6000); });
 });
-if (NATIVE) { $("dl").textContent = "💾 Galerie"; $("pvShare").hidden = false; }
+if (NATIVE) { $("dl").textContent = "Enregistrer dans la Galerie"; $("pvShare").hidden = false; }
 $("pvShare").onclick = () => pvBlob && shareBlob(pvBlob, $("dl").download).then(() => (pvSaved = true)).catch((err) => toast("Partage impossible : " + (err?.message ?? err), 6000));
 $("pvClose").onclick = async () => {
   const v = $("pvVid"); $("pv").hidden = true; v.pause(); URL.revokeObjectURL(v.src); v.removeAttribute("src"); v.load();

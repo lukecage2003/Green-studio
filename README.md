@@ -1,4 +1,4 @@
-# Green Studio 3.0 — état réel (alpha.6)
+# Green Studio 3.0 — état réel (alpha.7)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,13 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## Nouveautés alpha.7 — interface inspirée d'iOS
+- **Viseur toujours exactement 9:16** (avant : étiré sur les écrans allongés comme le S25) ; la vidéo enregistrée est toujours en 9:16, quelle que soit la caméra.
+- Écran caméra façon Appareil photo : barre du haut (Réglages, statut, Prompteur, micro), carrousel de décors, déclencheur, Mes prises, retournement de caméra.
+- Réglages en feuilles iOS (poignée, OK, groupes, interrupteurs, sélecteurs segmentés) ; réglages techniques rangés dans « Réglages avancés ».
+- Accueil, aperçu, montage et Mes prises dans le même style (barres de navigation, listes groupées) ; police Inter incluse (hors ligne).
+- Correctif : icônes de l'app (générateur cassé à l'alpha.6).
 
 ## Nouveautés alpha.6 (d'après l'échantillon 720p/15 i/s fourni)
 - **Plein écran** : l'image caméra remplit toujours le cadre 9:16 (avant : réduite pour tenir entière → silhouette dans une bande, coupée net). Bords adoucis si l'on dézoome.

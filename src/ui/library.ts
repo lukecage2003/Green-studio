@@ -3,18 +3,25 @@
 import type { Backend, RecMeta } from "../core/storage.ts";
 
 const CSS = `
-.lib{position:fixed;inset:0;z-index:55;background:var(--bg);color:var(--fg);display:flex;flex-direction:column;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
-.lib header{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line)}.lib header h2{flex:1;margin:0;font-size:16px}
-.lib .ib{background:var(--glass);padding:8px 12px;border-radius:999px;font-size:13px;text-decoration:none;color:inherit}
-.lib .ib:disabled{opacity:.35}.lib .go{background:var(--accent);color:#04120a;font-weight:600}
-.lib .use{padding:10px 14px;font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:6px}
-.lib .bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden}.lib .bar i{display:block;height:100%;background:var(--accent)}
-.lib ul{list-style:none;margin:0;padding:0 10px 30px;overflow:auto;flex:1}
-.lib li{display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
-.lib .th{width:54px;height:96px;border-radius:8px;background:#0d1411 center/cover;flex:none}
-.lib .in{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}.lib .in b{font-size:14px}.lib .in small{color:var(--muted);font-size:12px}
-.lib .acts{display:flex;gap:6px;flex-wrap:wrap}.lib .tag{font-size:11px;color:var(--accent)}
-.lib .empty{color:var(--muted);text-align:center;padding:40px 20px}`;
+.lib{position:fixed;inset:0;z-index:55;background:#000;color:var(--fg);display:flex;flex-direction:column;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0);font-family:var(--font)}
+.lib header{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;height:50px;padding:0 16px}
+.lib header h2{margin:0;font-size:17px;font-weight:650}
+.lib header [data-a=close]{justify-self:start;color:var(--accent);font-size:17px}
+.lib header [data-a=clean]{justify-self:end;color:var(--accent);font-size:15px}
+.lib header [data-a=clean]:disabled{opacity:.3}
+.lib .ib{display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 13px;border-radius:16px;background:var(--fill);font-size:14px;font-weight:600;text-decoration:none;color:inherit}
+.lib .go{background:var(--accent);color:#000}
+.lib .ic{width:32px;padding:0}.lib .ic svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.lib .use{padding:4px 16px 14px;font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:8px}
+.lib .bar{height:4px;border-radius:2px;background:var(--fill);overflow:hidden}.lib .bar i{display:block;height:100%;background:var(--accent)}
+.lib ul{list-style:none;margin:0 16px;padding:0;overflow:auto;flex:1;border-radius:14px}
+.lib li{display:flex;gap:12px;align-items:center;padding:10px 12px;background:#1c1c1e}
+.lib li+li{border-top:.5px solid var(--line)}
+.lib li:first-child{border-radius:14px 14px 0 0}.lib li:last-child{border-radius:0 0 14px 14px}.lib li:only-child{border-radius:14px}
+.lib .th{width:54px;height:96px;border-radius:10px;background:#2c2c2e center/cover;flex:none}
+.lib .in{flex:1;min-width:0;display:flex;flex-direction:column;gap:7px}.lib .in b{font-size:16px;font-weight:600}.lib .in small{color:var(--muted);font-size:13px}
+.lib .acts{display:flex;gap:6px;flex-wrap:nowrap}.lib .tag{font-size:12px;color:var(--accent)}
+.lib .empty{color:var(--muted);text-align:center;padding:48px 24px;background:#1c1c1e;font-size:15px;line-height:1.4}`;
 
 const mb = (b: number) => (b >= 1e9 ? (b / 1e9).toFixed(1).replace(".", ",") + " Go" : Math.max(0.1, b / 1e6).toFixed(1).replace(".", ",") + " Mo");
 const dur = (ms: number) => { const s = Math.round(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
@@ -44,7 +51,7 @@ export async function openLibrary(o: LibraryOptions) {
   if (!document.getElementById("lib-css")) { const st = document.createElement("style"); st.id = "lib-css"; st.textContent = CSS; document.head.appendChild(st); }
   document.querySelector(".lib")?.remove();
   const root = document.createElement("section"); root.className = "lib"; root.setAttribute("aria-label", "Mes prises");
-  root.innerHTML = `<header><button class="ib" data-a="close" aria-label="Fermer">←</button><h2>Mes prises</h2><button class="ib" data-a="clean" disabled>🧹 Téléchargées</button></header>
+  root.innerHTML = `<header><button data-a="close">Fermer</button><h2>Mes prises</h2><button data-a="clean" disabled>Nettoyer</button></header>
     <div class="use"><span data-r="use">…</span><div class="bar"><i style="width:0"></i></div></div><ul></ul>`;
   document.body.appendChild(root);
   const ul = root.querySelector("ul")!, close = () => { root.remove(); o.onClose?.(); };
@@ -60,14 +67,14 @@ export async function openLibrary(o: LibraryOptions) {
     root.querySelector<HTMLElement>("[data-r=use]")!.textContent = `${metas.length} prise(s) · ${mb(used)}` + (est?.quota ? ` · ${mb(Math.max(0, est.quota - (est.usage ?? 0)))} libres` : "");
     if (est?.quota) root.querySelector<HTMLElement>(".bar i")!.style.width = Math.min(100, ((est.usage ?? 0) / est.quota) * 100) + "%";
     const dl = metas.filter((m) => m.downloaded); const cb = root.querySelector<HTMLButtonElement>("[data-a=clean]")!;
-    cb.disabled = !dl.length; cb.textContent = `🧹 Téléchargées (${dl.length})`;
+    cb.disabled = !dl.length; cb.textContent = dl.length ? `Nettoyer (${dl.length})` : "Nettoyer";
     if (!metas.length) { ul.innerHTML = `<li class="empty">Aucune prise pour l’instant. Vos enregistrements apparaîtront ici, même après un crash.</li>`; return; }
     ul.innerHTML = metas.map((m) => {
       let th = ""; try { th = localStorage.getItem("gs.th." + m.id) ?? ""; } catch { /* */ }
       return `<li data-id="${m.id}"><div class="th" style="${th ? `background-image:url(${th})` : ""}"></div><div class="in">
         <b>${new Date(m.startedAt).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}</b>
         <small>${dur(m.durationMs)} · ${mb(m.bytes)} ${m.downloaded ? `<span class="tag">✓ téléchargée</span>` : ""}${m.status === "recovered" ? ` <span class="tag">récupérée</span>` : ""}</small>
-        <div class="acts"><button class="ib" data-a="play">▶ Voir</button><button class="ib go" data-a="edit">✂ Monter</button><button class="ib" data-a="dl">⬇</button><button class="ib" data-a="del" aria-label="Supprimer">🗑</button></div></div></li>`;
+        <div class="acts"><button class="ib" data-a="play">Voir</button><button class="ib go" data-a="edit">Monter</button><button class="ib ic" data-a="dl" aria-label="Enregistrer dans la Galerie"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14"/></svg></button><button class="ib ic" data-a="del" aria-label="Supprimer" style="color:var(--red)"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/></svg></button></div></div></li>`;
     }).join("");
     for (const m of metas) { // vignettes manquantes, une à la fois
       if (root.isConnected === false) return;

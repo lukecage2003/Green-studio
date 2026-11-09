@@ -7,7 +7,7 @@ const FAKE_WORKER = `self.onmessage = (e) => { if (e.data.type !== 'run') return
   self.postMessage({ type: 'progress', p: .5, eta: 3 }); self.postMessage({ type: 'done', words: ${JSON.stringify(WORDS)}, n: e.data.audio.length }); };`;
 (async () => {
   const b = await chromium.launch({ args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--enable-unsafe-swiftshader'] });
-  const ctx = await b.newContext({ viewport: { width: 400, height: 800 } }); const p = await ctx.newPage(); const errs = [];
+  const ctx = await b.newContext({ viewport: { width: 384, height: 832 } }); const p = await ctx.newPage(); const errs = [];
   p.on('pageerror', (e) => errs.push(e.message)); p.on('console', (m) => m.type() === 'warning' && console.log('[warn]', m.text().slice(0, 300))); p.on('dialog', (d) => d.accept());
   // Le Chromium de test encode le H.264 mais ne sait pas le décoder (Chrome Android, si) : on enregistre en WebM pour
   // exercer l'export rapide WebCodecs ; le repli temps réel est testé ensuite avec le MP4.
@@ -19,6 +19,7 @@ const FAKE_WORKER = `self.onmessage = (e) => { if (e.data.type !== 'run') return
   await p.click('#rec'); await p.waitForSelector('#cd:not([hidden])'); // compte à rebours 3-2-1
   await p.waitForSelector('#recChip:not([hidden])', { timeout: 20000 }).catch(async (e) => { console.log('toast:', await p.textContent('#toast'), errs); throw e; }); await p.waitForTimeout(6000); await p.click('#rec');
   await p.waitForSelector('#pv:not([hidden])'); console.log('aperçu :', await p.textContent('#pvInfo'));
+  if (process.env.SHOTS) await p.screenshot({ path: process.env.SHOTS + '/6-apercu.png' });
   await p.click('#pvEdit'); await p.waitForSelector('.qe');
   await p.waitForFunction(() => /Montage \d/.test(document.querySelector('.qe [data-r=status]').textContent), null, { timeout: 15000 });
   await p.click('.qe [data-a=transcribe]'); await p.waitForSelector('.qe .tx span');
@@ -49,6 +50,7 @@ const FAKE_WORKER = `self.onmessage = (e) => { if (e.data.type !== 'run') return
   await p.evaluate(() => (document.querySelector('.qe video').currentTime = 0.45)); await p.waitForTimeout(400);
   await p.screenshot({ path: process.argv[2] || require('os').tmpdir() + '/qe.png' });
   await p.click('.qe [data-a=export]'); await p.waitForSelector('.qe .modal [data-x=run]');
+  if (process.env.SHOTS) await p.screenshot({ path: process.env.SHOTS + '/7-export.png' });
   assert.match(await p.textContent('.qe .modal'), /Sous-titres : Karaoké/); await p.click('.qe .modal [data-x=run]');
   await p.waitForSelector('.qe .modal a[download]', { timeout: 60000 });
   console.log('export :', await p.textContent('.qe .modal p'));
@@ -71,6 +73,7 @@ const FAKE_WORKER = `self.onmessage = (e) => { if (e.data.type !== 'run') return
   await p.click('.qe [data-a=close]');
   // Mes prises : la prise est listée, rouvrable dans le montage, supprimable
   await p.click('#pvClose'); await p.click('#bLib'); await p.waitForSelector('.lib li[data-id]');
+  if (process.env.SHOTS) { await p.waitForTimeout(1500); await p.screenshot({ path: process.env.SHOTS + '/8-prises.png' }); }
   assert.equal(await p.locator('.lib li[data-id]').count(), 1); console.log('bibliothèque :', (await p.textContent('.lib [data-r=use]')));
   await p.click('.lib [data-a=edit]'); await p.waitForSelector('.qe .tx span'); await p.click('.qe [data-a=close]');
   await p.click('.lib [data-a=del]'); await p.waitForSelector('.lib li.empty'); await p.click('.lib [data-a=close]');

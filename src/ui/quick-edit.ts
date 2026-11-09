@@ -13,43 +13,59 @@ const fmt = (t: number) => { t = Math.max(0, t); const m = Math.floor(t / 60), s
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 const CSS = `
-.qe{position:fixed;inset:0;z-index:60;background:var(--bg);color:var(--fg);display:flex;flex-direction:column;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
-.qe header{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--line)}
-.qe header h2{flex:1;margin:0;font-size:16px}
-.qe .ib{background:var(--glass);padding:8px 12px;border-radius:999px;font-size:13px}
-.qe .ib:disabled{opacity:.35}
-.qe .go{background:var(--accent);color:#04120a;font-weight:600}
-.qe .vw{position:relative;background:#000;height:34vh}
+.qe{position:fixed;inset:0;z-index:60;background:#000;color:var(--fg);display:flex;flex-direction:column;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0);font-family:var(--font)}
+.qe header{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;height:50px;padding:0 16px}
+.qe header h2{margin:0;font-size:17px;font-weight:650}
+.qe header [data-a=close]{justify-self:start;color:var(--accent);font-size:17px}
+.qe header [data-a=export]{justify-self:end;color:var(--accent);font-size:17px;font-weight:650}
+.qe .ib{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:34px;padding:0 14px;border-radius:17px;background:var(--fill);font-size:14px;font-weight:600;white-space:nowrap;transition:transform .12s}
+.qe .ib:active{transform:scale(.95)}
+.qe .ib:disabled{opacity:.3}
+.qe .go{background:var(--accent);color:#000}
+.qe .round{width:44px;height:44px;padding:0;border-radius:50%;font-size:17px}
+.qe .icon{width:40px;padding:0;background:none;font-size:20px}
+.qe .vw{position:relative;background:#000;height:36vh;margin:0 16px;border-radius:16px;overflow:hidden}
 .qe video{position:absolute;inset:0;width:100%;height:100%;background:#000;object-fit:contain}.qe video.spare{visibility:hidden}
 .qe .vw canvas.cc{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;border-radius:0;background:none}
-.qe .opt{display:flex;align-items:center;gap:10px;font-size:14px}.qe .opt input[type=range]{flex:1}
-.qe .chips{display:flex;gap:6px;flex-wrap:wrap}.qe .chips button[aria-pressed=true]{outline:2px solid var(--accent)}
-.qe .tl{position:relative;padding:6px 10px 0}
-.qe canvas{width:100%;height:64px;display:block;border-radius:8px;background:#0d1411;touch-action:none}
-.qe .row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 10px;font-size:12px;color:var(--muted)}
-.qe .row .sp{flex:1}
-.qe .tabs{display:flex;border-bottom:1px solid var(--line);padding:0 10px}
-.qe .tabs button{flex:1;padding:10px;background:none;color:var(--muted);border-bottom:2px solid transparent;font-size:14px}
-.qe .tabs button[aria-selected=true]{color:var(--fg);border-color:var(--accent)}
-.qe .body{flex:1;overflow:auto;padding:12px 14px 90px;-webkit-overflow-scrolling:touch}
-.qe .tx{font-size:17px;line-height:1.75}
-.qe .tx span{border-radius:4px;padding:1px 1px;cursor:pointer}
-.qe .tx span.cut{text-decoration:line-through;color:#6d7a72;background:rgba(255,90,90,.12)}
-.qe .tx span.sug{box-shadow:inset 0 -2px 0 #e8c547}
-.qe .tx span.sel{background:rgba(52,224,139,.35);color:#fff}
-.qe .tx span.cur{outline:1.5px solid var(--accent)}
-.qe .card{background:var(--glass);border:1px solid var(--line);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px}
-.qe .card p{margin:0;color:var(--muted);font-size:13px}
-.qe .bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden}.qe .bar i{display:block;height:100%;background:var(--accent);width:0}
-.qe .sg{display:flex;gap:8px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
-.qe .sg .t{flex:1;min-width:0}.qe .sg .t b{font-size:12px;color:#e8c547;font-weight:600}.qe .sg .t div{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
-.qe .sg.on .t b{color:#ff8080}.qe .sg.ign{opacity:.45}
-.qe .selbar{position:absolute;left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom,0px));background:#16211b;border:1px solid var(--accent);border-radius:16px;padding:8px;display:flex;gap:6px;align-items:center;box-shadow:0 8px 30px #000a}
-.qe .selbar span{flex:1;font-size:12px;color:var(--muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.qe .modal{position:absolute;inset:0;background:#000b;display:flex;align-items:center;justify-content:center;padding:20px}
-.qe .modal .card{width:100%;max-width:420px}
+.qe .tl{padding:12px 16px 0}
+.qe canvas.wave{width:100%;height:56px;display:block;border-radius:10px;background:#1c1c1e;touch-action:none}
+.qe .transport{display:flex;align-items:center;gap:10px;padding:10px 16px 0}
+.qe .transport [data-r=time]{font-variant-numeric:tabular-nums;font-size:15px;font-weight:600}
+.qe .sp{flex:1}
+.qe .tools{display:flex;gap:8px;overflow-x:auto;padding:10px 16px 2px;scrollbar-width:none}.qe .tools::-webkit-scrollbar{display:none}
+.qe .tools label{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 6px 0 14px;border-radius:17px;background:var(--fill);font-size:14px;font-weight:600;white-space:nowrap}
+.qe input[type=checkbox]{-webkit-appearance:none;appearance:none;position:relative;width:42px;height:26px;border-radius:13px;background:rgba(120,120,128,.32);margin:0;transition:background .2s;flex:none}
+.qe input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:22px;height:22px;border-radius:50%;background:#fff;transition:left .2s}
+.qe input[type=checkbox]:checked{background:var(--accent)}.qe input[type=checkbox]:checked::after{left:18px}
+.qe .row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:8px 16px 0;font-size:13px;color:var(--muted)}
+.qe .tabs{display:flex;gap:2px;margin:12px 16px 0;padding:2px;border-radius:10px;background:var(--fill)}
+.qe .tabs button{flex:1;height:32px;border-radius:8px;font-size:14px;font-weight:600;color:var(--fg)}
+.qe .tabs button[aria-selected=true]{background:#636366;box-shadow:0 3px 8px rgba(0,0,0,.12)}
+.qe .body{flex:1;overflow:auto;padding:14px 16px 100px;-webkit-overflow-scrolling:touch}
+.qe .tx{font-size:18px;line-height:1.7;letter-spacing:-.01em}
+.qe .tx span{border-radius:5px;padding:1px 2px;cursor:pointer;transition:background .15s}
+.qe .tx span.cut{text-decoration:line-through;color:rgba(235,235,245,.3);background:rgba(255,69,58,.14)}
+.qe .tx span.sug{box-shadow:inset 0 -2px 0 #ffd60a}
+.qe .tx span.sel{background:var(--accent);color:#000}
+.qe .tx span.cur{box-shadow:0 0 0 1.5px var(--accent)}
+.qe .card{background:#1c1c1e;border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.qe .card b{font-size:17px;font-weight:650}
+.qe .card p{margin:0;color:var(--muted);font-size:14px;line-height:1.4}
+.qe .bar{height:4px;border-radius:2px;background:var(--fill);overflow:hidden}.qe .bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .2s}
+.qe .sg{display:flex;gap:10px;align-items:center;padding:10px 14px;background:#1c1c1e}
+.qe .sg:first-of-type{border-radius:14px 14px 0 0}.qe .sg:last-of-type{border-radius:0 0 14px 14px}.qe .sg+.sg{border-top:.5px solid var(--line)}
+.qe .sg .t{flex:1;min-width:0}.qe .sg .t b{font-size:12px;color:#ffd60a;font-weight:600}.qe .sg .t div{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;margin-top:2px}
+.qe .sg.on .t b{color:var(--red)}.qe .sg.ign{opacity:.4}
+.qe .selbar{position:absolute;left:12px;right:12px;bottom:calc(14px + env(safe-area-inset-bottom,0px));background:rgba(44,44,46,.92);backdrop-filter:blur(30px) saturate(1.6);border-radius:18px;padding:8px;display:flex;gap:6px;align-items:center;box-shadow:0 12px 40px rgba(0,0,0,.5);animation:qeUp .25s cubic-bezier(.2,.9,.3,1)}
+@keyframes qeUp{from{transform:translateY(20px);opacity:0}}
+.qe .selbar span{flex:1;font-size:13px;color:var(--muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding-left:6px}
+.qe .modal{position:absolute;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(6px);display:flex;align-items:flex-end;justify-content:center;padding:12px 12px calc(12px + env(safe-area-inset-bottom,0px))}
+.qe .modal .card{width:100%;max-width:440px;background:rgba(44,44,46,.96);border-radius:22px;animation:qeUp .3s cubic-bezier(.2,.9,.3,1)}
+.qe .modal .row{padding:4px 0 0}.qe .modal .ib{height:46px;border-radius:12px;font-size:16px;flex:1}
 .qe a.ib{text-decoration:none;text-align:center}
-.qe select{background:var(--glass);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:8px}
+.qe select{-webkit-appearance:none;appearance:none;background:var(--fill);color:var(--fg);border:0;border-radius:10px;padding:8px 12px;font:inherit;font-size:15px}
+.qe .opt{display:flex;align-items:center;gap:12px;font-size:15px}.qe .opt input[type=range]{flex:1;accent-color:var(--accent)}
+.qe .chips{display:flex;gap:6px;flex-wrap:wrap}.qe .chips button[aria-pressed=true]{background:var(--accent);color:#000}
 `;
 
 interface Saved { v: 1; duration: number; words: Word[] | null; cuts: Range[]; ignored: string[]; peaks?: number[]; style?: CaptionStyle; norm?: boolean; q720?: boolean }
@@ -65,15 +81,15 @@ export async function openEditor(o: EditorOptions) {
   const toast = o.toast ?? ((m: string) => console.log(m));
   const root = document.createElement("section"); root.className = "qe"; root.setAttribute("aria-label", "Montage");
   root.innerHTML = `
-    <header><button class="ib" data-a="close" aria-label="Fermer">←</button><h2>Montage</h2>
-      <button class="ib" data-a="undo" aria-label="Annuler">↶</button><button class="ib" data-a="redo" aria-label="Rétablir">↷</button>
-      <button class="ib go" data-a="export">Exporter</button></header>
+    <header><button data-a="close">Fermer</button><h2>Montage</h2><button data-a="export">Exporter</button></header>
     <div class="vw"><video playsinline preload="auto"></video><video class="spare" playsinline preload="auto" muted></video><canvas class="cc" aria-hidden="true"></canvas></div>
     <div class="tl"><canvas class="wave" aria-label="Timeline : touchez pour vous déplacer"></canvas></div>
-    <div class="row"><button class="ib" data-a="play">▶</button><span data-r="time">0:00</span><span class="sp"></span>
+    <div class="transport"><button class="ib round go" data-a="play" aria-label="Lecture">▶</button><span data-r="time">0:00</span><span class="sp"></span>
+      <button class="ib icon" data-a="undo" aria-label="Annuler">↶</button><button class="ib icon" data-a="redo" aria-label="Rétablir">↷</button></div>
+    <div class="tools">
       <button class="ib" data-a="trim" title="Couper le silence avant la première et après la dernière parole">✂ Bords muets</button>
       <button class="ib" data-a="in" title="Marquer le début d'une coupe à la tête de lecture">⟦ Début</button><button class="ib" data-a="out" disabled>Couper ⟧</button>
-      <label><input type="checkbox" data-a="pv" checked> Sauter les coupes</label></div>
+      <label>Sauter les coupes <input type="checkbox" data-a="pv" checked></label></div>
     <div class="row" data-r="status"></div>
     <div class="tabs" role="tablist"><button role="tab" data-tab="tx" aria-selected="true">Texte</button><button role="tab" data-tab="sg" aria-selected="false">Suggestions</button><button role="tab" data-tab="cc" aria-selected="false">Sous-titres</button></div>
     <div class="body" data-r="body"></div>`;
@@ -357,12 +373,12 @@ export async function openEditor(o: EditorOptions) {
       const file = new File([blob], name, { type: blob.type });
       const canShare = !!navigator.canShare?.({ files: [file] });
       m.querySelector(".card")!.innerHTML = `<b>Export terminé ✓</b><p>${(blob.size / 1e6).toFixed(1)} Mo · ${fmt(session.editedDuration)} · ${how} · ${((performance.now() - t0) / 1000).toFixed(1)} s</p>
-        <div class="row" style="padding:0">${o.save ? `<button class="ib go" data-x="save">💾 Galerie</button>` : `<a class="ib go" href="${href}" download="${name}">Télécharger</a>`}${o.share || canShare ? `<button class="ib" data-x="share">Partager…</button>` : ""}<button class="ib" data-x="ok">Fermer</button></div>`;
+        <div class="row" style="padding:0">${o.save ? `<button class="ib go" data-x="save">Enregistrer dans la Galerie</button>` : `<a class="ib go" href="${href}" download="${name}">Télécharger</a>`}${o.share || canShare ? `<button class="ib" data-x="share">Partager…</button>` : ""}<button class="ib" data-x="ok">Fermer</button></div>`;
       m.querySelector<HTMLElement>("[data-x=ok]")!.onclick = () => { URL.revokeObjectURL(href); m.remove(); };
       const sh = m.querySelector<HTMLElement>("[data-x=share]");
       if (sh) sh.onclick = () => (o.share ? o.share(blob, name) : navigator.share({ files: [file], title: "Green Studio" })).catch((e: any) => toast("Partage impossible : " + (e?.message ?? e), 5000));
       const sv = m.querySelector<HTMLButtonElement>("[data-x=save]");
-      if (sv) sv.onclick = () => { sv.disabled = true; o.save!(blob, name).then(() => (sv.textContent = "✓ Dans la Galerie")).catch((e: any) => { sv.disabled = false; toast("Échec de l’enregistrement : " + (e?.message ?? e), 6000); }); };
+      if (sv) sv.onclick = () => { sv.disabled = true; o.save!(blob, name).then(() => (sv.textContent = "✓ Enregistrée")).catch((e: any) => { sv.disabled = false; toast("Échec de l’enregistrement : " + (e?.message ?? e), 6000); }); };
     } catch (e: any) {
       if (e?.name === "AbortError") { toast("Export annulé.", 2000); return; }
       m.querySelector(".card")!.innerHTML = `<b>Export impossible</b><p class="error">${esc(e?.message ?? String(e))}</p><button class="ib" data-x="ok">Fermer</button>`;
