@@ -41,7 +41,9 @@ hr{border:0;border-top:1px solid #ffffff1a;width:100%;margin:2px 0}
 .meter{height:8px;border-radius:4px;background:#ffffff1a;overflow:hidden}.meter b{display:block;height:100%;width:0;background:var(--accent)}.meter.clip b{background:#ff3b30}
 select,textarea,button.sm{background:#ffffff14;color:var(--fg);border:1px solid #ffffff22;border-radius:8px;padding:6px 8px;font:inherit;font-size:13px}
 textarea{width:100%;min-height:90px}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.pv{position:absolute;inset:0;background:#000;display:flex;flex-direction:column;gap:10px;padding:12px;z-index:5}.pv video{flex:1;min-height:0;width:100%;object-fit:contain}
+.pv{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;gap:10px;padding:12px;z-index:58}
+.cd{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:140px;font-weight:900;color:#fff;text-shadow:0 6px 40px #000;pointer-events:none;z-index:6}
+.cd.pop{animation:cdpop .9s ease-out}@keyframes cdpop{from{transform:scale(1.6);opacity:0}30%{opacity:1}to{transform:scale(1);opacity:.9}}.pv video{flex:1;min-height:0;width:100%;object-fit:contain}
 #out{touch-action:none}#ai{pointer-events:auto}
 #strip{position:absolute;left:0;right:0;bottom:140px;display:flex;gap:8px;padding:0 12px;overflow-x:auto;scrollbar-width:none;scroll-snap-type:x proximity}
 #strip::-webkit-scrollbar{display:none}
@@ -92,6 +94,7 @@ body{font-family:ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",
     <p>Tout reste sur votre téléphone : aucune vidéo n’est envoyée.</p>
     <button class="primary" id="go">Activer la caméra</button>
     <button class="round" id="openEdit">✂ Monter une vidéo existante</button>
+    <button class="round" id="openLib">📁 Mes prises</button>
     <input type="file" id="editFile" accept="video/*" hidden />
     <p class="error" id="err" hidden></p>
   </section>
@@ -100,12 +103,14 @@ body{font-family:ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",
         <button class="round" id="bDecor">Décor</button><button class="round" id="bScript">Script</button><button class="round" id="bAudio">Audio</button>
     <button class="round" id="bFlip">Caméra</button>
     <button class="round" id="bMirror" aria-pressed="true">Miroir</button>
+    <button class="round" id="bLib">Prises</button>
   </nav>
   <button class="round" id="gmode" aria-pressed="true">✋ Sujet</button>
 
   <div id="strip" hidden></div>
   <div id="tp" hidden></div>
   <div class="chip err" id="toast" hidden></div>
+  <div class="cd" id="cd" hidden></div>
   <button class="recbtn" id="rec" hidden aria-label="Enregistrer"><i></i></button>
   <aside class="panel" id="pScript" hidden>
     <div class="head"><strong>Téléprompteur</strong><button class="x" data-close aria-label="Fermer">✕</button></div>
@@ -114,6 +119,7 @@ body{font-family:ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",
     <label>Taille du texte <input type="range" id="tpSize" min="16" max="48" step="1" value="26"></label>
     <label>Position <input type="range" id="tpPos" min="0" max="60" step="1" value="12"></label>
     <div class="row"><button class="round" id="tpPlay">▶ Lancer</button><button class="round" id="tpTop">⏮ Début</button><label style="gap:6px">Afficher <input type="checkbox" id="tpShow"></label></div>
+    <label class="row" style="gap:6px"><input type="checkbox" id="cdOn" checked> Compte à rebours 3 s, puis lancement du prompteur avec l’enregistrement</label>
     <p style="margin:0;font-size:12px;color:var(--muted)">Le texte n’apparaît jamais dans la vidéo enregistrée. Touchez le texte pour lancer ou mettre en pause.</p>
   </aside>
   <aside class="panel" id="pAudio" hidden>
@@ -172,8 +178,8 @@ backendP.then(async (b) => {
   if (!b) return; await (await modP)[1].recoverInterrupted(b);
   const all = await b.listMeta();
   for (const m of all) if (m.status === "failed") b.remove(m.id).catch(() => {}); // libère le quota
-  pendingRecs = all.filter((m) => m.status === "complete" || m.status === "recovered").sort((a, c) => c.startedAt - a.startedAt);
-  if (pendingRecs.length) { toast(`${pendingRecs.length} prise(s) non téléchargée(s) retrouvée(s).`, 6000); showPending(); }
+  pendingRecs = all.filter((m) => m.status === "recovered" && !m.seen).sort((a, c) => c.startedAt - a.startedAt);
+  if (pendingRecs.length) { toast(`${pendingRecs.length} prise(s) interrompue(s) récupérée(s) — aussi dans « Mes prises ».`, 6000); showPending(); }
 }).catch(() => {});
 let writer = null, chunks = [];
 const $ = (id) => document.getElementById(id);
@@ -468,7 +474,25 @@ setInterval(() => { if (!analyser) return; analyser.getFloatTimeDomainData(abuf)
 /* ---------- Enregistrement ---------- */
 let rec = null, t0r = 0, recTimer = 0, recMime = "";
 const MIMES = ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
-$("rec").onclick = () => (rec ? stopRec() : startRec());
+let cdTimer = 0;
+try { $("cdOn").checked = localStorage.getItem("gs.cd") !== "0"; } catch {}
+$("cdOn").onchange = (e) => { try { localStorage.setItem("gs.cd", e.target.checked ? "1" : "0"); } catch {} };
+/** Compte à rebours 3-2-1 (toucher à nouveau pour annuler), puis enregistrement + prompteur depuis le début. */
+function countdown() {
+  return new Promise((res) => {
+    let n = 3; const el = $("cd"); el.hidden = false; $("rec").classList.add("on");
+    const show = () => { el.textContent = n; el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop"); };
+    show(); cdTimer = setInterval(() => { if (--n > 0) return show(); clearInterval(cdTimer); cdTimer = 0; el.hidden = true; res(true); }, 1000);
+    countdown.cancel = () => { clearInterval(cdTimer); cdTimer = 0; el.hidden = true; $("rec").classList.remove("on"); res(false); };
+  });
+}
+$("rec").onclick = async () => {
+  if (rec) return stopRec();
+  if (cdTimer) return countdown.cancel();
+  if ($("cdOn").checked && !(await countdown())) return;
+  await startRec(); if (!rec) $("rec").classList.remove("on");
+  if (rec && $("cdOn").checked && $("tpShow").checked) { tpY = 0; tp.scrollTop = 0; if (!tpOn) tpToggle(); }
+};
 async function startRec() {
   if (typeof MediaRecorder === "undefined") return toast("MediaRecorder indisponible sur ce navigateur.");
   recMime = MIMES.find((m) => MediaRecorder.isTypeSupported(m));
@@ -481,8 +505,9 @@ async function startRec() {
   try { r = new MediaRecorder(vs, { mimeType: recMime, videoBitsPerSecond: H > 1280 ? 12e6 : 8e6, audioBitsPerSecond: 192000 }); } catch (e) { return toast("Enregistreur impossible : " + e.message); }
   writer = null; chunks = [];
   const be = await backendP;
+  navigator.storage?.persist?.().catch(() => {}); // demande au navigateur de ne jamais effacer les prises pour faire de la place
   if (be) { try { const RW = (await modP)[0].RecordingWriter; writer = new RW(be, "rec-" + Date.now(), recMime.split(";")[0]); await writer.start(); }
-    catch (e) { writer = null; if (/insuffisant/.test(e.message)) return toast("Espace de stockage insuffisant."); toast("Sauvegarde progressive indisponible : enregistrement en mémoire.", 6000); } }
+    catch (e) { writer = null; if (/insuffisant/.test(e.message)) { toast("Espace insuffisant : supprimez d’anciennes prises.", 6000); return library(); } toast("Sauvegarde progressive indisponible : enregistrement en mémoire.", 6000); } }
   else toast("Mode mémoire (sauvegarde progressive indisponible).", 4000);
   if (writer) writer.onWarning = (c, d) => toast(c === "low_space" ? "Espace faible : arrêtez bientôt." : c === "backlog" ? "Disque lent : écriture en retard." : "Erreur d’écriture : " + d, 6000);
   rec = r;
@@ -512,6 +537,7 @@ function openPreview(blob, id, info) {
 async function showPending() {
   const m = pendingRecs.shift(); if (!m || !$("pv").hidden) return;
   try { const b = await backendP; const f = await b.file(m.id); if (!f.size) { b.remove(m.id).catch(() => {}); return showPending(); }
+    b.putMeta({ ...m, seen: true }).catch(() => {});
     openPreview(f, m.id, `Prise du ${new Date(m.startedAt).toLocaleString()} · ${(f.size / 1e6).toFixed(1)} Mo${m.status === "recovered" ? " (récupérée après interruption)" : ""}${pendingRecs.length ? ` · encore ${pendingRecs.length}` : ""}`);
   } catch { showPending(); }
 }
@@ -519,21 +545,36 @@ $("dl").addEventListener("click", () => (pvSaved = true));
 $("pvClose").onclick = async () => {
   const v = $("pvVid"); $("pv").hidden = true; v.pause(); URL.revokeObjectURL(v.src); v.removeAttribute("src"); v.load();
   if (pvId) {
-    // Téléchargée : on libère l'espace. Sinon on la garde, elle sera reproposée au prochain lancement.
-    if (pvSaved || confirm("Prise non téléchargée. La supprimer définitivement ?")) (await backendP)?.remove(pvId).catch(() => {});
-    else toast("Prise conservée : elle vous sera reproposée au prochain lancement.", 4000);
+    // Les prises restent dans « Mes prises » (suppression explicite, ou nettoyage des prises téléchargées en un geste).
+    const b = await backendP, id = pvId;
+    if (pvSaved && b) { const m = (await b.listMeta()).find((x) => x.id === id); if (m) b.putMeta({ ...m, downloaded: true }).catch(() => {}); }
+    else if (!pvSaved) toast("Prise gardée dans « Mes prises ».", 3000);
+    libRefresh?.();
   }
   pvId = null; pvBlob = null; showPending();
 };
 /* ---------- Montage (Quick Edit) ---------- */
-async function edit(file, key) {
+async function edit(file, key, fromLib = false) {
   $("pvVid").pause(); suspended = true;
-  try { const { openEditor } = await import("/src/ui/quick-edit.ts"); await openEditor({ file, key, toast, onClose: () => (suspended = false) }); }
+  try { const { openEditor } = await import("/src/ui/quick-edit.ts"); await openEditor({ file, key, toast, onClose: () => (suspended = fromLib || !!libRefresh) }); }
   catch (e) { suspended = false; toast("Montage indisponible : " + (e?.message ?? e), 6000); }
 }
 // La prise reste dans le stockage tant que l'aperçu est ouvert : le montage lit le fichier sur disque, sans copie.
 $("pvEdit").onclick = () => pvBlob && edit(pvBlob, pvId ?? `mem-${pvBlob.size}`);
 $("openEdit").onclick = () => $("editFile").click();
+/* ---------- Mes prises ---------- */
+let libRefresh = null;
+async function library() {
+  const b = await backendP; if (!b) return toast("Stockage indisponible sur ce navigateur.");
+  suspended = true;
+  const { openLibrary } = await import("/src/ui/library.ts");
+  const lib = await openLibrary({ backend: b, toast,
+    onPlay: (m, f) => openPreview(f, m.id, `Prise du ${new Date(m.startedAt).toLocaleString()} · ${(f.size / 1e6).toFixed(1)} Mo`),
+    onEdit: (m, f) => edit(f, m.id, true),
+    onClose: () => { suspended = false; libRefresh = null; } });
+  libRefresh = lib.refresh;
+}
+$("openLib").onclick = $("bLib").onclick = library;
 $("editFile").onchange = (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) edit(f, `file-${f.name}-${f.size}-${f.lastModified}`); };
 
 /* ---------- Téléprompteur ---------- */

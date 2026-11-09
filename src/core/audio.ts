@@ -71,3 +71,34 @@ export function splitAtSilences(x: Float32Array, rate: number, maxSec = 28, sear
   }
   out.push(x.length); return out;
 }
+
+const db = (x: number) => 20 * Math.log10(Math.max(1e-9, x));
+
+/**
+ * Gain pour un volume homogène « réseaux sociaux » (≈ −14 LUFS) : RMS sur blocs de 400 ms avec double seuil
+ * (absolu −50 dBFS, puis relatif −10 dB), à la manière de la norme BS.1770, mesuré sur les seules parties conservées.
+ * Le gain est plafonné (+12 dB) pour ne pas faire remonter le bruit de fond.
+ */
+export function loudnessGain(x: Float32Array, rate: number, keep: { start: number; end: number }[] | null = null, targetDb = -16, maxGainDb = 12): number {
+  const blk = Math.round(rate * 0.4), e: number[] = [];
+  const ranges = keep ?? [{ start: 0, end: x.length / rate }];
+  for (const r of ranges) for (let s = Math.round(r.start * rate); s + blk <= Math.min(x.length, Math.round(r.end * rate)); s += blk >> 1) {
+    let a = 0; for (let i = s; i < s + blk; i++) a += x[i] * x[i]; e.push(a / blk);
+  }
+  const abs = e.filter((v) => db(Math.sqrt(v)) > -50); if (!abs.length) return 1;
+  const mean = abs.reduce((s, v) => s + v, 0) / abs.length, rel = abs.filter((v) => v > mean / 10);
+  const level = db(Math.sqrt(rel.reduce((s, v) => s + v, 0) / rel.length));
+  return Math.pow(10, Math.min(maxGainDb, targetDb - level) / 20);
+}
+
+/** Limiteur doux : transparent sous 0,85, puis compression progressive vers 1 (jamais d'écrêtage dur). */
+export const softLimit = (v: number) => { const a = v < 0 ? -v : v, t = 0.85; return a <= t ? v : Math.sign(v) * (t + (1 - t) * Math.tanh((a - t) / (1 - t))); };
+
+/** Début et fin de la parole (trames de 20 ms au-dessus du seuil, relatif au niveau max), pour couper les bords muets. */
+export function speechBounds(x: Float32Array, rate: number, relDb = -30): { start: number; end: number } | null {
+  const fr = Math.max(1, Math.round(rate * 0.02)), lv: number[] = [];
+  for (let s = 0; s + fr <= x.length; s += fr) { let a = 0; for (let i = s; i < s + fr; i++) a += x[i] * x[i]; lv.push(Math.sqrt(a / fr)); }
+  const max = Math.max(0, ...lv); if (max < 1e-4) return null;
+  const th = max * Math.pow(10, relDb / 20), first = lv.findIndex((v) => v > th); let last = lv.length - 1; while (last > 0 && lv[last] <= th) last--;
+  return first < 0 ? null : { start: (first * fr) / rate, end: ((last + 1) * fr) / rate };
+}

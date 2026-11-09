@@ -1,11 +1,12 @@
 /** Lecture et export de vidéos dans le navigateur (WebCodecs via mediabunny). Lit le fichier par morceaux : jamais tout en mémoire. */
 import {
   Input, MP4, QTFF, WEBM, MATROSKA, BlobSource, AudioSampleSink, VideoSampleSink, Output, Mp4OutputFormat, WebMOutputFormat,
-  BufferTarget, StreamTarget, VideoSampleSource, AudioSampleSource, AudioSample, QUALITY_HIGH,
+  BufferTarget, StreamTarget, VideoSampleSource, VideoSample, AudioSampleSource, AudioSample, QUALITY_HIGH,
   getFirstEncodableVideoCodec, getFirstEncodableAudioCodec, type StreamTargetChunk,
 } from "mediabunny";
 import { kept, type Range } from "./timeline.ts";
-import { Resampler, toMono, fadeGain } from "./audio.ts";
+import { Resampler, toMono, fadeGain, softLimit } from "./audio.ts";
+import { lineAt, drawCaption, type CapLine, type CaptionStyle } from "./captions.ts";
 
 const FORMATS = [MP4, QTFF, WEBM, MATROSKA]; // vidéos de téléphone (dont .mov iPhone) : module plus léger que ALL_FORMATS
 const abortErr = () => new DOMException("Annulé", "AbortError");
@@ -63,8 +64,16 @@ async function makeTarget(ext: string) {
  * Export rapide (plus rapide que le temps réel) : décode uniquement les segments conservés, les réencode bout à bout,
  * avec une image clé à chaque raccord et un court fondu audio de part et d'autre de chaque coupe (pas de « clic »).
  */
-export async function exportEdited(file: Blob, cuts: Range[], opts: { onProgress?: (p: number) => void; signal?: AbortSignal; fade?: number } = {}): Promise<ExportResult> {
-  const { onProgress, signal, fade = 0.012 } = opts;
+export interface ExportOptions {
+  onProgress?: (p: number) => void; signal?: AbortSignal;
+  fade?: number;                                   // s, fondu à chaque raccord
+  gain?: number;                                   // gain audio (volume optimisé), avec limiteur doux
+  captions?: { lines: CapLine[]; style: CaptionStyle } | null; // sous-titres incrustés
+  maxHeight?: number;                              // ex. 1280 pour un export 720p plus léger
+}
+
+export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOptions = {}): Promise<ExportResult> {
+  const { onProgress, signal, fade = 0.012, gain = 1, captions = null, maxHeight = 0 } = opts;
   const input = new Input({ source: new BlobSource(file), formats: FORMATS });
   let output: Output | null = null;
   try {
@@ -85,6 +94,9 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: { onProgress
     if (asrc) output.addAudioTrack(asrc);
     await output.start();
 
+    // Passage par un canvas seulement si nécessaire (sous-titres, redimensionnement) : sinon les images vont directement à l'encodeur.
+    let cv: OffscreenCanvas | null = null, cx: OffscreenCanvasRenderingContext2D | null = null;
+    const viaCanvas = (!!captions && captions.style.preset !== "none" && captions.lines.length > 0) || maxHeight > 0;
     const vsink = new VideoSampleSink(vt), asink = at && asrc ? new AudioSampleSink(at) : null;
     let offset = 0, lastV = -1, done_ = 0;
     for (const seg of segs) {
@@ -96,8 +108,15 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: { onProgress
         if (s.timestamp >= seg.end - 1e-4) { s.close(); continue; }
         const t = offset + Math.max(0, s.timestamp - seg.start);
         if (t <= lastV + 1e-4) { s.close(); continue; }
-        s.setTimestamp(t); lastV = t;
-        await vsrc.add(s, first ? { keyFrame: true } : undefined); first = false; s.close();
+        lastV = t; let o: VideoSample = s;
+        if (viaCanvas) {
+          if (!cv) { const k = maxHeight > 0 ? Math.min(1, maxHeight / s.displayHeight) : 1;
+            cv = new OffscreenCanvas(Math.round(s.displayWidth * k / 2) * 2, Math.round(s.displayHeight * k / 2) * 2); cx = cv.getContext("2d")!; }
+          s.drawWithFit(cx!, { fit: "fill" });
+          if (captions) drawCaption(cx!, 0, 0, cv.width, cv.height, lineAt(captions.lines, s.timestamp), s.timestamp, captions.style);
+          o = new VideoSample(cv, { timestamp: t, duration: s.duration }); s.close();
+        } else s.setTimestamp(t);
+        await vsrc.add(o, first ? { keyFrame: true } : undefined); first = false; o.close();
         onProgress?.(Math.min(0.99, (done_ + (t - offset)) / total));
       }
       // Audio : rogné exactement aux bornes du segment, avec fondus.
@@ -106,7 +125,8 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: { onProgress
         const sr = s.sampleRate, a = Math.max(0, Math.round((seg.start - s.timestamp) * sr)), b = Math.min(s.numberOfFrames, Math.round((seg.end - s.timestamp) * sr));
         if (b <= a) { s.close(); continue; }
         const p = planes(s).map((x) => x.subarray(a, b)), t0 = s.timestamp + a / sr - seg.start, n = b - a;
-        for (let i = 0; i < n; i++) { const g = fadeGain(t0 + i / sr, len, fade); if (g !== 1) for (const x of p) x[i] *= g; }
+        for (let i = 0; i < n; i++) { const g = fadeGain(t0 + i / sr, len, fade) * gain; if (g !== 1) for (const x of p) x[i] *= g; }
+        if (gain > 1) for (const x of p) for (let i = 0; i < n; i++) x[i] = softLimit(x[i]);
         const data = new Float32Array(n * p.length); p.forEach((x, c) => data.set(x, c * n));
         const out = new AudioSample({ data, format: "f32-planar", numberOfChannels: p.length, sampleRate: sr, timestamp: offset + t0 });
         await asrc.add(out); out.close(); s.close();

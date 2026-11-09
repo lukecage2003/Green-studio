@@ -15,7 +15,8 @@ const FAKE_WORKER = `self.onmessage = (e) => { if (e.data.type !== 'run') return
   await ctx.route(/transcribe\.worker/, (r) => r.fulfill({ contentType: 'text/javascript', body: FAKE_WORKER }));
   await p.goto('http://localhost:5173/');
   await p.click('#go'); await p.waitForSelector('#rec:not([hidden])', { timeout: 30000 });
-  await p.click('#rec'); await p.waitForTimeout(6000); await p.click('#rec');
+  await p.click('#rec'); await p.waitForSelector('#cd:not([hidden])'); // compte à rebours 3-2-1
+  await p.waitForSelector('#recChip:not([hidden])', { timeout: 6000 }); await p.waitForTimeout(6000); await p.click('#rec');
   await p.waitForSelector('#pv:not([hidden])'); console.log('aperçu :', await p.textContent('#pvInfo'));
   await p.click('#pvEdit'); await p.waitForSelector('.qe');
   await p.waitForFunction(() => /Montage \d/.test(document.querySelector('.qe [data-r=status]').textContent), null, { timeout: 15000 });
@@ -31,16 +32,34 @@ const FAKE_WORKER = `self.onmessage = (e) => { if (e.data.type !== 'run') return
   assert.match(await p.textContent('.qe .selbar span'), /2 mots · vais vous/);
   await p.click('.qe [data-a=cutSel]'); assert.equal(await p.locator('.qe .tx span.cut').count() >= 4, true);
   const st2 = await p.textContent('.qe [data-r=status]'); console.log('après coupe manuelle :', st2);
+  // sous-titres : aperçu en direct, style mot par mot puis karaoké
+  await p.click('.qe [data-tab=cc]'); await p.click('.qe [data-a=preset][data-v=word]'); await p.click('.qe [data-a=preset][data-v=karaoke]');
+  await p.evaluate(() => (document.querySelector('.qe video').currentTime = 0.45)); await p.waitForTimeout(400);
   await p.screenshot({ path: process.argv[2] || require('os').tmpdir() + '/qe.png' });
-  await p.click('.qe [data-a=export]'); await p.waitForSelector('.qe .modal a[download]', { timeout: 30000 });
+  await p.click('.qe [data-a=export]'); await p.waitForSelector('.qe .modal [data-x=run]');
+  assert.match(await p.textContent('.qe .modal'), /Sous-titres : Karaoké/); await p.click('.qe .modal [data-x=run]');
+  await p.waitForSelector('.qe .modal a[download]', { timeout: 60000 });
   console.log('export :', await p.textContent('.qe .modal p'));
-  const outDur = await p.evaluate(async () => { const a = document.querySelector('.qe .modal a[download]'); const bl = await (await fetch(a.href)).blob();
-    const m = await import('/src/core/media.ts'); return (await m.probe(bl)).duration; });
+  const [outDur, white] = await p.evaluate(async () => { const a = document.querySelector('.qe .modal a[download]'); const bl = await (await fetch(a.href)).blob();
+    const m = await import('/src/core/media.ts'); const mb = await import('/node_modules/.vite/deps/mediabunny.js');
+    // pixels blancs dans la bande des sous-titres à 0,4 s (« Bonjour » prononcé) : preuve qu'ils sont gravés dans l'image
+    const inp = new mb.Input({ source: new mb.BlobSource(bl), formats: mb.ALL_FORMATS }); const s = await new mb.VideoSampleSink(await inp.getPrimaryVideoTrack()).getSample(0.4);
+    const c = new OffscreenCanvas(s.displayWidth, s.displayHeight), g = c.getContext('2d'); s.draw(g, 0, 0); s.close();
+    const d = g.getImageData(0, Math.round(c.height * 0.66), c.width, Math.round(c.height * 0.12)).data; let w = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] > 225 && d[i + 1] > 225 && d[i + 2] > 225) w++;
+    return [(await m.probe(bl)).duration, w]; });
+  console.log('pixels blancs (sous-titres) :', white); assert.ok(white > 500, 'sous-titres gravés');
   const edited = await p.evaluate(() => JSON.parse(localStorage.getItem(Object.keys(localStorage).find((k) => k.startsWith('gs.qe.')))));
   const expect = edited.duration - edited.cuts.reduce((s, c) => s + c.end - c.start, 0);
   console.log(`durée exportée ${outDur.toFixed(2)} s, attendue ${expect.toFixed(2)} s`); assert.ok(Math.abs(outDur - expect) < (process.env.MP4 ? 0.25 : 0.1));
   await p.click('.qe .modal [data-x=ok]'); await p.click('.qe [data-a=close]'); assert.equal(await p.locator('.qe').count(), 0);
   // persistance : rouvrir retrouve transcription et coupes
   await p.click('#pvEdit'); await p.waitForSelector('.qe .tx span'); assert.match(await p.textContent('.qe [data-r=status]'), new RegExp(st2.match(/(\d+) coupe/)[1] + ' coupe'));
+  await p.click('.qe [data-a=close]');
+  // Mes prises : la prise est listée, rouvrable dans le montage, supprimable
+  await p.click('#pvClose'); await p.click('#bLib'); await p.waitForSelector('.lib li[data-id]');
+  assert.equal(await p.locator('.lib li[data-id]').count(), 1); console.log('bibliothèque :', (await p.textContent('.lib [data-r=use]')));
+  await p.click('.lib [data-a=edit]'); await p.waitForSelector('.qe .tx span'); await p.click('.qe [data-a=close]');
+  await p.click('.lib [data-a=del]'); await p.waitForSelector('.lib li.empty'); await p.click('.lib [data-a=close]');
   console.log('erreurs :', errs); assert.equal(errs.length, 0); console.log('OK'); await b.close();
 })().catch((e) => { console.error('ÉCHEC', e); process.exit(1); });

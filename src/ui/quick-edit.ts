@@ -2,7 +2,8 @@
  *  suggestions (répétitions, hésitations, silences…), annuler/rétablir, export. Tout reste sur l'appareil. */
 import { EditSession, wordsToRange, EPS, type Range, type Word } from "../core/timeline.ts";
 import { analyze, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
-import { peaks as computePeaks } from "../core/audio.ts";
+import { peaks as computePeaks, loudnessGain, speechBounds } from "../core/audio.ts";
+import { buildCaptions, drawCaption, lineAt, CAPTION_DEFAULT, PRESETS, type CapLine, type CaptionStyle, type CaptionPreset } from "../core/captions.ts";
 import { probe, extractAudio, exportEdited, webCodecsAvailable } from "../core/media.ts";
 import { exportRealtime } from "../core/export.ts";
 
@@ -18,7 +19,11 @@ const CSS = `
 .qe .ib{background:var(--glass);padding:8px 12px;border-radius:999px;font-size:13px}
 .qe .ib:disabled{opacity:.35}
 .qe .go{background:var(--accent);color:#04120a;font-weight:600}
+.qe .vw{position:relative;background:#000}
 .qe video{width:100%;max-height:34vh;background:#000;display:block;object-fit:contain}
+.qe .vw canvas.cc{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;border-radius:0;background:none}
+.qe .opt{display:flex;align-items:center;gap:10px;font-size:14px}.qe .opt input[type=range]{flex:1}
+.qe .chips{display:flex;gap:6px;flex-wrap:wrap}.qe .chips button[aria-pressed=true]{outline:2px solid var(--accent)}
 .qe .tl{position:relative;padding:6px 10px 0}
 .qe canvas{width:100%;height:64px;display:block;border-radius:8px;background:#0d1411;touch-action:none}
 .qe .row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 10px;font-size:12px;color:var(--muted)}
@@ -47,7 +52,7 @@ const CSS = `
 .qe select{background:var(--glass);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:8px}
 `;
 
-interface Saved { v: 1; duration: number; words: Word[] | null; cuts: Range[]; ignored: string[]; peaks?: number[] }
+interface Saved { v: 1; duration: number; words: Word[] | null; cuts: Range[]; ignored: string[]; peaks?: number[]; style?: CaptionStyle; norm?: boolean; q720?: boolean }
 
 export interface EditorOptions { file: Blob; key: string; name?: string; onClose?: () => void; toast?: (m: string, ms?: number) => void }
 
@@ -59,17 +64,18 @@ export async function openEditor(o: EditorOptions) {
     <header><button class="ib" data-a="close" aria-label="Fermer">←</button><h2>Montage</h2>
       <button class="ib" data-a="undo" aria-label="Annuler">↶</button><button class="ib" data-a="redo" aria-label="Rétablir">↷</button>
       <button class="ib go" data-a="export">Exporter</button></header>
-    <video playsinline preload="auto"></video>
-    <div class="tl"><canvas aria-label="Timeline : touchez pour vous déplacer"></canvas></div>
+    <div class="vw"><video playsinline preload="auto"></video><canvas class="cc" aria-hidden="true"></canvas></div>
+    <div class="tl"><canvas class="wave" aria-label="Timeline : touchez pour vous déplacer"></canvas></div>
     <div class="row"><button class="ib" data-a="play">▶</button><span data-r="time">0:00</span><span class="sp"></span>
+      <button class="ib" data-a="trim" title="Couper le silence avant la première et après la dernière parole">✂ Bords muets</button>
       <button class="ib" data-a="in" title="Marquer le début d'une coupe à la tête de lecture">⟦ Début</button><button class="ib" data-a="out" disabled>Couper ⟧</button>
       <label><input type="checkbox" data-a="pv" checked> Sauter les coupes</label></div>
     <div class="row" data-r="status"></div>
-    <div class="tabs" role="tablist"><button role="tab" data-tab="tx" aria-selected="true">Texte</button><button role="tab" data-tab="sg" aria-selected="false">Suggestions</button></div>
+    <div class="tabs" role="tablist"><button role="tab" data-tab="tx" aria-selected="true">Texte</button><button role="tab" data-tab="sg" aria-selected="false">Suggestions</button><button role="tab" data-tab="cc" aria-selected="false">Sous-titres</button></div>
     <div class="body" data-r="body"></div>`;
   document.body.appendChild(root);
   const q = <T extends Element = HTMLElement>(sel: string) => root.querySelector(sel) as unknown as T;
-  const video = q<HTMLVideoElement>("video"), cv = q<HTMLCanvasElement>("canvas"), body = q("[data-r=body]");
+  const video = q<HTMLVideoElement>("video"), cv = q<HTMLCanvasElement>("canvas.wave"), ccv = q<HTMLCanvasElement>("canvas.cc"), body = q("[data-r=body]");
   const url = URL.createObjectURL(o.file); video.src = url;
 
   /* ---------- État ---------- */
@@ -83,12 +89,13 @@ export async function openEditor(o: EditorOptions) {
   const ignored = new Set(saved?.ignored ?? []);
   let pk: Float32Array | null = saved?.peaks ? Float32Array.from(saved.peaks, (x) => x / 255) : null;
   let pcm: Float32Array | null = null, audioErr = "";
-  let tab: "tx" | "sg" = "tx", sel: { anchor: number; a: number; b: number } | null = null, inPt: number | null = null, stopAt: number | null = null;
+  let style: CaptionStyle = { ...CAPTION_DEFAULT, ...(saved?.style ?? {}) }, norm = saved?.norm ?? true, q720 = saved?.q720 ?? false, lines: CapLine[] = [];
+  let tab: "tx" | "sg" | "cc" = "tx", sel: { anchor: number; a: number; b: number } | null = null, inPt: number | null = null, stopAt: number | null = null;
   let worker: Worker | null = null, raf = 0, closed = false, curWord = -1, follow = true;
   const ctl = new AbortController();
 
   const save = () => {
-    const s: Saved = { v: 1, duration, words, cuts: session.cuts, ignored: [...ignored], peaks: pk ? Array.from(pk, (x) => Math.round(x * 255)) : undefined };
+    const s: Saved = { v: 1, duration, words, cuts: session.cuts, ignored: [...ignored], style, norm, q720, peaks: pk ? Array.from(pk, (x) => Math.round(x * 255)) : undefined };
     try { localStorage.setItem(storeKey, JSON.stringify(s)); } catch { /* quota localStorage : on garde en mémoire */ }
   };
   const covered = (r: Range) => session.cuts.some((c) => c.start <= r.start + 0.02 && c.end >= r.end - 0.02);
@@ -110,7 +117,8 @@ export async function openEditor(o: EditorOptions) {
     const open = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range)).length;
     q("[data-tab=sg]").textContent = `Suggestions${sugs.length ? ` (${open})` : ""}`;
     root.querySelectorAll<HTMLElement>("[data-tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
-    if (tab === "tx") renderText(); else renderSugs();
+    lines = words ? buildCaptions(words, session.cuts) : [];
+    if (tab === "tx") renderText(); else if (tab === "sg") renderSugs(); else renderCC();
     renderSel();
   }
 
@@ -154,16 +162,43 @@ export async function openEditor(o: EditorOptions) {
           <button class="ib" data-a="ign" aria-label="${ign ? "Rétablir la suggestion" : "Ignorer"}">${ign ? "↩" : "✕"}</button></div>`; }).join("");
   }
 
+  function renderCC() {
+    if (!words) { body.innerHTML = `<div class="card"><p>Les sous-titres sont générés à partir de la transcription (onglet Texte).</p></div>`; return; }
+    if (body.querySelector("[data-cc]")) return; // déjà affiché : on ne casse pas le curseur en cours de glissement
+    body.innerHTML = `<div class="card" data-cc><b>Sous-titres incrustés</b><p>Aperçu en direct sur la vidéo. Ils sont gravés dans l’export (visibles partout, même son coupé).</p>
+      <div class="chips">${(Object.keys(PRESETS) as CaptionPreset[]).map((k) => `<button class="ib" data-a="preset" data-v="${k}" aria-pressed="${style.preset === k}">${PRESETS[k]}</button>`).join("")}</div>
+      <label class="opt">Haut <input type="range" data-a="pos" min="0.12" max="0.88" step="0.01" value="${style.pos}"> Bas</label>
+      <label class="opt"><input type="checkbox" data-a="upper" ${style.upper ? "checked" : ""}> MAJUSCULES</label>
+      <label class="opt">Couleur du mot actif <input type="color" data-a="color" value="${style.color}"></label>
+      <p>Un mot mal transcrit ? Onglet Texte : touchez-le, puis ✎.</p></div>`;
+  }
+  const setStyle = (p: Partial<CaptionStyle>) => { style = { ...style, ...p }; save(); };
+  body.addEventListener("input", (e) => {
+    const t = e.target as HTMLInputElement, a = t.dataset.a;
+    if (a === "pos") setStyle({ pos: +t.value }); else if (a === "upper") setStyle({ upper: t.checked }); else if (a === "color") setStyle({ color: t.value });
+  });
+
+  /** Sous-titres en surimpression sur le lecteur (même rendu que l'export). */
+  function drawCC() {
+    const dpr = devicePixelRatio || 1, bw = ccv.clientWidth, bh = ccv.clientHeight;
+    if (ccv.width !== Math.round(bw * dpr) || ccv.height !== Math.round(bh * dpr)) { ccv.width = Math.round(bw * dpr); ccv.height = Math.round(bh * dpr); }
+    const g = ccv.getContext("2d")!; g.clearRect(0, 0, ccv.width, ccv.height);
+    if (!lines.length || style.preset === "none" || !video.videoWidth) return;
+    const k = Math.min(bw / video.videoWidth, bh / video.videoHeight), w = video.videoWidth * k * dpr, h = video.videoHeight * k * dpr;
+    drawCaption(g, (ccv.width - w) / 2, (ccv.height - h) / 2, w, h, lineAt(lines, video.currentTime), video.currentTime, style);
+  }
+
   let selBar: HTMLElement | null = null;
   function renderSel() {
     if (!sel || !words || tab !== "tx") { selBar?.remove(); selBar = null; return; }
     if (!selBar) {
       selBar = document.createElement("div"); selBar.className = "selbar";
-      selBar.innerHTML = `<span></span><button class="ib" data-a="hearSel">▶</button><button class="ib go" data-a="cutSel">✂ Couper</button><button class="ib" data-a="keepSel">↺ Garder</button><button class="ib" data-a="clearSel" aria-label="Désélectionner">✕</button>`;
+      selBar.innerHTML = `<span></span><button class="ib" data-a="hearSel">▶</button><button class="ib" data-a="fixSel" title="Corriger le mot">✎</button><button class="ib go" data-a="cutSel">✂ Couper</button><button class="ib" data-a="keepSel">↺ Garder</button><button class="ib" data-a="clearSel" aria-label="Désélectionner">✕</button>`;
       root.appendChild(selBar);
     }
     const n = sel.b - sel.a + 1, txt = words.slice(sel.a, sel.b + 1).map((w) => w.text).join(" ");
     selBar.querySelector("span")!.textContent = `${n} mot${n > 1 ? "s" : ""} · ${txt}`;
+    (selBar.querySelector("[data-a=fixSel]") as HTMLElement).hidden = n !== 1;
   }
 
   /* ---------- Timeline ---------- */
@@ -203,7 +238,7 @@ export async function openEditor(o: EditorOptions) {
       if (k !== curWord) { const sp = body.querySelectorAll<HTMLElement>(".tx span"); sp[curWord]?.classList.remove("cur"); curWord = k;
         if (sp[k]) { sp[k].classList.add("cur"); if (!video.paused && follow) sp[k].scrollIntoView({ block: "center", behavior: "smooth" }); } }
     }
-    draw(); raf = requestAnimationFrame(tick);
+    draw(); drawCC(); raf = requestAnimationFrame(tick);
   }
   body.addEventListener("touchmove", () => (follow = false), { passive: true }); // l'utilisateur fait défiler : on ne le contrarie pas
 
@@ -237,9 +272,36 @@ export async function openEditor(o: EditorOptions) {
     const copy = pcm.slice(); worker.postMessage({ type: "run", audio: copy, language: "fr", model }, [copy.buffer]);
   }
 
+  /** Coupe le silence avant la première parole et après la dernière (mots si transcrits, sinon énergie audio). */
+  async function trimEdges() {
+    let b: { start: number; end: number } | null = null;
+    if (words?.length) b = { start: words[0].start, end: words[words.length - 1].end };
+    else { await audioP; if (pcm) b = speechBounds(pcm, 16000); }
+    if (!b) return toast("Aucune parole détectée.", 2500);
+    const r: Range[] = []; if (b.start - 0.25 > 0.1) r.push({ start: 0, end: b.start - 0.25 }); if (duration - (b.end + 0.4) > 0.1) r.push({ start: b.end + 0.4, end: duration });
+    if (!r.length) return toast("Pas de silence à couper au début ni à la fin.", 2500);
+    session.addCuts(r); commit(); toast(`Bords coupés (−${r.reduce((s, x) => s + x.end - x.start, 0).toFixed(1)} s). ↶ pour annuler.`, 3000);
+  }
+
   /* ---------- Export ---------- */
-  async function doExport() {
+  /** Options d'export (mémorisées), puis lancement. */
+  function doExport() {
     video.pause();
+    const m = document.createElement("div"); m.className = "modal";
+    const cc = !words ? "aucun (pas de transcription)" : style.preset === "none" ? "désactivés" : PRESETS[style.preset];
+    m.innerHTML = `<div class="card"><b>Exporter le montage</b><p>${fmt(session.editedDuration)} · ${session.cuts.length} coupe(s)</p>
+      <div class="opt">Sous-titres : ${esc(cc)} ${words ? `<button class="ib" data-x="cc">Modifier</button>` : ""}</div>
+      <label class="opt"><input type="checkbox" data-x="norm" ${norm ? "checked" : ""}> Volume optimisé pour les réseaux (≈ −14 LUFS)</label>
+      <label class="opt"><input type="checkbox" data-x="q720" ${q720 ? "checked" : ""}> 720p (fichier ~2× plus léger)</label>
+      <div class="row" style="padding:0"><button class="ib go" data-x="run">Exporter</button><button class="ib" data-x="no">Annuler</button></div></div>`;
+    root.appendChild(m);
+    m.querySelector<HTMLElement>("[data-x=no]")!.onclick = () => m.remove();
+    const ccb = m.querySelector<HTMLElement>("[data-x=cc]"); if (ccb) ccb.onclick = () => { m.remove(); tab = "cc"; body.innerHTML = ""; refresh(); };
+    m.querySelector<HTMLElement>("[data-x=run]")!.onclick = () => {
+      norm = m.querySelector<HTMLInputElement>("[data-x=norm]")!.checked; q720 = m.querySelector<HTMLInputElement>("[data-x=q720]")!.checked; save(); m.remove(); runExport();
+    };
+  }
+  async function runExport() {
     const m = document.createElement("div"); m.className = "modal";
     m.innerHTML = `<div class="card"><b>Export</b><div class="bar"><i></i></div><p data-r="ep">Préparation…</p>
       <div class="row" style="padding:0"><button class="ib" data-x="cancel">Annuler</button></div></div>`;
@@ -251,11 +313,14 @@ export async function openEditor(o: EditorOptions) {
       let blob: Blob, ext: string, how: string;
       try {
         if (!webCodecsAvailable()) throw new Error("WebCodecs indisponible");
-        const r = await exportEdited(o.file, session.cuts, { onProgress, signal: ac.signal }); blob = r.blob; ext = r.ext; how = `${r.video.toUpperCase()}${r.audio ? " + " + r.audio.toUpperCase() : ""}`;
+        let gain = 1; if (norm) { await audioP; if (pcm) gain = loudnessGain(pcm, 16000, session.kept); }
+        const captions = words && style.preset !== "none" ? { lines, style } : null;
+        const r = await exportEdited(o.file, session.cuts, { onProgress, signal: ac.signal, gain, captions, maxHeight: q720 ? 1280 : 0 }); blob = r.blob; ext = r.ext; how = `${r.video.toUpperCase()}${r.audio ? " + " + r.audio.toUpperCase() : ""}`;
       } catch (e: any) {
         if (e?.name === "AbortError") throw e;
         console.warn("Export rapide impossible, repli temps réel", e); ep.textContent = "Export en temps réel (plus lent)…";
-        blob = await exportRealtime(video, duration, session.cuts, onProgress, ac.signal); ext = blob.type.includes("mp4") ? "mp4" : "webm"; how = "temps réel";
+        blob = await exportRealtime(video, duration, session.cuts, onProgress, ac.signal); ext = blob.type.includes("mp4") ? "mp4" : "webm";
+        how = "temps réel" + (words && style.preset !== "none" ? " · sans sous-titres (navigateur non compatible)" : "");
       }
       const name = `green-studio-montage-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.${ext}`, href = URL.createObjectURL(blob);
       const file = new File([blob], name, { type: blob.type });
@@ -279,7 +344,7 @@ export async function openEditor(o: EditorOptions) {
   }
   root.addEventListener("click", (e) => {
     const t = e.target as HTMLElement, a = t.closest<HTMLElement>("[data-a]")?.dataset.a, tb = t.closest<HTMLElement>("[data-tab]")?.dataset.tab;
-    if (tb) { tab = tb as "tx" | "sg"; body.innerHTML = ""; refresh(); body.scrollTop = 0; return; }
+    if (tb) { tab = tb as typeof tab; body.innerHTML = ""; refresh(); body.scrollTop = 0; return; }
     const wi = t.closest<HTMLElement>(".tx span")?.dataset.i;
     if (wi != null && words) {
       const i = +wi;
@@ -299,6 +364,11 @@ export async function openEditor(o: EditorOptions) {
       case "out": if (inPt != null) { const a2 = Math.min(inPt, video.currentTime), b2 = Math.max(inPt, video.currentTime);
         if (b2 - a2 > 0.05) { session.addCut({ start: a2, end: b2 }); commit(); } inPt = null; (q("[data-a=out]") as HTMLButtonElement).disabled = true; } break;
       case "transcribe": transcribe(); break;
+      case "preset": style = { ...style, preset: t.closest<HTMLElement>("[data-v]")!.dataset.v as CaptionPreset }; save();
+        root.querySelectorAll<HTMLElement>("[data-a=preset]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === style.preset))); break;
+      case "fixSel": if (sel && words && sel.a === sel.b) { const v = prompt("Corriger le mot :", words[sel.a].text)?.trim();
+        if (v) { words[sel.a] = { ...words[sel.a], text: v }; const sp = body.querySelector<HTMLElement>(`.tx span[data-i="${sel.a}"]`); if (sp) sp.textContent = v; sugs = analyze(words); sel = null; commit(); } } break;
+      case "trim": trimEdges(); break;
       case "retx": if (confirm("Refaire la transcription ? Vos coupes sont conservées.")) { words = null; sugs = []; sel = null; body.innerHTML = ""; refresh(); } break;
       case "cutSel": if (sel && words) { session.addCut(wordsToRange(words, sel.a, sel.b)); sel = null; commit(); } break;
       case "keepSel": if (sel && words) { session.restore({ start: sel.a > 0 ? words[sel.a - 1].end : 0, end: sel.b < words.length - 1 ? words[sel.b + 1].start : duration }); sel = null; commit(); } break;

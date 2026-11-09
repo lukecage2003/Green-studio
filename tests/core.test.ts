@@ -105,3 +105,22 @@ test("audio : rééchantillonnage, crêtes, fondus, découpe aux silences", asyn
   const b = splitAtSilences(x, rate); assert.equal(b[0], 0); assert.equal(b[b.length - 1], x.length);
   for (let i = 1; i < b.length - 1; i++) { assert.equal(x[b[i]], 0, "coupe dans un silence"); assert.ok(b[i] - b[i - 1] <= 28 * rate); }
 });
+
+test("sous-titres : lignes courtes, pauses, fins de phrase, mots coupés exclus", async () => {
+  const { buildCaptions, lineAt } = await import("../src/core/captions.ts");
+  const w = ["Salut", "tout", "le", "monde.", "Aujourd'hui", "on", "parle", "de", "comics", "après", "une", "pause"].map((t, i) => W(t, i * 0.4, i * 0.4 + 0.3));
+  w[9] = W("après", 5, 5.3); w[10] = W("une", 5.4, 5.6); w[11] = W("pause", 5.7, 6);
+  const L = buildCaptions(w, [{ start: 2.75, end: 3.1 }]); // « de » (2,8–3,1) coupé
+  assert.deepEqual(L.map((l) => l.words.map((x) => x.text).join(" ")), ["Salut tout le monde.", "Aujourd'hui on parle", "comics", "après une pause"]);
+  assert.ok(L.every((l, i) => !L[i + 1] || l.end <= L[i + 1].start), "pas de chevauchement");
+  assert.equal(lineAt(L, 0.5)!.words[0].text, "Salut"); assert.equal(lineAt(L, 5.5)!.words[0].text, "après"); assert.equal(lineAt(L, 100), null);
+});
+test("volume : gain vers la cible, plafond, limiteur, bords muets", async () => {
+  const { loudnessGain, softLimit, speechBounds } = await import("../src/core/audio.ts");
+  const rate = 8000, x = new Float32Array(rate * 4); for (let i = rate; i < rate * 3; i++) x[i] = 0.1 * Math.sin(i / 3); // parole faible (−23 dB) entre 1 s et 3 s
+  const g = loudnessGain(x, rate); const after = 20 * Math.log10(0.1 / Math.SQRT2 * g); assert.ok(Math.abs(after + 16) < 0.5, String(after));
+  assert.equal(+loudnessGain(x.map((v) => v * 0.2), rate).toFixed(2), +Math.pow(10, 12 / 20).toFixed(2), "plafond +12 dB");
+  assert.equal(loudnessGain(new Float32Array(rate), rate), 1, "silence : gain neutre");
+  assert.equal(softLimit(0.5), 0.5); assert.ok(softLimit(3) < 1 && softLimit(3) > 0.95); assert.ok(softLimit(-3) > -1);
+  const b = speechBounds(x, rate)!; assert.ok(Math.abs(b.start - 1) < 0.03 && Math.abs(b.end - 3) < 0.03, JSON.stringify(b));
+});

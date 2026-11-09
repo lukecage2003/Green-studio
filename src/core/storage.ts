@@ -1,6 +1,7 @@
 /** StorageManager : sauvegarde progressive des enregistrements (OPFS en priorité, IndexedDB en repli). */
 export type RecStatus = "recording" | "complete" | "recovered" | "failed";
-export interface RecMeta { id: string; mime: string; startedAt: number; status: RecStatus; bytes: number; chunks: number; durationMs: number; backend: string; error?: string }
+export interface RecMeta { id: string; mime: string; startedAt: number; status: RecStatus; bytes: number; chunks: number; durationMs: number; backend: string; error?: string;
+  downloaded?: boolean; /** prise récupérée déjà proposée à l'utilisateur */ seen?: boolean }
 
 export interface Backend {
   readonly name: string;
