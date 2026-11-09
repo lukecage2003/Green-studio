@@ -31,7 +31,7 @@ const FAKE_WORKER = `self.onmessage = (e) => { if (e.data.type !== 'run') return
   assert.match(await p.textContent('.qe .selbar span'), /2 mots · vais vous/);
   await p.click('.qe [data-a=cutSel]'); assert.equal(await p.locator('.qe .tx span.cut').count() >= 4, true);
   const st2 = await p.textContent('.qe [data-r=status]'); console.log('après coupe manuelle :', st2);
-  await p.screenshot({ path: process.argv[2] || 'qe.png' });
+  await p.screenshot({ path: process.argv[2] || require('os').tmpdir() + '/qe.png' });
   await p.click('.qe [data-a=export]'); await p.waitForSelector('.qe .modal a[download]', { timeout: 30000 });
   console.log('export :', await p.textContent('.qe .modal p'));
   const outDur = await p.evaluate(async () => { const a = document.querySelector('.qe .modal a[download]'); const bl = await (await fetch(a.href)).blob();
