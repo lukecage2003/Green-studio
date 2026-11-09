@@ -14,8 +14,13 @@ function stabilize(f, n, out) {
     const r = a / 255, k = Math.min(1, base + 6 * r * r);
     out[i] = Math.round(prev[i] + d * k);
   }
+  // Garde-fou : un masque soudain vide alors qu'une personne était là (raté ponctuel du modèle) est ignoré quelques images.
+  let cov = 0; for (let i = 0; i < n; i += 7) cov += out[i]; cov /= (n / 7) * 255;
+  if (cov < 0.004 && lastCov > 0.03 && holds < 8) { holds++; out.set(prev); return; }
+  holds = 0; lastCov = cov;
   prev.set(out);
 }
+let lastCov = 0, holds = 0;
 
 let ImageSegmenter = null;
 async function create(model) {
@@ -39,7 +44,12 @@ async function init({ bases, model }) {
     try {
       ({ ImageSegmenter } = await import(base + "/vision_bundle.mjs"));
       fileset = await (await import(base + "/vision_bundle.mjs")).FilesetResolver.forVisionTasks(base + "/wasm");
-      return await create(model);
+      const b = await create(model);
+      // Préchauffage : la 1re inférence compile les shaders GPU (lent) ; on la fait ici, avant d'être utilisé.
+      try { const c = new OffscreenCanvas(256, 256), g = c.getContext("2d"); g.fillStyle = "#777"; g.fillRect(0, 0, 256, 256);
+        for (let k = 0; k < 2; k++) seg.segmentForVideo(c, ++lastTs, (r) => r.close?.()); } catch { /* sans gravité */ }
+      prev = null; lastCov = 0; holds = 0;
+      return b;
     } catch (e) { lastErr = e; }
   }
   throw lastErr;

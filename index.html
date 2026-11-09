@@ -61,6 +61,9 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stro
 .recbtn:active{transform:scale(.92)}
 .recbtn i{width:64px;height:64px;border-radius:32px;background:var(--red);transition:all .28s cubic-bezier(.3,.9,.3,1)}
 .recbtn.on i{width:30px;height:30px;border-radius:8px}
+.lens{display:flex;justify-content:center;gap:8px;margin:0 0 10px}
+.lens button{width:38px;height:38px;border-radius:50%;background:rgba(0,0,0,.42);backdrop-filter:blur(20px);font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;transition:transform .2s,color .2s}
+.lens button.on{color:#ffd60a;transform:scale(1.12)}
 #gmode{position:absolute;left:16px;top:0;height:30px;padding:0 12px;border-radius:15px;font-size:13px;font-weight:600;background:rgba(0,0,0,.36);backdrop-filter:blur(20px)}
 body:has(#bar[hidden]) #gmode,body:has(.panel:not([hidden])) #gmode{display:none}
 
@@ -169,6 +172,7 @@ textarea:focus{box-shadow:0 0 0 2px var(--accent)}
 
 <div class="controls">
   <button id="gmode" aria-pressed="true">✋ Sujet</button>
+  <div class="lens" id="lens" hidden><button data-lens="wide">0,4</button><button data-lens="mid">0,7</button><button data-lens="fill">1×</button></div>
   <div id="strip" hidden></div>
   <nav class="dock" id="bar" hidden>
     <button class="lib" id="bLib" aria-label="Mes prises"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="7" width="14" height="14" rx="3"/><path d="M7 3.5h10.5A3.5 3.5 0 0 1 21 7v10.5"/></svg></button>
@@ -395,10 +399,25 @@ void main(){
       cam += (bl-cam)*clamp(uFx.y*inner*2.2,0.,.6);
     }
     float band = clamp(4.*a*(1.-a)+2.*inner,0.,1.);
-    if (uFx.x>.001 && band>.02){ // anti-halo : remplace la teinte du bord par celle de l'intérieur du sujet
-      vec3 F = vec3(0.); float W = 0.;
-      for(int i=0;i<6;i++){ vec2 sv=s0+R[i]*.016*asp; float w=smoothstep(.8,.97,mq(sv)); F+=w*texture(uCam,camUV(sv)).rgb; W+=w; }
-      if (W>.3) cam = mix(cam, F/W, clamp(uFx.x*band,0.,.9));
+    if (uFx.x>.001 && band>.02){
+      // Anti-halo : couleur du sujet (F, juste à l'intérieur) et du VRAI fond derrière la personne (B, juste à l'extérieur).
+      // 1) un pixel de bord qui a la couleur du fond (fenêtre lumineuse, mur blanc…) est retiré : alpha estimé sur l'axe F→B ;
+      // 2) les pixels gardés sont « dé-mélangés » : on retire la part de couleur du fond réel (plus de liseré clair).
+      vec3 F=vec3(0.),B=vec3(0.); float Wf=0.,Wb=0.;
+      for(int i=0;i<6;i++){
+        vec2 sv=s0+R[i]*.016*asp; float m=mq(sv); vec3 c=texture(uCam,camUV(sv)).rgb;
+        float wf=smoothstep(.8,.97,m), wb=1.-smoothstep(.03,.25,m); F+=wf*c; Wf+=wf; B+=wb*c; Wb+=wb;
+        vec2 so=s0+R[i]*.034*asp; float wo=1.-smoothstep(.03,.25,mq(so)); B+=wo*texture(uCam,camUV(so)).rgb; Wb+=wo;
+      }
+      float k=clamp(uFx.x*band,0.,.9);
+      if (Wf>.3){
+        F/=Wf;
+        if (Wb>.3){
+          B/=Wb; vec3 d=F-B; float den=dot(d,d);
+          if (den>.004){ float ac=clamp(dot(cam-B,d)/den,0.,1.); a=mix(a,min(a,ac),clamp(k*1.2,0.,.95)); }
+          if (a>.06) cam=mix(cam,clamp((cam-(1.-a)*B)/a,0.,1.),k);
+        } else cam=mix(cam,F,k);
+      }
     }
   }
   o = vec4(mix(bg,cam,a),1.);
@@ -444,8 +463,9 @@ function cover(sw, sh_, zoom, px, py) {
   return [sx, sy, (1 - sx) / 2 * (1 + px), (1 - sy) / 2 * (1 + py)];
 }
 /** frame : true = image courante de la caméra ; VideoFrame = image exacte analysée par l'IA (masque synchronisé) ; false = rien de neuf. */
+let renderCount = 0; // diagnostic : images composées depuis le démarrage
 function render(frame) {
-  if (video.videoWidth === 0) return;
+  if (video.videoWidth === 0) return; renderCount++;
   if (frame) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tCam); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, frame === true ? video : frame); }
   for (const e of [bgCur, bgPrev]) if (e?.video && e.src.readyState >= 2 && (e === bgCur || !e.src.paused)) {
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, e.t); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, e.src); e.w = e.src.videoWidth; e.h = e.src.videoHeight;
@@ -490,36 +510,57 @@ function visibleRect() {
 }
 let busy = false, busySince = 0, wOpts = "", held = null, sync = true, curModel = "fast", slowSince = 0, fastSince = 0;
 let pendingModel = null;
-function setModel(id) { if (!segWorker || id === curModel || id === pendingModel) return; pendingModel = id; segWorker.postMessage({ type: "model", model: MODELS[id] }); }
+// Préparer un modèle sollicite le GPU (compilation) : jamais pendant un enregistrement (l'image gèlerait).
+// Le changement demandé pendant une prise est appliqué dès qu'elle se termine.
+let deferredModel = null, recStarting = false;
+function setModel(id) {
+  if (!segWorker || id === curModel || id === pendingModel) return;
+  if (rec || recStarting) { deferredModel = id; return; }
+  deferredModel = null; pendingModel = id;
+  const pr = makeWorker(MODELS[id]); const wk = (pendingWk = lastMade);
+  pr.then((r) => { if (pendingModel === id && !wk.cancelled) useWorker(r, id); else r.w.terminate(); })
+    .catch(() => { if (wk.cancelled) return; pendingModel = null; if (id === "hq" && quality === "hq") toast("Mode Précis indisponible sur cet appareil : mode Rapide."); });
+}
 const aiChip = () => setAi("ok", curModel === "hq" ? "Précis" : "Rapide");
 /* Gestion des performances : masque synchronisé tant que l'IA suit (≥ 30 i/s) ; en Auto, passe en Rapide si le Précis est lent
    pendant 2 s, et revient en Précis si le Rapide a beaucoup de marge pendant 8 s. */
 function adapt() {
   const now = performance.now();
   sync = sync ? inferMs < 33 : inferMs < 26; // synchro seulement si l'IA tient ≥ 30 i/s (sinon la vidéo enregistrée ralentirait)
-  if (quality !== "auto") return;
+  if (quality !== "auto" || now < warmUntil) return;
   if (curModel === "hq" && inferMs > 38) { if (!slowSince) slowSince = now; else if (now - slowSince > 2000) { setModel("fast"); slowSince = 0; demoted = true; } } else slowSince = 0;
+  // (pendant une prise, setModel reporte le changement : le rendu, lui, n'attend jamais l'IA)
 }
 let demoted = false; // en Auto, un appareil trop lent pour le Précis reste en Rapide pour la session
-function initWorker() {
+/* Chaque modèle tourne dans son propre worker. Pour changer de modèle, on prépare (et préchauffe) un NOUVEAU worker pendant que
+   l'ancien continue de détourer, puis on bascule d'un coup : pas de gel de l'image, pas de masque vide pendant le changement. */
+function makeWorker(model) {
   return new Promise((res, rej) => {
-    const w = new Worker("/seg.worker.js"); const to = setTimeout(() => { w.terminate(); rej(new Error("délai dépassé")); }, 45000);
+    const w = new Worker("/seg.worker.js"); lastMade = w; const to = setTimeout(() => { w.terminate(); rej(new Error("délai dépassé")); }, 60000);
     w.onmessage = (e) => {
       const d = e.data;
-      if (d.type === "ready") { clearTimeout(to); backend = d.backend; segWorker = w; curModel = "fast"; if (quality !== "fast" && !demoted) setModel("hq"); res(); }
+      if (d.type === "ready") { clearTimeout(to); res({ w, backend: d.backend }); }
       else if (d.type === "error") { clearTimeout(to); w.terminate(); rej(new Error(d.message)); }
-      else if (d.type === "mask") {
+      else if (d.type === "mask" && w === segWorker) {
         busy = false; const f = held; held = null;
         if (d.data) { uploadMask(d.data, d.w, d.h); gl.uniform2f(U.uMO, sentRect[0], sentRect[1]); gl.uniform2f(U.uMS, sentRect[2], sentRect[3]); inferMs += (d.ms - inferMs) * .15; cnt.ai++; }
         if (f) { if (!suspended && d.data) { render(f); cnt.r++; } f.close(); } // image et masque de la MÊME prise de vue : aucun décalage
         adapt();
       }
-      else if (d.type === "modelReady") { curModel = d.model; pendingModel = null; backend = d.backend; inferMs = 0; slowSince = fastSince = 0; if (running) aiChip(); }
-      else if (d.type === "modelError") { pendingModel = null; if (d.model === "hq" && quality === "hq") toast("Mode Précis indisponible sur cet appareil : mode Rapide."); }
     };
-    w.onerror = (e) => { clearTimeout(to); rej(new Error(e.message || "worker")); };
-    w.postMessage({ type: "init", bases: MP_BASES, model: MODELS.fast }); // petit modèle d'abord : prêt vite ; le Précis suit en arrière-plan
+    w.onerror = (e) => { clearTimeout(to); w.terminate(); rej(new Error(e.message || "worker")); };
+    w.postMessage({ type: "init", bases: MP_BASES, model });
   });
+}
+let warmUntil = 0, lastMade = null, pendingWk = null;
+function useWorker(r, id) {
+  const old = segWorker; segWorker = r.w; backend = r.backend; curModel = id; pendingModel = null;
+  busy = false; held?.close(); held = null; wOpts = ""; inferMs = 0; slowSince = 0; warmUntil = performance.now() + 2500; // mesures ignorées le temps de se stabiliser
+  old?.terminate(); if (running) aiChip();
+}
+async function initWorker() {
+  useWorker(await makeWorker(MODELS.fast), "fast"); // petit modèle d'abord : prêt vite ; le Précis se prépare ensuite à côté
+  if (quality !== "fast" && !demoted) setModel("hq");
 }
 async function initSeg() {
   if (typeof Worker !== "undefined" && typeof OffscreenCanvas !== "undefined") {
@@ -616,17 +657,42 @@ async function startCam(f) {
   if (!best) throw lastErr;
   try { localStorage.setItem("gs.cam." + f, JSON.stringify(best.i)); } catch {}
   stream = best.s; camInfo = `${best.w}×${best.h}${best.fps ? " · " + Math.round(best.fps) + " i/s" : ""}`;
-  facing = f; video.srcObject = stream; await video.play(); setCz(1); // plein cadre : l'image remplit tout l'écran
+  facing = f; video.srcObject = stream; await video.play(); setupLens();
   stream.getVideoTracks()[0].addEventListener("ended", () => { if (rec && rec.state !== "inactive") stopRec(); showErr("Caméra interrompue. Rechargez la page."); });
   S.mirror = f === "user"; $("bMirror").setAttribute("aria-pressed", String(S.mirror));
 }
+
+/* Cadrage façon objectifs iPhone. Caméra plus large que le 9:16 (souvent 4:3 paysage) :
+   « 0,6 » = tout le champ de la caméra, sans grossissement, calé en BAS du cadre (le corps va jusqu'au bord, le décor remplit le haut :
+   ce qui dépasse au-dessus de la tête est du fond, donc invisible) ; « 1× » = plein cadre (recadré, donc zoomé). */
+let lens = "mid"; try { lens = localStorage.getItem("gs.lens") || "mid"; } catch {}
+const camAspect = () => (video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : TA);
+/** Zoom de chaque « objectif » : large = tout le champ (+3 % de marge pour cacher les bords adoucis), moyen = entre les deux, 1× = plein cadre. */
+function lensZoom(m) { const a = camAspect(), w = (TA / a) * 1.03; return m === "wide" ? w : m === "mid" ? Math.sqrt(w) : 1; }
+function applyLens(m) {
+  const a = camAspect(); if (a <= TA * 1.15) m = "fill";
+  const cz = lensZoom(m), sy = a > TA ? 1 / cz : a / TA / cz; // hauteur relative de l'image caméra dans le cadre
+  setCz(cz); S.sx = 0; S.sy = sy > 1 ? 1 - (0.985 - (1 - sy) / 2) / sy : 0; // > 1 : calée en bas du cadre
+  document.querySelectorAll("[data-lens]").forEach((b) => b.classList.toggle("on", b.dataset.lens === (a <= TA * 1.15 ? "fill" : m)));
+}
+function setupLens() {
+  const a = camAspect(), wideOk = a > TA * 1.15;
+  $("lens").hidden = !wideOk;
+  if (wideOk) for (const m of ["wide", "mid"]) $("lens").querySelector(`[data-lens="${m}"]`).textContent = lensZoom(m).toFixed(1).replace(".", ",");
+  applyLens(lens);
+}
+document.querySelectorAll("[data-lens]").forEach((b) => (b.onclick = () => { lens = b.dataset.lens; try { localStorage.setItem("gs.lens", lens); } catch {} applyLens(lens); }));
 
 /* ---------- Boucle ---------- */
 const cnt = { cam: 0, ai: 0, r: 0 }, rate = { cam: 0, ai: 0, r: 0 };
 let running = false;
 let suspended = false; // vrai pendant le montage : on ne calcule plus l'image caméra (batterie)
 function camLoop() {
-  if (!suspended) { cnt.cam++; infer(); if (!(segWorker && sync)) { render(true); cnt.r++; } } // en mode synchronisé, le rendu suit l'arrivée du masque
+  if (!suspended) {
+    cnt.cam++; infer();
+    if (!(segWorker && sync)) { render(true); cnt.r++; }
+    else if (busy && performance.now() - busySince > 45) { held?.close(); held = null; render(true); cnt.r++; } // l'IA tarde : on n'attend pas, l'image ne gèle jamais
+  }
   if (running) video.requestVideoFrameCallback(camLoop);
 }
 setInterval(() => { for (const k in cnt) { rate[k] = cnt[k] * 2; cnt[k] = 0; }
@@ -742,7 +808,18 @@ $("rec").onclick = async () => {
   await startRec(); if (!rec) $("rec").classList.remove("on");
   if (rec && $("cdOn").checked && $("tpShow").checked) { tpRestart(); if (!tpOn) tpToggle(); }
 };
+/** Au début d'une prise : une préparation de modèle en cours est annulée (elle chargerait le GPU), puis relancée à la fin. */
+function pauseModelPrep() {
+  if (!pendingModel) return;
+  if (pendingWk) { pendingWk.cancelled = true; pendingWk.terminate(); }
+  deferredModel = pendingModel; pendingModel = null; pendingWk = null;
+}
 async function startRec() {
+  recStarting = true; pauseModelPrep(); // dès le début du démarrage (l'enregistreur met un instant à se préparer)
+  try { await startRecInner(); }
+  finally { recStarting = false; if (!rec && deferredModel) setModel(deferredModel); } // prise non lancée : on reprend la préparation
+}
+async function startRecInner() {
   if (typeof MediaRecorder === "undefined") return toast("MediaRecorder indisponible sur ce navigateur.");
   recMime = MIMES.find((m) => MediaRecorder.isTypeSupported(m));
   if (!recMime) return toast("Aucun format d’enregistrement pris en charge.");
@@ -772,6 +849,7 @@ function stopRec() { clearInterval(recTimer); if (rec.state !== "inactive") rec.
 async function finishRec() {
   const type = recMime.split(";")[0], ext = type === "video/mp4" ? "mp4" : "webm";
   rec = null; let blob;
+  if (deferredModel) setModel(deferredModel); // changement de modèle reporté pendant la prise
   let id = null;
   if (writer) { const meta = await writer.finish(performance.now() - t0r); id = meta.id; blob = await (await backendP).file(meta.id); } // adossé au disque
   else { blob = new Blob(chunks, { type }); chunks = []; }
@@ -932,7 +1010,8 @@ fillPre(last in presets ? last : null); applyPre(presets[$("preSel").value]);
 function camFit() { const a = video.videoWidth / video.videoHeight; return a ? Math.min(a / TA, TA / a) : 1; }
 function setCz(z) { S.cz = z; $("cz").value = z; }
 $("cz").oninput = (e) => (S.cz = +e.target.value);
-$("czFit").onclick = () => setCz(camFit()); $("czFill").onclick = () => setCz(1);
+const pickLens = (m) => { lens = m; try { localStorage.setItem("gs.lens", m); } catch {} applyLens(m); };
+$("czFit").onclick = () => pickLens("wide"); $("czFill").onclick = () => pickLens("fill");
 /* ---------- Bibliothèque de décors ---------- */
 const GEN = [['#0f2a1d', '#1c6b46'], ['#1a1033', '#6a3cc2'], ['#0b1f33', '#1f7ab8'], ['#2a0f0f', '#c2573c']];
 const lib = GEN.map((g, i) => ({ id: 'g' + i, kind: 'gen', g }));
@@ -1061,7 +1140,7 @@ const endPtr = (e) => {
     if (gmode === "bg" && Math.abs(dx) > 50 && Math.abs(dx) > 1.5 * Math.abs(dy) && dt < 700) setBg(bi + (dx < 0 ? 1 : -1));
     else if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
       const now = performance.now();
-      if (gmode === "sub" && now - lastTap < 350) { clearTimeout(tapT); S.sx = 0; S.sy = 0; setCz(1); lastTap = 0; }
+      if (gmode === "sub" && now - lastTap < 350) { clearTimeout(tapT); applyLens(lens); lastTap = 0; }
       else { lastTap = now; clearTimeout(tapT); tapT = setTimeout(() => openP(null), gmode === "sub" ? 360 : 0); }
     }
   }
@@ -1080,7 +1159,7 @@ document.querySelectorAll("[data-look]").forEach((b) => (b.onclick = () => {
 }));
 $("go").addEventListener("click", () => setTimeout(() => { try { if (!localStorage.gsHint) { localStorage.gsHint = 1; const t = $("toast"); t.classList.add("ok"); toast("Glissez pour vous placer · pincez pour agrandir · double-tap pour recentrer", 6000); setTimeout(() => t.classList.remove("ok"), 6200); } } catch { /* stockage indisponible */ } }, 1800));
 // Diagnostic en lecture seule (tests, et « IA » touché pour l'afficher) : état du décor, du modèle et de la synchro.
-window.gsDebug = { get bg() { return bgCur?.id; }, get model() { return curModel; }, get sync() { return !!(segWorker && sync); }, get inferMs() { return inferMs; },
+window.gsDebug = { get renders() { return renderCount; }, get pending() { return pendingModel; }, get deferred() { return deferredModel; }, get recording() { return !!rec; }, get lens() { return lens; }, get bg() { return bgCur?.id; }, get model() { return curModel; }, get sync() { return !!(segWorker && sync); }, get inferMs() { return inferMs; },
   get cam() { return camInfo; }, get maskRect() { return sentRect; },
   get vad() { return !!vad?.speaking; }, get tpPos() { return tpPos; }, get mic() { return micStream?.getAudioTracks()[0]?.label; } };
 $("qSel").value = quality;

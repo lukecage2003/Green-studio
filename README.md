@@ -1,4 +1,4 @@
-# Green Studio 3.0 — état réel (alpha.7)
+# Green Studio 3.0 — état réel (alpha.8)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,13 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## Nouveautés alpha.8 (d'après la 2e vidéo : gels de 0,8 s et 0,5 s, disparition du sujet, cadrage trop serré, liseré clair)
+- **Plus de gel ni de disparition au changement de modèle** : chaque modèle est préparé et préchauffé dans un worker séparé, puis échangé d'un coup ; jamais de préparation pendant une prise (reportée à la fin, annulée si elle avait commencé) ; mesures ignorées le temps de se stabiliser (plus d'aller-retour Précis ↔ Rapide).
+- **L'image n'attend plus l'IA** : si le masque tarde (> 45 ms), l'image est affichée avec le dernier masque.
+- **Masque vide ponctuel ignoré** (quelques images) quand une personne était là.
+- **Cadrage façon objectifs iPhone** pour les caméras 4:3 : 0,4 (tout le champ), 0,7 (par défaut), 1× (plein cadre) ; image calée en bas du cadre, décor au-dessus ; choix mémorisé.
+- **Bords sans liseré** : estimation de la couleur du vrai fond (fenêtre, mur clair) autour du sujet ; les pixels de bord de cette couleur sont retirés et les autres « dé-mélangés ».
 
 ## Nouveautés alpha.7 — interface inspirée d'iOS
 - **Viseur toujours exactement 9:16** (avant : étiré sur les écrans allongés comme le S25) ; la vidéo enregistrée est toujours en 9:16, quelle que soit la caméra.

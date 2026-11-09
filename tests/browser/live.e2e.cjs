@@ -12,6 +12,10 @@ const { chromium } = require('playwright'); const assert = require('assert');
   await p.waitForSelector('#micChip:not([hidden])'); console.log('micro :', await p.textContent('#micChip'));
   // Plein écran : la caméra (simulée, en paysage 4:3) remplit le cadre 9:16 ; l'IA n'analyse que la zone visible
   const cam = await p.evaluate(() => window.gsDebug.cam); console.log('caméra :', cam);
+  if (process.env.LANDSCAPE) { // caméra 4:3 : objectifs 0,4 / 0,7 / 1× proposés ; en 1× (plein cadre), seule la zone visible va à l'IA
+    assert.ok(await p.isVisible('#lens')); console.log('objectifs :', await p.locator('#lens button').allTextContents());
+    await p.click('[data-lens=fill]'); await p.waitForTimeout(500);
+  }
   await p.evaluate(() => { const i = document.getElementById('inv'); i.checked = true; i.dispatchEvent(new Event('change')); }); // masque inversé : caméra visible partout
   await p.waitForTimeout(2500); await p.screenshot({ path: process.argv[2] || require('os').tmpdir() + '/live.png' });
   const rect = await p.evaluate(() => window.gsDebug.maskRect); console.log('zone analysée :', rect.map((x) => +x.toFixed(2)));
@@ -36,8 +40,10 @@ const { chromium } = require('playwright'); const assert = require('assert');
   // Prompteur « suit ma voix » : avance quand on parle (bips du micro simulé), s'arrête micro coupé
   await p.click('#bScript'); await p.fill('#tpIn', Array.from({ length: 80 }, (_, i) => `Ligne ${i} du script de test.`).join('\n'));
   await p.selectOption('#tpMode', 'voice'); await p.evaluate(() => { const e = document.getElementById('tpSpd'); e.value = 120; e.dispatchEvent(new Event('input')); });
-  await p.click('#tpPlay'); await p.waitForTimeout(3000); const y1 = await p.evaluate(() => document.getElementById('tp').scrollTop);
-  console.log('prompteur, voix présente : défilé de', y1, 'px'); assert.ok(y1 > 30);
+  await p.click('#tpPlay'); // l'émulation GPU peut bloquer l'affichage quelques secondes : on attend jusqu'à 10 s que le texte avance
+  const y1 = await p.evaluate(async () => { const t0 = performance.now(); let y = 0; while (performance.now() - t0 < 10000 && (y = document.getElementById('tp').scrollTop) <= 30) await new Promise((r) => setTimeout(r, 200)); return y; });
+  console.log('prompteur, voix présente : défilé de', y1, 'px');
+  if (y1 <= 30) console.log('diagnostic :', await p.evaluate(() => ({ vad: window.gsDebug.vad, mic: window.gsDebug.mic, play: document.getElementById('tpPlay').textContent, shown: !document.getElementById('tp').hidden, mode: document.getElementById('tpMode').value, h: document.getElementById('tp').scrollHeight, ch: document.getElementById('tp').clientHeight }))); assert.ok(y1 > 30);
   await p.evaluate(() => { const g = document.getElementById('gain'); g.value = 0; g.dispatchEvent(new Event('input')); });
   await p.waitForTimeout(800); const y2 = await p.evaluate(() => document.getElementById('tp').scrollTop); await p.waitForTimeout(2000);
   const y3 = await p.evaluate(() => document.getElementById('tp').scrollTop); console.log('silence : défilé de', y3 - y2, 'px'); assert.ok(y3 - y2 < 3, "s'arrête au silence");
