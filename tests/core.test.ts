@@ -124,3 +124,24 @@ test("volume : gain vers la cible, plafond, limiteur, bords muets", async () => 
   assert.equal(softLimit(0.5), 0.5); assert.ok(softLimit(3) < 1 && softLimit(3) > 0.95); assert.ok(softLimit(-3) > -1);
   const b = speechBounds(x, rate)!; assert.ok(Math.abs(b.start - 1) < 0.03 && Math.abs(b.end - 3) < 0.03, JSON.stringify(b));
 });
+
+test("prompteur : alignement des mots entendus (progression, saut, relecture, bruit)", async () => {
+  const { tokenize, align, normWord } = await import("../src/core/prompter.ts");
+  const t = tokenize("Salut à tous !\nAujourd'hui on parle du nouveau numéro de Spider-Man, sorti cette semaine chez Marvel.");
+  assert.equal(t.parts[t.wordIdx[3]], "Aujourd'hui"); assert.equal(t.norm[3], "aujourdhui");
+  const H = (s: string) => s.split(" ").map(normWord);
+  assert.equal(align(t.norm, H("salut à tous aujourd'hui on"), 0), 5, "progression normale");
+  assert.equal(align(t.norm, H("sorti cette semaine"), 5), 14, "saut en avant");
+  assert.equal(align(t.norm, H("on parle du"), 12), 7, "relecture");
+  assert.equal(align(t.norm, H("du nouveau numerot"), 5), 9, "une erreur de reconnaissance tolérée");
+  assert.equal(align(t.norm, H("bonjour les amis"), 5), null, "hors script : on ne bouge pas");
+});
+test("prompteur : détection de parole à seuil adaptatif", async () => {
+  const { VoiceDetector } = await import("../src/core/prompter.ts");
+  const v = new VoiceDetector(); let t = 0;
+  for (let i = 0; i < 100; i++) v.update(0.004 + (i % 3) * 0.001, (t += 20)); // bruit de fond
+  assert.equal(v.speaking, false, "bruit seul : pas de parole");
+  assert.equal(v.update(0.08, (t += 20)), true, "voix");
+  assert.equal(v.update(0.004, (t += 200)), true, "maintien après une syllabe");
+  assert.equal(v.update(0.004, (t += 400)), false, "silence");
+});

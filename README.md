@@ -1,4 +1,4 @@
-# Green Studio 3.0 — état réel (alpha.4)
+# Green Studio 3.0 — état réel (alpha.5)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -7,10 +7,11 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 `npm install` copie MediaPipe dans `public/mediapipe/` (plus de dépendance au CDN).
 
 ## Tests
-- `npm test` : tests unitaires (Node 22) — 17/17.
+- `npm test` : tests unitaires (Node 22) — 19/19.
 - `npm run test:browser` (avec `npx vite --port 5173` lancé) : tests dans Chromium, caméra simulée.
   - `media.e2e` : vraie vidéo MediaRecorder → extraction audio, export avec coupe (durée exacte), annulation.
-  - `app.e2e` : compte à rebours → enregistrement → aperçu → ✂ Monter → transcription (Whisper simulé) → suggestions → annuler/rétablir → coupe par sélection de mots → sous-titres → export (durée vérifiée, sous-titres gravés vérifiés dans l'image) → réouverture (montage conservé) → Mes prises (liste, montage, suppression). `MP4=1` teste le repli temps réel.
+  - `live.e2e` : micro affiché ; changement de décor mesuré (≈ 0–1 ms) ; modèle Précis chargé en arrière-plan ; prompteur qui avance avec la voix et s'arrête au silence.
+  - `app.e2e` : compte à rebours → enregistrement → aperçu → ✂ Monter → transcription (Whisper simulé) → suggestions → annuler/rétablir → coupe par sélection de mots → lecture du montage (aucune image coupée affichée, relais entre lecteurs) → sous-titres → export (durée vérifiée, sous-titres gravés vérifiés dans l'image) → réouverture (montage conservé) → Mes prises (liste, montage, suppression). `MP4=1` teste le repli temps réel.
 
 ## Fait ET testé
 - `core/timeline.ts`, `core/speech-analysis.ts` : coupes non destructives, conversions de temps, suggestions (répétitions, bégaiements, faux départs, hésitations, silences).
@@ -30,6 +31,14 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Stockage persistant** demandé au navigateur (les prises ne sont pas effacées pour faire de la place) ; si l'espace manque, la bibliothèque s'ouvre.
 - **Compte à rebours 3-2-1** (toucher pour annuler) puis lancement du prompteur depuis le début, synchronisé avec l'enregistrement.
 
+## Nouveautés alpha.5 (testées)
+- **Prompteur qui suit la voix** (`core/prompter.ts`) : « Suit ma voix » (hors ligne : avance quand vous parlez, s'arrête au silence, seuil adaptatif au bruit) ; « Suit mes mots » (reconnaissance Chrome : se cale sur le mot prononcé même après un saut ou une reprise, mots lus estompés ; repli automatique) ; vitesse fixe. Liseré vert quand votre voix est détectée.
+- **Détourage amélioré** : modèle **Précis** (selfie multiclasse : cheveux, visage, corps, vêtements) chargé en arrière-plan après le modèle Rapide ; réglage Auto / Précis / Rapide ; en Auto, retour en Rapide si l'appareil peine. **Masque synchronisé** : chaque image est affichée avec son propre masque (plus de « traînée » en bougeant) dès que l'IA tient 30 i/s.
+- **Décors instantanés** : textures gardées sur le GPU, voisins et vignette touchée préchargés ; **fondu enchaîné** de 0,2 s.
+- **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
+- **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
+- **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
 ## Fait mais NON testé ici (pas de réseau vers huggingface.co, pas de téléphone)
 - Transcription Whisper réelle (`workers/transcribe.worker.ts`, modèle `onnx-community/whisper-base_timestamped`, WebGPU → WASM). Le worker se charge et gère l'échec réseau proprement ; le résultat réel reste à vérifier sur l'appareil.
 - Note : Whisper omet souvent les « euh » ; les silences, répétitions et faux départs restent détectés.
@@ -37,4 +46,5 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 
 ## Reste à faire
 - Test complet sur Galaxy S25 (procédure des 17 points).
+- « Suit mes mots » : la reconnaissance vocale de Chrome partage le micro avec l'enregistrement ; sur certains Android elle peut être refusée → repli automatique sur « Suit ma voix » (à vérifier sur le S25).
 - Le repli export temps réel (navigateurs sans WebCodecs) n'inclut ni sous-titres ni volume optimisé (signalé à l'écran).

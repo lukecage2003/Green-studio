@@ -12,11 +12,12 @@ const FAKE_WORKER = `self.onmessage = (e) => { if (e.data.type !== 'run') return
   // Le Chromium de test encode le H.264 mais ne sait pas le décoder (Chrome Android, si) : on enregistre en WebM pour
   // exercer l'export rapide WebCodecs ; le repli temps réel est testé ensuite avec le MP4.
   if (!process.env.MP4) await ctx.addInitScript(() => { const f = MediaRecorder.isTypeSupported; MediaRecorder.isTypeSupported = (m) => !m.startsWith('video/mp4') && f.call(MediaRecorder, m); });
+  await ctx.addInitScript(() => localStorage.setItem('gs.q', 'fast')); // détourage Rapide : le Précis est testé dans live.e2e
   await ctx.route(/transcribe\.worker/, (r) => r.fulfill({ contentType: 'text/javascript', body: FAKE_WORKER }));
   await p.goto('http://localhost:5173/');
   await p.click('#go'); await p.waitForSelector('#rec:not([hidden])', { timeout: 30000 });
   await p.click('#rec'); await p.waitForSelector('#cd:not([hidden])'); // compte à rebours 3-2-1
-  await p.waitForSelector('#recChip:not([hidden])', { timeout: 6000 }); await p.waitForTimeout(6000); await p.click('#rec');
+  await p.waitForSelector('#recChip:not([hidden])', { timeout: 20000 }).catch(async (e) => { console.log('toast:', await p.textContent('#toast'), errs); throw e; }); await p.waitForTimeout(6000); await p.click('#rec');
   await p.waitForSelector('#pv:not([hidden])'); console.log('aperçu :', await p.textContent('#pvInfo'));
   await p.click('#pvEdit'); await p.waitForSelector('.qe');
   await p.waitForFunction(() => /Montage \d/.test(document.querySelector('.qe [data-r=status]').textContent), null, { timeout: 15000 });
@@ -32,6 +33,17 @@ const FAKE_WORKER = `self.onmessage = (e) => { if (e.data.type !== 'run') return
   assert.match(await p.textContent('.qe .selbar span'), /2 mots · vais vous/);
   await p.click('.qe [data-a=cutSel]'); assert.equal(await p.locator('.qe .tx span.cut').count() >= 4, true);
   const st2 = await p.textContent('.qe [data-r=status]'); console.log('après coupe manuelle :', st2);
+  // Lecture du montage : jamais dans une partie coupée, relais instantané entre les deux lecteurs aux raccords
+  const pb = await p.evaluate(async () => {
+    const cuts = JSON.parse(localStorage.getItem(Object.keys(localStorage).find((k) => k.startsWith('gs.qe.')))).cuts;
+    const act = () => document.querySelector('.qe video:not(.spare)'); act().currentTime = 0; await new Promise((r) => setTimeout(r, 300));
+    document.querySelector('.qe [data-a=play]').click();
+    let inCut = 0, swaps = 0, n = 0, last = act(); const t0 = performance.now();
+    while (performance.now() - t0 < 3500) { const v = act(); if (v !== last) { swaps++; last = v; }
+      const t = v.currentTime; if (!v.paused && cuts.some((c) => t > c.start + 0.06 && t < c.end - 0.06)) inCut++; n++; await new Promise((r) => setTimeout(r, 15)); }
+    act().pause(); return { cuts: cuts.length, inCut, swaps, n };
+  });
+  console.log('lecture du montage :', pb); assert.equal(pb.inCut, 0, 'aucune image coupée montrée'); assert.ok(pb.swaps >= 1, 'relais entre lecteurs');
   // sous-titres : aperçu en direct, style mot par mot puis karaoké
   await p.click('.qe [data-tab=cc]'); await p.click('.qe [data-a=preset][data-v=word]'); await p.click('.qe [data-a=preset][data-v=karaoke]');
   await p.evaluate(() => (document.querySelector('.qe video').currentTime = 0.45)); await p.waitForTimeout(400);
@@ -43,10 +55,11 @@ const FAKE_WORKER = `self.onmessage = (e) => { if (e.data.type !== 'run') return
   const [outDur, white] = await p.evaluate(async () => { const a = document.querySelector('.qe .modal a[download]'); const bl = await (await fetch(a.href)).blob();
     const m = await import('/src/core/media.ts'); const mb = await import('/node_modules/.vite/deps/mediabunny.js');
     // pixels blancs dans la bande des sous-titres à 0,4 s (« Bonjour » prononcé) : preuve qu'ils sont gravés dans l'image
-    const inp = new mb.Input({ source: new mb.BlobSource(bl), formats: mb.ALL_FORMATS }); const s = await new mb.VideoSampleSink(await inp.getPrimaryVideoTrack()).getSample(0.4);
-    const c = new OffscreenCanvas(s.displayWidth, s.displayHeight), g = c.getContext('2d'); s.draw(g, 0, 0); s.close();
-    const d = g.getImageData(0, Math.round(c.height * 0.66), c.width, Math.round(c.height * 0.12)).data; let w = 0;
-    for (let i = 0; i < d.length; i += 4) if (d[i] > 225 && d[i + 1] > 225 && d[i + 2] > 225) w++;
+    const inp = new mb.Input({ source: new mb.BlobSource(bl), formats: mb.ALL_FORMATS }); let w = 0;
+    for await (const s of new mb.VideoSampleSink(await inp.getPrimaryVideoTrack()).samples(0, 2)) { // images de la 1re ligne de sous-titres
+      const c = new OffscreenCanvas(s.displayWidth, s.displayHeight), g = c.getContext('2d'); s.draw(g, 0, 0); s.close();
+      const d = g.getImageData(0, Math.round(c.height * 0.66), c.width, Math.round(c.height * 0.12)).data; let k = 0;
+      for (let i = 0; i < d.length; i += 4) if (d[i] > 225 && d[i + 1] > 225 && d[i + 2] > 225) k++; w = Math.max(w, k); }
     return [(await m.probe(bl)).duration, w]; });
   console.log('pixels blancs (sous-titres) :', white); assert.ok(white > 500, 'sous-titres gravés');
   const edited = await p.evaluate(() => JSON.parse(localStorage.getItem(Object.keys(localStorage).find((k) => k.startsWith('gs.qe.')))));

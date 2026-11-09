@@ -35,6 +35,7 @@ hr{border:0;border-top:1px solid #ffffff1a;width:100%;margin:2px 0}
 .top{flex-wrap:wrap}.bar{flex-wrap:wrap;padding:0 6px;gap:6px}.round{padding:10px 12px;font-size:12px}
 .recbtn{position:absolute;bottom:64px;left:50%;transform:translateX(-50%);width:64px;height:64px;border-radius:50%;background:#ffffff22;border:3px solid #fff;display:grid;place-items:center;padding:0}
 .recbtn i{width:36px;height:36px;border-radius:50%;background:#ff3b30;transition:.15s}.recbtn.on i{width:22px;height:22px;border-radius:5px}
+#tp span.rd{opacity:.38;transition:opacity .25s}#tp.talk{box-shadow:inset 4px 0 0 var(--accent)}
 #tp{position:absolute;left:0;right:0;top:12%;height:30%;overflow-y:auto;background:rgba(0,0,0,.5);padding:10px 16px;text-align:center;font-weight:600;font-size:26px;line-height:1.4;white-space:pre-wrap;touch-action:pan-y;scrollbar-width:none}
 #tp::-webkit-scrollbar{display:none}
 #toast{position:absolute;top:46px;left:8px;right:8px;text-align:center;white-space:normal;pointer-events:none;z-index:6}
@@ -86,7 +87,7 @@ body{font-family:ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",
 <main class="stage">
   <canvas id="out" width="1080" height="1920"></canvas>
   <video id="cam" playsinline muted autoplay hidden></video>
-  <div class="top"><span class="chip" id="ai">IA : en attente</span><span class="chip" id="perf" hidden>—</span><span class="chip err" id="recChip" hidden></span></div>
+  <div class="top"><span class="chip" id="ai">IA : en attente</span><span class="chip" id="perf" hidden>—</span><span class="chip err" id="recChip" hidden></span><button class="chip" id="micChip" hidden style="pointer-events:auto;border:0;color:inherit;font:inherit;font-size:12px" aria-label="Choisir le micro"></button></div>
 
   <section class="ov" id="start">
     <h1>Green Studio</h1>
@@ -115,6 +116,8 @@ body{font-family:ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",
   <aside class="panel" id="pScript" hidden>
     <div class="head"><strong>Téléprompteur</strong><button class="x" data-close aria-label="Fermer">✕</button></div>
     <textarea id="tpIn" placeholder="Collez votre script ici…"></textarea>
+    <label>Défilement <select id="tpMode"><option value="voice">Suit ma voix (s’arrête quand je me tais)</option><option value="words">Suit mes mots (reconnaissance Chrome)</option><option value="fixed">Vitesse fixe</option></select></label>
+    <p class="hint" id="tpHint" style="margin:0;font-size:12px;color:var(--muted)"></p>
     <label>Vitesse <input type="range" id="tpSpd" min="5" max="200" step="1" value="40"></label>
     <label>Taille du texte <input type="range" id="tpSize" min="16" max="48" step="1" value="26"></label>
     <label>Position <input type="range" id="tpPos" min="0" max="60" step="1" value="12"></label>
@@ -139,6 +142,7 @@ body{font-family:ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",
   <aside class="panel" id="panel" hidden>
     <div class="head"><strong>Décor et détourage</strong><button class="x" id="bClose" aria-label="Fermer">✕</button></div>
     <div class="look" id="look"><button data-look="nat">Naturel<small>discret</small></button><button data-look="stu" class="on">Studio<small>recommandé</small></button><button data-look="net">Net<small>bord précis</small></button></div>
+    <label>Détourage <select id="qSel"><option value="auto">Auto (recommandé)</option><option value="hq">Précis : cheveux, contours</option><option value="fast">Rapide : économise la batterie</option></select></label>
     <div class="advonly"><label>Profil <select id="preSel"></select></label>
     <div class="row"><button class="sm" id="preSave">Enregistrer</button><button class="sm" id="preNew">Nouveau</button><button class="sm" id="preDup">Dupliquer</button><button class="sm" id="preDel">Supprimer</button></div>
     <label>Zoom caméra <input type="range" id="cz" min="0.3" max="3" step="0.01" value="1"></label>
@@ -186,7 +190,12 @@ const $ = (id) => document.getElementById(id);
 let W = 1080, H = 1920; const TA = 9 / 16;
 // MediaPipe hébergé avec l'app (copié par scripts/copy-mediapipe.mjs, version = package.json), CDN en secours.
 const MPV = "0.10.21", MP_BASES = [new URL(`/mediapipe/${MPV}`, location.href).href, `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MPV}`];
-const MODEL = "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite";
+const MODELS = {
+  fast: { id: "fast", url: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite", multi: false },
+  hq: { id: "hq", url: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite", multi: true },
+};
+const MODEL = MODELS.fast.url;
+let quality = "auto"; try { quality = localStorage.getItem("gs.q") || "auto"; } catch {}
 
 const video = $("cam"), canvas = $("out");
 const gl = canvas.getContext("webgl2", { alpha: false, antialias: false, powerPreference: "high-performance" });
@@ -201,7 +210,8 @@ in vec2 p; out vec2 v;
 void main(){ v = vec2(p.x*.5+.5, .5-p.y*.5); gl_Position = vec4(p,0.,1.); }`;
 const FS = `#version 300 es
 precision highp float; in vec2 v; out vec4 o;
-uniform sampler2D uCam,uBg,uMask;
+uniform sampler2D uCam,uBg,uMask,uBg2;
+uniform vec2 uBS2,uBO2; uniform float uMix; // fondu enchaîné entre l'ancien et le nouveau décor
 uniform vec2 uCS,uCO,uBS,uBO,uEdge; uniform float uMir,uBr,uCt,uSa;
 uniform vec2 uPx,uSub; uniform vec3 uFx; // uFx = (anti-halo, lumière du décor, ombre)
 vec3 grade(vec3 c){ c+=uBr; c=(c-.5)*uCt+.5; float l=dot(c,vec3(.2126,.7152,.0722)); return clamp(mix(vec3(l),c,uSa),0.,1.); }
@@ -235,6 +245,7 @@ void main(){
   vec2 s0 = v-uSub; vec2 cu = camUV(s0);
   vec3 cam = texture(uCam,cu).rgb;
   vec3 bg = grade(texture(uBg,v*uBS+uBO).rgb);
+  if (uMix < .999) bg = mix(grade(texture(uBg2,v*uBS2+uBO2).rgb), bg, uMix);
   float a = smoothstep(uEdge.x,uEdge.y,refined(cu));
   vec2 q=step(vec2(0.),cu)*step(cu,vec2(1.)); a*=q.x*q.y;
   vec2 asp = vec2(1., 1.7778); // pixels ~carrés à l'écran 9:16
@@ -266,8 +277,8 @@ gl.linkProgram(prog); gl.useProgram(prog);
 gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
 const loc = gl.getAttribLocation(prog, "p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-const U = {}; for (const n of ["uCam","uBg","uMask","uCS","uCO","uBS","uBO","uEdge","uMir","uBr","uCt","uSa","uPx","uSub","uFx"]) U[n] = gl.getUniformLocation(prog, n);
-gl.uniform1i(U.uCam, 0); gl.uniform1i(U.uBg, 1); gl.uniform1i(U.uMask, 2);
+const U = {}; for (const n of ["uCam","uBg","uMask","uBg2","uBS2","uBO2","uMix","uCS","uCO","uBS","uBO","uEdge","uMir","uBr","uCt","uSa","uPx","uSub","uFx"]) U[n] = gl.getUniformLocation(prog, n);
+gl.uniform1i(U.uCam, 0); gl.uniform1i(U.uBg, 1); gl.uniform1i(U.uMask, 2); gl.uniform1i(U.uBg2, 3); gl.uniform1f(U.uMix, 1);
 function tex(unit) { const t = gl.createTexture(); gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t);
   for (const [k, val] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR],[gl.TEXTURE_MAG_FILTER, gl.LINEAR],[gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, val);
   return t; }
@@ -276,31 +287,41 @@ gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
 gl.activeTexture(gl.TEXTURE2); gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 1, 1, 0, gl.RED, gl.UNSIGNED_BYTE, new Uint8Array([255]));
 
 const S = { sx: 0, sy: 0, mirror: true, cz: 1, zoom: 1, px: 0, py: 0, br: 0, ct: 1, sa: 1, lo: .35, hi: .65, stab: .6, dsp: .6, wrap: .3, shd: .25, invert: false };
-let bgSrc = null, bgW = 1, bgH = 1, maskW = 0, maskH = 0;
-function uploadBg() {
-  if (!bgSrc) return;
-  const w = bgSrc.videoWidth ?? bgSrc.width, h = bgSrc.videoHeight ?? bgSrc.height;
-  if (!w || !h) return; bgW = w; bgH = h;
-  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, tBg);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bgSrc);
+let maskW = 0, maskH = 0;
+/* Décors : chaque image est envoyée UNE fois au GPU puis gardée (texture en cache) ; changer de décor = changer de texture,
+   sans décodage ni envoi : instantané. Les décors vidéo ont leur texture mise à jour à chaque image. */
+const texCache = new Map(); let bgCur = null, bgPrev = null, mixT0 = -1e9; const MIX_MS = 220;
+function texFor(id, s) {
+  let e = texCache.get(id); if (e) return e;
+  const t = tex(3), w = s.videoWidth ?? s.width, h = s.videoHeight ?? s.height;
+  if (w && h) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, s);
+  e = { id, t, w: w || 1, h: h || 1, src: s, video: s instanceof HTMLVideoElement }; texCache.set(id, e); return e;
 }
+function showBg(e) { if (bgCur === e) return; bgPrev = bgCur; bgCur = e; mixT0 = performance.now(); }
 function defaultBg() {
   const c = document.createElement("canvas"); c.width = 720; c.height = 1280; const g = c.getContext("2d");
   const gr = g.createLinearGradient(0, 0, 0, 1280); gr.addColorStop(0, "#0f2a1d"); gr.addColorStop(1, "#1c6b46");
   g.fillStyle = gr; g.fillRect(0, 0, 720, 1280); return c;
 }
-bgSrc = defaultBg(); uploadBg();
+bgCur = texFor("init", defaultBg());
 function cover(sw, sh_, zoom, px, py) {
   const a = sw / sh_; let sx = 1, sy = 1;
   if (a > TA) sx = TA / a; else sy = a / TA;
   sx /= zoom; sy /= zoom;
   return [sx, sy, (1 - sx) / 2 * (1 + px), (1 - sy) / 2 * (1 + py)];
 }
-function render(newFrame) {
+/** frame : true = image courante de la caméra ; VideoFrame = image exacte analysée par l'IA (masque synchronisé) ; false = rien de neuf. */
+function render(frame) {
   if (video.videoWidth === 0) return;
-  if (newFrame) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tCam); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video); }
-  if (bgSrc instanceof HTMLVideoElement && bgSrc.readyState >= 2) uploadBg();
-  const c = cover(video.videoWidth, video.videoHeight, S.cz, 0, 0), b = cover(bgW, bgH, S.zoom, S.px, S.py);
+  if (frame) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tCam); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, frame === true ? video : frame); }
+  for (const e of [bgCur, bgPrev]) if (e?.video && e.src.readyState >= 2 && (e === bgCur || !e.src.paused)) {
+    gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, e.t); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, e.src); e.w = e.src.videoWidth; e.h = e.src.videoHeight;
+  }
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, bgCur.t);
+  let m = Math.min(1, (performance.now() - mixT0) / MIX_MS); m = m * m * (3 - 2 * m);
+  if (m < 1 && bgPrev) { const p = cover(bgPrev.w, bgPrev.h, S.zoom, S.px, S.py); gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, bgPrev.t); gl.uniform2f(U.uBS2, p[0], p[1]); gl.uniform2f(U.uBO2, p[2], p[3]); }
+  gl.uniform1f(U.uMix, bgPrev ? m : 1);
+  const c = cover(video.videoWidth, video.videoHeight, S.cz, 0, 0), b = cover(bgCur.w, bgCur.h, S.zoom, S.px, S.py);
   gl.viewport(0, 0, W, H); gl.uniform2f(U.uPx, 1 / video.videoWidth, 1 / video.videoHeight);
   gl.uniform2f(U.uCS, c[0], c[1]); gl.uniform2f(U.uCO, c[2], c[3]);
   gl.uniform2f(U.uBS, b[0], b[1]); gl.uniform2f(U.uBO, b[2], b[3]);
@@ -318,18 +339,37 @@ function uploadMask(data, w, h) {
 }
 /* Détourage dans un worker : l'inférence ne bloque plus le rendu ni l'interface. Le rendu suit la caméra (30 i/s),
    l'IA traite la dernière image disponible à son propre rythme (une seule image en vol, les autres sont sautées). */
-let busy = false, busySince = 0, wOpts = "";
+let busy = false, busySince = 0, wOpts = "", held = null, sync = true, curModel = "fast", slowSince = 0, fastSince = 0;
+let pendingModel = null;
+function setModel(id) { if (!segWorker || id === curModel || id === pendingModel) return; pendingModel = id; segWorker.postMessage({ type: "model", model: MODELS[id] }); }
+const aiChip = () => setAi("ok", `IA : ${curModel === "hq" ? "Précis" : "Rapide"} · ${backend}`);
+/* Gestion des performances : masque synchronisé tant que l'IA suit (≥ 30 i/s) ; en Auto, passe en Rapide si le Précis est lent
+   pendant 2 s, et revient en Précis si le Rapide a beaucoup de marge pendant 8 s. */
+function adapt() {
+  const now = performance.now();
+  sync = sync ? inferMs < 33 : inferMs < 26; // synchro seulement si l'IA tient ≥ 30 i/s (sinon la vidéo enregistrée ralentirait)
+  if (quality !== "auto") return;
+  if (curModel === "hq" && inferMs > 38) { if (!slowSince) slowSince = now; else if (now - slowSince > 2000) { setModel("fast"); slowSince = 0; demoted = true; } } else slowSince = 0;
+}
+let demoted = false; // en Auto, un appareil trop lent pour le Précis reste en Rapide pour la session
 function initWorker() {
   return new Promise((res, rej) => {
     const w = new Worker("/seg.worker.js"); const to = setTimeout(() => { w.terminate(); rej(new Error("délai dépassé")); }, 45000);
     w.onmessage = (e) => {
       const d = e.data;
-      if (d.type === "ready") { clearTimeout(to); backend = d.backend; segWorker = w; res(); }
+      if (d.type === "ready") { clearTimeout(to); backend = d.backend; segWorker = w; curModel = "fast"; if (quality !== "fast" && !demoted) setModel("hq"); res(); }
       else if (d.type === "error") { clearTimeout(to); w.terminate(); rej(new Error(d.message)); }
-      else if (d.type === "mask") { busy = false; if (d.data) { uploadMask(d.data, d.w, d.h); inferMs += (d.ms - inferMs) * .15; cnt.ai++; } }
+      else if (d.type === "mask") {
+        busy = false; const f = held; held = null;
+        if (d.data) { uploadMask(d.data, d.w, d.h); inferMs += (d.ms - inferMs) * .15; cnt.ai++; }
+        if (f) { if (!suspended && d.data) { render(f); cnt.r++; } f.close(); } // image et masque de la MÊME prise de vue : aucun décalage
+        adapt();
+      }
+      else if (d.type === "modelReady") { curModel = d.model; pendingModel = null; backend = d.backend; inferMs = 0; slowSince = fastSince = 0; if (running) aiChip(); }
+      else if (d.type === "modelError") { pendingModel = null; if (d.model === "hq" && quality === "hq") toast("Mode Précis indisponible sur cet appareil : mode Rapide."); }
     };
     w.onerror = (e) => { clearTimeout(to); rej(new Error(e.message || "worker")); };
-    w.postMessage({ type: "init", bases: MP_BASES, model: MODEL });
+    w.postMessage({ type: "init", bases: MP_BASES, model: MODELS.fast }); // petit modèle d'abord : prêt vite ; le Précis suit en arrière-plan
   });
 }
 async function initSeg() {
@@ -371,7 +411,11 @@ function infer() {
     const o = S.stab + "|" + S.invert; if (o !== wOpts) { wOpts = o; segWorker.postMessage({ type: "opts", stab: S.stab, invert: S.invert }); }
     if (busy && performance.now() - busySince < 2000) return; // image précédente encore en traitement : on saute celle-ci
     busy = true; busySince = performance.now();
-    try { const frame = new VideoFrame(video, { timestamp: Math.round(busySince * 1000) }); segWorker.postMessage({ type: "frame", frame, ts: busySince }, [frame]); }
+    try {
+      const frame = new VideoFrame(video, { timestamp: Math.round(busySince * 1000) });
+      if (sync) { held = frame; const c = frame.clone(); segWorker.postMessage({ type: "frame", frame: c, ts: busySince }, [c]); } // on garde l'image : elle sera affichée avec SON masque
+      else segWorker.postMessage({ type: "frame", frame, ts: busySince }, [frame]);
+    }
     catch { createImageBitmap(video).then((frame) => segWorker.postMessage({ type: "frame", frame, ts: busySince }, [frame])).catch(() => (busy = false)); }
     return;
   }
@@ -404,21 +448,29 @@ async function startCam(f) {
 const cnt = { cam: 0, ai: 0, r: 0 }, rate = { cam: 0, ai: 0, r: 0 };
 let running = false;
 let suspended = false; // vrai pendant le montage : on ne calcule plus l'image caméra (batterie)
-function camLoop() { if (!suspended) { cnt.cam++; infer(); render(true); cnt.r++; } if (running) video.requestVideoFrameCallback(camLoop); }
+function camLoop() {
+  if (!suspended) { cnt.cam++; infer(); if (!(segWorker && sync)) { render(true); cnt.r++; } } // en mode synchronisé, le rendu suit l'arrivée du masque
+  if (running) video.requestVideoFrameCallback(camLoop);
+}
 setInterval(() => { for (const k in cnt) { rate[k] = cnt[k] * 2; cnt[k] = 0; }
-  if (running) $("perf").textContent = `Cam ${rate.cam} · IA ${rate.ai} · Rendu ${rate.r} fps · ${inferMs.toFixed(0)} ms`; }, 500);
+  if (running) $("perf").textContent = `Cam ${rate.cam} · IA ${rate.ai} · Rendu ${rate.r} fps · ${inferMs.toFixed(0)} ms${segWorker && sync ? " · synchro" : ""}`; }, 500);
 
+// L'IA se prépare dès l'ouverture de la page (pendant que vous lisez l'écran d'accueil) : prête quand la caméra s'allume.
+const segP = (async () => { try { await initSeg(); return true; } catch (e) { console.error(e); segmenter = null; return false; } })();
 $("go").onclick = async () => {
   $("go").disabled = true; showErr(null); setAi("", "IA : chargement…");
   try {
     if (!navigator.mediaDevices?.getUserMedia) throw new Error("Caméra indisponible dans ce contexte (HTTPS requis).");
     if (!("requestVideoFrameCallback" in video)) throw new Error("Chrome récent requis.");
-    await startCam("user");
-    await initMic();
-    try { await initSeg(); } catch (e) { console.error(e); segmenter = null; setAi("err", "IA indisponible"); }
-    if (segmenter || segWorker) setAi("ok", "IA : " + backend + (segWorker ? " · worker" : ""));
-    $("start").hidden = true; $("bar").hidden = false; $("rec").hidden = false; $("strip").hidden = false; keepAwake(); if (!segmenter && !segWorker) toast("Détourage indisponible (modèle non chargé, internet requis au premier lancement) : caméra seule.", 9000);
+    await Promise.all([startCam("user"), initMic()]);
+    // La caméra s'affiche tout de suite ; le détourage s'active dès que l'IA est prête (souvent déjà le cas).
+    $("start").hidden = true; $("bar").hidden = false; $("rec").hidden = false; $("strip").hidden = false; keepAwake();
     running = true; video.requestVideoFrameCallback(camLoop);
+    segP.then((ok) => {
+      if (ok && segWorker) aiChip(); else if (ok) setAi("ok", "IA : " + backend);
+      else { setAi("err", "IA indisponible"); toast("Détourage indisponible (modèle non chargé, internet requis au premier lancement) : caméra seule.", 9000); }
+    });
+    import("/src/ui/quick-edit.ts").catch(() => {}); import("/src/ui/library.ts").catch(() => {}); // préchargés : « Monter » et « Mes prises » s'ouvrent sans attente
   } catch (e) {
     setAi("err", "IA : erreur");
     const n = e?.name;
@@ -450,26 +502,46 @@ $("res").onchange = (e) => { if (rec) { e.target.value = String(H); toast("Chang
 
 /* ---------- Audio ---------- */
 let actx, micSrc, gainN, analyser, dest, micStream, hasMic = false;
-async function initMic(id) {
+/* Micro : choix mémorisé ; un micro branché (USB, Bluetooth, cravate) est pris automatiquement, retour au micro du téléphone
+   s'il est débranché. Le changement se fait sans couper l'enregistrement (le flux enregistré part du nœud de gain, pas du micro). */
+let micId = ""; try { micId = localStorage.getItem("gs.mic") || ""; } catch {}
+let knownMics = new Set();
+const listMics = async () => (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "audioinput");
+const shortMic = (l) => (l || "Micro").replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)/i, "").slice(0, 28);
+async function initMic(id = micId) {
   try {
     micStream?.getTracks().forEach((t) => t.stop());
-    micStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: { deviceId: id ? { exact: id } : undefined, noiseSuppression: $("ns").checked, echoCancellation: false, autoGainControl: false, channelCount: 1 } });
+    const get = (dev) => navigator.mediaDevices.getUserMedia({ video: false, audio: { deviceId: dev ? { exact: dev } : undefined, noiseSuppression: $("ns").checked, echoCancellation: false, autoGainControl: false, channelCount: 1 } });
+    try { micStream = await get(id); } catch (e) { if (!id) throw e; micStream = await get(""); } // micro mémorisé absent : micro par défaut
     actx ??= new AudioContext(); await actx.resume();
     if (!gainN) { gainN = actx.createGain(); analyser = actx.createAnalyser(); analyser.fftSize = 1024; dest = actx.createMediaStreamDestination(); gainN.connect(analyser); gainN.connect(dest); }
     micSrc?.disconnect(); micSrc = actx.createMediaStreamSource(micStream); micSrc.connect(gainN);
     gainN.gain.value = +$("gain").value; hasMic = true;
-    const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "audioinput");
+    const tr = micStream.getAudioTracks()[0], cur = tr.getSettings().deviceId, devs = await listMics();
+    knownMics = new Set(devs.map((d) => d.deviceId));
     $("micSel").replaceChildren(...devs.map((d, i) => new Option(d.label || "Micro " + (i + 1), d.deviceId)));
-    const cur = micStream.getAudioTracks()[0].getSettings().deviceId; if (cur) $("micSel").value = cur;
-    micStream.getAudioTracks()[0].addEventListener("ended", () => { hasMic = false; toast("Micro interrompu."); });
-  } catch { hasMic = false; $("micSel").replaceChildren(new Option("Micro indisponible", "")); }
+    if (cur) $("micSel").value = cur;
+    $("micChip").textContent = "🎙 " + shortMic(tr.label); $("micChip").hidden = false;
+    tr.addEventListener("ended", () => { if (micStream?.getAudioTracks()[0] !== tr) return; hasMic = false; toast("Micro interrompu : micro du téléphone utilisé."); initMic(""); });
+  } catch { hasMic = false; $("micSel").replaceChildren(new Option("Micro indisponible", "")); $("micChip").textContent = "🎙 aucun micro"; $("micChip").hidden = false; }
 }
-$("micSel").onchange = (e) => initMic(e.target.value);
+const rememberMic = (id) => { micId = id; try { localStorage.setItem("gs.mic", id); } catch {} };
+$("micSel").onchange = (e) => { rememberMic(e.target.value); initMic(e.target.value).then(() => toast("Micro : " + shortMic(micStream?.getAudioTracks()[0]?.label), 2000)); };
+navigator.mediaDevices?.addEventListener?.("devicechange", async () => {
+  if (!micStream) return;
+  const devs = await listMics(), curId = micStream.getAudioTracks()[0]?.getSettings().deviceId;
+  const added = devs.find((d) => !knownMics.has(d.deviceId) && !["default", "communications", ""].includes(d.deviceId));
+  if (added) { rememberMic(added.deviceId); await initMic(added.deviceId); toast("Micro branché : " + shortMic(added.label) + " — utilisé.", 4000); }
+  else if (curId && !devs.some((d) => d.deviceId === curId)) { await initMic(""); toast("Micro débranché : micro du téléphone utilisé.", 4000); }
+  else { knownMics = new Set(devs.map((d) => d.deviceId)); }
+});
+$("micChip").onclick = () => openP("pAudio");
 $("ns").onchange = () => initMic($("micSel").value);
 $("gain").oninput = (e) => gainN && (gainN.gain.value = +e.target.value);
 $("mon").onchange = (e) => { if (!gainN) return; if (e.target.checked) gainN.connect(actx.destination); else gainN.disconnect(actx.destination); };
 const abuf = new Float32Array(1024);
-setInterval(() => { if (!analyser) return; analyser.getFloatTimeDomainData(abuf); let pk = 0; for (const v of abuf) pk = Math.max(pk, Math.abs(v)); $("meter").firstElementChild.style.width = Math.min(100, pk * 100) + "%"; $("meter").classList.toggle("clip", pk > .97); }, 60);
+setInterval(() => { if (!analyser) return; analyser.getFloatTimeDomainData(abuf); let pk = 0, ss = 0; for (const v of abuf) { pk = Math.max(pk, Math.abs(v)); ss += v * v; }
+  vad?.update(Math.sqrt(ss / abuf.length), performance.now()); /* détection de parole pour le prompteur */ $("meter").firstElementChild.style.width = Math.min(100, pk * 100) + "%"; $("meter").classList.toggle("clip", pk > .97); }, 60);
 
 /* ---------- Enregistrement ---------- */
 let rec = null, t0r = 0, recTimer = 0, recMime = "";
@@ -491,7 +563,7 @@ $("rec").onclick = async () => {
   if (cdTimer) return countdown.cancel();
   if ($("cdOn").checked && !(await countdown())) return;
   await startRec(); if (!rec) $("rec").classList.remove("on");
-  if (rec && $("cdOn").checked && $("tpShow").checked) { tpY = 0; tp.scrollTop = 0; if (!tpOn) tpToggle(); }
+  if (rec && $("cdOn").checked && $("tpShow").checked) { tpRestart(); if (!tpOn) tpToggle(); }
 };
 async function startRec() {
   if (typeof MediaRecorder === "undefined") return toast("MediaRecorder indisponible sur ce navigateur.");
@@ -578,23 +650,73 @@ $("openLib").onclick = $("bLib").onclick = library;
 $("editFile").onchange = (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) edit(f, `file-${f.name}-${f.size}-${f.lastModified}`); };
 
 /* ---------- Téléprompteur ---------- */
-const tp = $("tp"); let tpOn = false, tpLast = 0, tpY = 0;
+// Trois modes : vitesse fixe ; « suit ma voix » (hors ligne : avance quand vous parlez, s'arrête quand vous vous taisez) ;
+// « suit mes mots » (reconnaissance vocale de Chrome : se cale sur le mot prononcé, même après un saut ou une reprise).
+const tp = $("tp"); let tpOn = false, tpLast = 0, tpY = 0, tpTok = null, tpPos = 0, tpTarget = null, tpTxt = null, PM = null, vad = null, recog = null;
+const escH = (x) => x.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+import("/src/core/prompter.ts").then((m) => { PM = m; vad = new m.VoiceDetector(); tpTxt = null; tpApply(); }).catch(() => {});
+const tpMode = () => $("tpMode").value;
+const HINTS = { voice: "Le texte avance quand vous parlez (à la vitesse choisie) et s’arrête quand vous vous taisez. Hors ligne.",
+  words: "Le texte se cale sur vos mots, même si vous sautez ou reprenez une phrase. Utilise la reconnaissance vocale de Chrome (le son est analysé par Google). Repli automatique sur « Suit ma voix » si indisponible.",
+  fixed: "Défilement continu à la vitesse choisie." };
 function tpApply() {
-  tp.textContent = $("tpIn").value || "Ajoutez votre script dans le panneau Script.";
+  const txt = $("tpIn").value || "Ajoutez votre script dans le panneau Script.";
+  if (txt !== tpTxt) {
+    tpTxt = txt;
+    if (PM) { tpTok = PM.tokenize(txt); const wi = new Map(tpTok.wordIdx.map((p, k) => [p, k]));
+      tp.innerHTML = tpTok.parts.map((p, i) => (wi.has(i) ? `<span data-w="${wi.get(i)}">${escH(p)}</span>` : escH(p))).join(""); tpPos = 0; }
+    else tp.textContent = txt;
+  }
   tp.style.fontSize = $("tpSize").value + "px"; tp.style.top = $("tpPos").value + "%"; tp.hidden = !$("tpShow").checked;
-  try { localStorage.setItem("gs.script", $("tpIn").value); } catch {}
+  $("tpHint").textContent = HINTS[tpMode()];
+  try { localStorage.setItem("gs.script", $("tpIn").value); localStorage.setItem("gs.tpMode", tpMode()); } catch {}
 }
-function tpToggle() { tpOn = !tpOn; if (tpOn) tpY = tp.scrollTop; $("tpPlay").textContent = tpOn ? "⏸ Pause" : "▶ Lancer"; }
+let readUpTo = 0;
+function markRead() { // estompe les mots déjà dits (mode « mots »)
+  const sp = tp.querySelectorAll("span[data-w]"), to = tpMode() === "words" ? tpPos : 0;
+  for (let i = Math.min(readUpTo, to); i < Math.max(readUpTo, to); i++) sp[i]?.classList.toggle("rd", i < to);
+  readUpTo = to;
+}
+function aimAt(pos) { const sp = tp.querySelector(`span[data-w="${Math.min(pos, (tpTok?.norm.length ?? 1) - 1)}"]`); if (sp) tpTarget = Math.max(0, sp.offsetTop - tp.clientHeight * 0.3); }
+function startRecog() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR || !PM) { toast("Suivi des mots indisponible ici : le prompteur suit votre voix.", 4000); $("tpMode").value = "voice"; tpApply(); return; }
+  stopRecog(); const r = new SR(); recog = r; r.lang = "fr-FR"; r.continuous = true; r.interimResults = true; r.maxAlternatives = 1;
+  r.onresult = (e) => {
+    const res = e.results[e.results.length - 1], heard = res[0].transcript.split(/\s+/).map(PM.normWord).filter(Boolean);
+    const p = PM.align(tpTok.norm, heard, tpPos); if (p != null && p !== tpPos) { tpPos = p; markRead(); aimAt(p); }
+  };
+  r.onerror = (e) => {
+    if (["not-allowed", "service-not-allowed", "audio-capture", "network", "language-not-supported"].includes(e.error)) {
+      stopRecog(); $("tpMode").value = "voice"; tpApply(); toast("Suivi des mots indisponible (" + e.error + ") : le prompteur suit votre voix.", 5000); }
+  };
+  r.onend = () => { if (recog === r && tpOn && tpMode() === "words") try { r.start(); } catch {} }; // Chrome s'arrête après un silence : on relance
+  try { r.start(); } catch {}
+}
+function stopRecog() { const r = recog; recog = null; try { r?.abort(); } catch {} }
+function tpToggle() {
+  tpOn = !tpOn; if (tpOn) { tpY = tp.scrollTop; tpTarget = null; } $("tpPlay").textContent = tpOn ? "⏸ Pause" : "▶ Lancer";
+  if (tpOn && tpMode() === "words") startRecog(); else stopRecog();
+}
 function tpStep(ts) {
-  if (tpOn) { tpY += +$("tpSpd").value * (ts - tpLast) / 1000; tp.scrollTop = tpY; if (tp.scrollTop < tpY - 3) tpToggle(); }
+  const dt = Math.min(300, ts - tpLast), mode = tpMode(), max = tp.scrollHeight - tp.clientHeight;
+  tp.classList.toggle("talk", !!(tpOn && mode !== "fixed" && vad?.speaking));
+  if (tpOn) {
+    if (mode === "words") { if (tpTarget != null) tpY += (tpTarget - tpY) * Math.min(1, dt / 220); } // glisse en douceur vers le mot dit
+    else if (mode === "fixed" || vad?.speaking) tpY += +$("tpSpd").value * dt / 1000;
+    tpY = Math.max(0, Math.min(tpY, max)); tp.scrollTop = tpY;
+    if (mode === "fixed" && tpY >= max - 1) tpToggle();
+  }
   tpLast = ts; requestAnimationFrame(tpStep);
 }
 requestAnimationFrame(tpStep);
 $("tpIn").oninput = () => { $("tpShow").checked = !!$("tpIn").value.trim(); tpApply(); };
 $("tpShow").onchange = tpApply; $("tpSize").oninput = tpApply; $("tpPos").oninput = tpApply;
+$("tpMode").onchange = () => { tpApply(); markRead(); if (tpOn) { if (tpMode() === "words") startRecog(); else stopRecog(); } };
 $("tpPlay").onclick = () => { $("tpShow").checked = true; tpApply(); tpToggle(); }; tp.onclick = tpToggle;
-$("tpTop").onclick = () => { tpY = 0; tp.scrollTop = 0; };
-try { $("tpIn").value = localStorage.getItem("gs.script") || ""; } catch {}
+const tpRestart = () => { tpY = 0; tp.scrollTop = 0; tpPos = 0; tpTarget = null; markRead(); };
+$("tpTop").onclick = tpRestart;
+try { $("tpIn").value = localStorage.getItem("gs.script") || ""; const m = localStorage.getItem("gs.tpMode"); if (m) $("tpMode").value = m; } catch {}
 
 /* ---------- Profils ---------- */
 const SK = ["zoom", "px", "py", "br", "ct", "sa", "lo", "hi", "stab", "dsp", "wrap", "shd"];
@@ -661,18 +783,23 @@ async function srcFor(i) {
   } else { const v = document.createElement('video'); v.src = URL.createObjectURL(it.blob); v.loop = true; v.muted = true; v.playsInline = true; await v.play(); v.pause(); s = v; }
   cache.set(it.id, s); return s;
 }
+const KEEP = 2; // décors voisins gardés prêts (en mémoire et sur le GPU) de chaque côté
 function prune() {
-  const keep = new Set([bi - 1, bi, bi + 1].map((i) => lib[(i + lib.length) % lib.length].id));
+  const keep = new Set(); for (let d = -KEEP; d <= KEEP; d++) keep.add(lib[(bi + d + lib.length * 3) % lib.length].id);
+  if (bgPrev) keep.add(bgPrev.id);
   for (const [id, s] of cache) if (!keep.has(id)) { if (s instanceof HTMLVideoElement) { s.pause(); URL.revokeObjectURL(s.src); s.removeAttribute('src'); } cache.delete(id); }
+  for (const [id, e] of texCache) if (!keep.has(id) && e !== bgCur && e !== bgPrev) { gl.deleteTexture(e.t); texCache.delete(id); }
 }
+/** Prépare un décor (décodage + envoi GPU) sans l'afficher : appelé pour les voisins et dès que le doigt touche une vignette. */
+function prefetch(i) { i = (i + lib.length) % lib.length; const it = lib[i]; if (!it || texCache.has(it.id)) return;
+  srcFor(i).then((s) => { if (s && !texCache.has(it.id)) texFor(it.id, s); }).catch(() => {}); }
 async function setBg(i) {
-  i = (i + lib.length) % lib.length; const tok = ++swTok; let s;
-  try { s = await srcFor(i); } catch { toast('Décor illisible.'); return; }
-  if (tok !== swTok || !s) return;
-  if (bgSrc instanceof HTMLVideoElement) bgSrc.pause();
-  if (s instanceof HTMLVideoElement) s.play().catch(() => {});
-  bgSrc = s; uploadBg(); bi = i; markStrip(); prune();
-  for (const j of [i + 1, i - 1]) srcFor((j + lib.length) % lib.length).catch(() => {});
+  i = (i + lib.length) % lib.length; const tok = ++swTok, it = lib[i]; let e = texCache.get(it.id);
+  if (!e) { let s; try { s = await srcFor(i); } catch { toast('Décor illisible.'); return; } if (tok !== swTok || !s) return; e = texFor(it.id, s); }
+  if (bgCur?.video && bgCur !== e) setTimeout(((v) => () => v !== bgCur?.src && v.pause())(bgCur.src), MIX_MS + 50);
+  if (e.video) e.src.play().catch(() => {});
+  showBg(e); bi = i; markStrip();
+  setTimeout(() => { if (tok !== swTok) return; prune(); for (let d = 1; d <= KEEP; d++) { prefetch(i + d); prefetch(i - d); } }, MIX_MS + 30); // après le fondu
 }
 function markStrip() {
   const ch = [...$('strip').children]; ch.forEach((el, k) => el.classList.toggle('on', k === bi + 1));
@@ -684,7 +811,7 @@ function renderStrip() {
   lib.forEach((it, i) => {
     const b = document.createElement('button'); b.className = 'th'; b.setAttribute('aria-label', 'Décor ' + (i + 1));
     b.style.background = it.kind === 'gen' ? `linear-gradient(${it.g[0]},${it.g[1]})` : `center/cover url(${it.thumb})`;
-    b.onclick = () => setBg(i);
+    b.onclick = () => setBg(i); b.addEventListener('pointerdown', () => prefetch(i)); // le décor se prépare pendant l'appui
     if (it.blob) { let tm; b.onpointerdown = () => (tm = setTimeout(() => delBg(i), 700)); b.onpointerup = b.onpointerleave = () => clearTimeout(tm); }
     st.appendChild(b);
   });
@@ -770,6 +897,12 @@ document.querySelectorAll("[data-look]").forEach((b) => (b.onclick = () => {
   document.querySelectorAll("[data-look]").forEach((x) => x.classList.toggle("on", x === b)); toast("Look : " + b.firstChild.textContent, 1500);
 }));
 $("go").addEventListener("click", () => setTimeout(() => { try { if (!localStorage.gsHint) { localStorage.gsHint = 1; const t = $("toast"); t.classList.add("ok"); toast("Glissez pour vous placer · pincez pour agrandir · double-tap pour recentrer", 6000); setTimeout(() => t.classList.remove("ok"), 6200); } } catch { /* stockage indisponible */ } }, 1800));
+// Diagnostic en lecture seule (tests, et « IA » touché pour l'afficher) : état du décor, du modèle et de la synchro.
+window.gsDebug = { get bg() { return bgCur?.id; }, get model() { return curModel; }, get sync() { return !!(segWorker && sync); }, get inferMs() { return inferMs; },
+  get vad() { return !!vad?.speaking; }, get tpPos() { return tpPos; }, get mic() { return micStream?.getAudioTracks()[0]?.label; } };
+$("qSel").value = quality;
+$("qSel").onchange = (e) => { quality = e.target.value; try { localStorage.setItem("gs.q", quality); } catch {} demoted = false;
+  setModel(quality === "fast" ? "fast" : "hq"); toast(quality === "fast" ? "Détourage Rapide." : "Détourage Précis : chargement du modèle…", 2500); };
 $('advBtn').onclick = () => $('panel').classList.toggle('adv');
 $('ai').onclick = () => ($('perf').hidden = !$('perf').hidden);
 </script>

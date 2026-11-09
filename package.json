@@ -1,6 +1,6 @@
 {
   "name": "green-studio",
-  "version": "3.0.0-alpha.4",
+  "version": "3.0.0-alpha.5",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,7 +12,7 @@
     "preview": "vite preview --host",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
-    "test:browser": "node tests/browser/media.e2e.cjs && node tests/browser/app.e2e.cjs"
+    "test:browser": "node tests/browser/media.e2e.cjs && node tests/browser/live.e2e.cjs && node tests/browser/app.e2e.cjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.0.0",

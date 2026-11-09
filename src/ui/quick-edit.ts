@@ -19,8 +19,8 @@ const CSS = `
 .qe .ib{background:var(--glass);padding:8px 12px;border-radius:999px;font-size:13px}
 .qe .ib:disabled{opacity:.35}
 .qe .go{background:var(--accent);color:#04120a;font-weight:600}
-.qe .vw{position:relative;background:#000}
-.qe video{width:100%;max-height:34vh;background:#000;display:block;object-fit:contain}
+.qe .vw{position:relative;background:#000;height:34vh}
+.qe video{position:absolute;inset:0;width:100%;height:100%;background:#000;object-fit:contain}.qe video.spare{visibility:hidden}
 .qe .vw canvas.cc{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;border-radius:0;background:none}
 .qe .opt{display:flex;align-items:center;gap:10px;font-size:14px}.qe .opt input[type=range]{flex:1}
 .qe .chips{display:flex;gap:6px;flex-wrap:wrap}.qe .chips button[aria-pressed=true]{outline:2px solid var(--accent)}
@@ -64,7 +64,7 @@ export async function openEditor(o: EditorOptions) {
     <header><button class="ib" data-a="close" aria-label="Fermer">←</button><h2>Montage</h2>
       <button class="ib" data-a="undo" aria-label="Annuler">↶</button><button class="ib" data-a="redo" aria-label="Rétablir">↷</button>
       <button class="ib go" data-a="export">Exporter</button></header>
-    <div class="vw"><video playsinline preload="auto"></video><canvas class="cc" aria-hidden="true"></canvas></div>
+    <div class="vw"><video playsinline preload="auto"></video><video class="spare" playsinline preload="auto" muted></video><canvas class="cc" aria-hidden="true"></canvas></div>
     <div class="tl"><canvas class="wave" aria-label="Timeline : touchez pour vous déplacer"></canvas></div>
     <div class="row"><button class="ib" data-a="play">▶</button><span data-r="time">0:00</span><span class="sp"></span>
       <button class="ib" data-a="trim" title="Couper le silence avant la première et après la dernière parole">✂ Bords muets</button>
@@ -75,8 +75,10 @@ export async function openEditor(o: EditorOptions) {
     <div class="body" data-r="body"></div>`;
   document.body.appendChild(root);
   const q = <T extends Element = HTMLElement>(sel: string) => root.querySelector(sel) as unknown as T;
-  const video = q<HTMLVideoElement>("video"), cv = q<HTMLCanvasElement>("canvas.wave"), ccv = q<HTMLCanvasElement>("canvas.cc"), body = q("[data-r=body]");
-  const url = URL.createObjectURL(o.file); video.src = url;
+  // Deux lecteurs : l'un joue, l'autre attend déjà calé sur la suite après la prochaine coupe → raccord instantané, sans pause.
+  let [video, spare] = Array.from(root.querySelectorAll("video")) as HTMLVideoElement[];
+  const cv = q<HTMLCanvasElement>("canvas.wave"), ccv = q<HTMLCanvasElement>("canvas.cc"), body = q("[data-r=body]");
+  const url = URL.createObjectURL(o.file); video.src = url; spare.src = url;
 
   /* ---------- État ---------- */
   const storeKey = "gs.qe." + o.key;
@@ -221,6 +223,25 @@ export async function openEditor(o: EditorOptions) {
   cv.onpointerup = cv.onpointercancel = () => (cv.onpointermove = null);
 
   /* ---------- Lecture : saute les parties coupées ---------- */
+  /** Cale le lecteur de réserve sur `at` (en pause, image décodée) avant d'en avoir besoin. */
+  function prepare(at: number) { if (+(spare.dataset.at ?? -1) !== at) { spare.dataset.at = String(at); spare.pause(); spare.currentTime = at; } }
+  /** Passe à `at` : bascule instantanée vers le lecteur de réserve s'il est prêt, sinon saut classique. */
+  function jump(at: number) {
+    if (+(spare.dataset.at ?? -1) === at && !spare.seeking && spare.readyState >= 3) {
+      spare.muted = false; spare.play().catch(() => {}); spare.classList.remove("spare");
+      video.classList.add("spare"); video.muted = true; video.pause();
+      [video, spare] = [spare, video]; spare.dataset.at = "-1"; arm();
+    } else video.currentTime = at;
+  }
+  /* Garde-fou image par image : vérifié juste avant l'affichage de chaque image vidéo (indépendant de la fluidité de l'interface). */
+  let vfEl: HTMLVideoElement | null = null, vfH = 0;
+  const onVF = (_n: number, meta: { mediaTime: number }) => {
+    if (closed) return;
+    if (!video.paused && pvOn() && stopAt == null) { const c = inCut(meta.mediaTime + 0.008); if (c) { if (c.end >= duration - 0.05) video.pause(); else jump(c.end); } }
+    arm();
+  };
+  function arm() { const v = video as any; if (!v.requestVideoFrameCallback) return; if (vfEl) (vfEl as any).cancelVideoFrameCallback(vfH); vfEl = video; vfH = v.requestVideoFrameCallback(onVF); }
+  arm();
   function seek(t: number) { stopAt = null; video.currentTime = Math.max(0, Math.min(duration, t)); }
   function playRange(a: number, b: number) { video.currentTime = Math.max(0, a); stopAt = b; follow = true; video.play().catch(() => {}); }
   const pvOn = () => (q("[data-a=pv]") as HTMLInputElement).checked;
@@ -229,7 +250,11 @@ export async function openEditor(o: EditorOptions) {
     const t = video.currentTime;
     if (!video.paused) {
       if (stopAt != null && t >= stopAt) { video.pause(); stopAt = null; }
-      else if (pvOn() && stopAt == null) { const c = inCut(t); if (c) { if (c.end >= duration - 0.05) video.pause(); else video.currentTime = c.end; } }
+      else if (pvOn() && stopAt == null) {
+        const c = inCut(t + 0.008);
+        if (c) { if (c.end >= duration - 0.05) video.pause(); else jump(c.end); }
+        else { const nx = session.cuts.find((x) => x.start > t); if (nx && nx.start - t < 2 && nx.end < duration - 0.05) prepare(nx.end); }
+      }
     }
     q("[data-r=time]").textContent = `${fmt(t)} / ${fmt(duration)}`;
     q("[data-a=play]").textContent = video.paused ? "▶" : "⏸";
@@ -339,7 +364,7 @@ export async function openEditor(o: EditorOptions) {
   /* ---------- Actions ---------- */
   const commit = () => { save(); refresh(); };
   function close() {
-    closed = true; ctl.abort(); cancelAnimationFrame(raf); worker?.terminate(); video.pause(); video.removeAttribute("src"); video.load();
+    closed = true; ctl.abort(); cancelAnimationFrame(raf); worker?.terminate(); for (const v of [video, spare]) { v.pause(); v.removeAttribute("src"); v.load(); }
     URL.revokeObjectURL(url); removeEventListener("keydown", onKey); root.remove(); o.onClose?.();
   }
   root.addEventListener("click", (e) => {
