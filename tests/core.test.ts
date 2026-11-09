@@ -145,3 +145,21 @@ test("prompteur : détection de parole à seuil adaptatif", async () => {
   assert.equal(v.update(0.004, (t += 200)), true, "maintien après une syllabe");
   assert.equal(v.update(0.004, (t += 400)), false, "silence");
 });
+
+test("son non transcrit et bégaiement dans un mot (ce que Whisper efface)", async () => {
+  const { analyzeAudio } = await import("../src/core/speech-analysis.ts");
+  const rate = 8000, pcm = new Float32Array(rate * 6);
+  const voice = (a: number, b: number) => { for (let i = Math.round(a * rate); i < Math.round(b * rate); i++) pcm[i] = 0.3 * Math.sin(i / 2.7); };
+  for (let i = 0; i < pcm.length; i++) pcm[i] = (Math.random() - 0.5) * 0.002; // bruit de fond
+  voice(0.2, 0.6); voice(1.0, 1.25); voice(1.6, 2.0);      // « Bonjour » [je non transcrit] « je »
+  voice(2.4, 2.55); voice(2.75, 3.4);                      // « p… présenter » transcrit comme un seul mot 2,4–3,4
+  voice(3.6, 4.0);                                          // « demain »
+  const words: Word[] = [W("Bonjour", 0.2, 0.6), W("je", 1.6, 2.0), W("présenter", 2.4, 3.4), W("demain", 3.6, 4.0)];
+  const s = analyzeAudio(words, pcm, rate);
+  const un = s.find((x) => x.type === "untranscribed")!; assert.ok(un, "son non transcrit trouvé");
+  assert.ok(un.range.start >= 0.6 && un.range.start < 1.0 && un.range.end > 1.2 && un.range.end <= 1.6, JSON.stringify(un.range));
+  const st = s.find((x) => x.type === "stutter")!; assert.ok(st, "bégaiement dans le mot trouvé");
+  assert.ok(Math.abs(st.range.start - 2.4) < 0.01 && st.range.end > 2.55 && st.range.end < 2.8, JSON.stringify(st.range));
+  assert.equal(s.length, 2, "rien d'autre : pas de fausse alerte sur les mots normaux");
+  assert.equal(analyzeAudio(words, new Float32Array(rate * 6), rate).length, 0, "silence : rien");
+});

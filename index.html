@@ -149,7 +149,7 @@ body{font-family:ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",
     <div class="row"><button class="sm" id="czFit">Vue large (image complète)</button><button class="sm" id="czFill">Plein écran</button></div>
     <div class="row" hidden><span>Contours</span><button class="sm" data-e="0.28,0.62">Doux</button><button class="sm" data-e="0.4,0.62">Normal</button><button class="sm" data-e="0.5,0.7">Net</button></div>
     
-    <label>Qualité de sortie <select id="res"><option value="1920">1080 × 1920</option><option value="1280">720 × 1280</option></select></label>
+    <label>Qualité de sortie <select id="res"><option value="1920">1080p (recommandé)</option><option value="2560">1440p (fichiers plus lourds)</option><option value="1280">720p (léger)</option></select></label>
     <hr>
     </div>
     <button class="sm" id="advBtn">Plus de réglages</button>
@@ -222,17 +222,21 @@ void main(){ v = vec2(p.x*.5+.5, .5-p.y*.5); gl_Position = vec4(p,0.,1.); }`;
 const FS = `#version 300 es
 precision highp float; in vec2 v; out vec4 o;
 uniform sampler2D uCam,uBg,uMask,uBg2;
-uniform vec2 uBS2,uBO2; uniform float uMix; // fondu enchaîné entre l'ancien et le nouveau décor
+uniform vec2 uBS2,uBO2; uniform float uMix;
+uniform vec2 uMO,uMS; // zone de l'image caméra analysée par l'IA (décalage, taille) : le masque ne couvre que cette zone // fondu enchaîné entre l'ancien et le nouveau décor
 uniform vec2 uCS,uCO,uBS,uBO,uEdge; uniform float uMir,uBr,uCt,uSa;
 uniform vec2 uPx,uSub; uniform vec3 uFx; // uFx = (anti-halo, lumière du décor, ombre)
 vec3 grade(vec3 c){ c+=uBr; c=(c-.5)*uCt+.5; float l=dot(c,vec3(.2126,.7152,.0722)); return clamp(mix(vec3(l),c,uSa),0.,1.); }
+float M(vec2 c){ return texture(uMask,(c-uMO)/uMS).r; }
+// bords de l'image caméra adoucis (si elle ne couvre pas tout le cadre) au lieu d'une coupure nette
+float inside(vec2 c){ vec2 e = smoothstep(vec2(0.),vec2(.012),c)*smoothstep(vec2(0.),vec2(.012),1.-c); return e.x*e.y; }
 float refined(vec2 cu){
-  float m0 = texture(uMask,cu).r;
+  float m0 = M(cu);
   // Loin des contours (masque plein ou vide sur tout le voisinage), le filtrage ne change rien : 5 lectures au lieu de 33.
   // C'est le cas de la grande majorité des pixels : gros gain de GPU, de chaleur et de batterie.
   if (m0 < .01 || m0 > .99) {
     vec2 r = uPx*14.;
-    float s4 = texture(uMask,cu+vec2(r.x,0.)).r + texture(uMask,cu-vec2(r.x,0.)).r + texture(uMask,cu+vec2(0.,r.y)).r + texture(uMask,cu-vec2(0.,r.y)).r;
+    float s4 = M(cu+vec2(r.x,0.)) + M(cu-vec2(r.x,0.)) + M(cu+vec2(0.,r.y)) + M(cu-vec2(0.,r.y));
     if (m0 < .01 ? s4 < .04 : s4 > 3.96) return m0;
   }
   vec3 c0 = texture(uCam,cu).rgb;
@@ -244,13 +248,13 @@ float refined(vec2 cu){
       vec2 o = d*uPx*(k==0?6.:14.);
       vec3 df = texture(uCam,cu+o).rgb-c0;
       float w = exp(-dot(df,df)*30.);
-      sw += w; sm += w*texture(uMask,cu+o).r;
+      sw += w; sm += w*M(cu+o);
     }
   }
   return sm/sw;
 }
 vec2 camUV(vec2 sv){ return vec2(mix(sv.x,1.-sv.x,uMir), sv.y)*uCS+uCO; }
-float mq(vec2 sv){ vec2 c=camUV(sv); vec2 q=step(vec2(0.),c)*step(c,vec2(1.)); return smoothstep(uEdge.x,uEdge.y,texture(uMask,c).r)*q.x*q.y; }
+float mq(vec2 sv){ vec2 c=camUV(sv); return smoothstep(uEdge.x,uEdge.y,M(c))*inside(c); }
 const vec2 R[6] = vec2[6](vec2(1.,0.),vec2(.5,.866),vec2(-.5,.866),vec2(-1.,0.),vec2(-.5,-.866),vec2(.5,-.866));
 void main(){
   vec2 s0 = v-uSub; vec2 cu = camUV(s0);
@@ -258,7 +262,7 @@ void main(){
   vec3 bg = grade(texture(uBg,v*uBS+uBO).rgb);
   if (uMix < .999) bg = mix(grade(texture(uBg2,v*uBS2+uBO2).rgb), bg, uMix);
   float a = smoothstep(uEdge.x,uEdge.y,refined(cu));
-  vec2 q=step(vec2(0.),cu)*step(cu,vec2(1.)); a*=q.x*q.y;
+  a*=inside(cu);
   vec2 asp = vec2(1., 1.7778); // pixels ~carrés à l'écran 9:16
   if (uFx.z>.001 && a<.999){ // ombre portée douce, décalée vers le bas/droite
     float sh = mq(s0-vec2(.012,.008)*asp)*.25;
@@ -288,8 +292,8 @@ gl.linkProgram(prog); gl.useProgram(prog);
 gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
 const loc = gl.getAttribLocation(prog, "p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-const U = {}; for (const n of ["uCam","uBg","uMask","uBg2","uBS2","uBO2","uMix","uCS","uCO","uBS","uBO","uEdge","uMir","uBr","uCt","uSa","uPx","uSub","uFx"]) U[n] = gl.getUniformLocation(prog, n);
-gl.uniform1i(U.uCam, 0); gl.uniform1i(U.uBg, 1); gl.uniform1i(U.uMask, 2); gl.uniform1i(U.uBg2, 3); gl.uniform1f(U.uMix, 1);
+const U = {}; for (const n of ["uMO","uMS","uCam","uBg","uMask","uBg2","uBS2","uBO2","uMix","uCS","uCO","uBS","uBO","uEdge","uMir","uBr","uCt","uSa","uPx","uSub","uFx"]) U[n] = gl.getUniformLocation(prog, n);
+gl.uniform1i(U.uCam, 0); gl.uniform1i(U.uBg, 1); gl.uniform1i(U.uMask, 2); gl.uniform1i(U.uBg2, 3); gl.uniform1f(U.uMix, 1); gl.uniform2f(U.uMO, 0, 0); gl.uniform2f(U.uMS, 1, 1);
 function tex(unit) { const t = gl.createTexture(); gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t);
   for (const [k, val] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR],[gl.TEXTURE_MAG_FILTER, gl.LINEAR],[gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, val);
   return t; }
@@ -350,6 +354,22 @@ function uploadMask(data, w, h) {
 }
 /* Détourage dans un worker : l'inférence ne bloque plus le rendu ni l'interface. Le rendu suit la caméra (30 i/s),
    l'IA traite la dernière image disponible à son propre rythme (une seule image en vol, les autres sont sautées). */
+/* Zone analysée : seule la partie de la caméra visible à l'écran (+ marge) est envoyée à l'IA. Avec une caméra 4:3 recadrée en 9:16,
+   les 256×256 points du masque se concentrent sur ce que l'on voit : contours ~1,8× plus fins. */
+let sentRect = [0, 0, 1, 1];
+function visibleRect() {
+  const vw = video.videoWidth, vh = video.videoHeight, c = cover(vw, vh, S.cz, 0, 0);
+  let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
+  for (const [vx, vy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+    const sx0 = vx - S.sx, sy0 = vy - S.sy, mx = S.mirror ? 1 - sx0 : sx0, u = mx * c[0] + c[2], w = sy0 * c[1] + c[3];
+    x0 = Math.min(x0, u); x1 = Math.max(x1, u); y0 = Math.min(y0, w); y1 = Math.max(y1, w);
+  }
+  const mx = (x1 - x0) * 0.06, my = (y1 - y0) * 0.06; x0 = Math.max(0, x0 - mx); y0 = Math.max(0, y0 - my); x1 = Math.min(1, x1 + mx); y1 = Math.min(1, y1 + my);
+  if (x1 - x0 > 0.92 && y1 - y0 > 0.92) return null; // presque tout est visible : image entière
+  const ev = (v) => Math.max(0, Math.round(v / 2) * 2); // coordonnées paires (formats vidéo 4:2:0)
+  const px = ev(x0 * vw), py = ev(y0 * vh), pw = Math.min(vw - px, ev((x1 - x0) * vw)), ph = Math.min(vh - py, ev((y1 - y0) * vh));
+  return pw >= 64 && ph >= 64 ? { px, py, pw, ph, r: [px / vw, py / vh, pw / vw, ph / vh] } : null;
+}
 let busy = false, busySince = 0, wOpts = "", held = null, sync = true, curModel = "fast", slowSince = 0, fastSince = 0;
 let pendingModel = null;
 function setModel(id) { if (!segWorker || id === curModel || id === pendingModel) return; pendingModel = id; segWorker.postMessage({ type: "model", model: MODELS[id] }); }
@@ -372,7 +392,7 @@ function initWorker() {
       else if (d.type === "error") { clearTimeout(to); w.terminate(); rej(new Error(d.message)); }
       else if (d.type === "mask") {
         busy = false; const f = held; held = null;
-        if (d.data) { uploadMask(d.data, d.w, d.h); inferMs += (d.ms - inferMs) * .15; cnt.ai++; }
+        if (d.data) { uploadMask(d.data, d.w, d.h); gl.uniform2f(U.uMO, sentRect[0], sentRect[1]); gl.uniform2f(U.uMS, sentRect[2], sentRect[3]); inferMs += (d.ms - inferMs) * .15; cnt.ai++; }
         if (f) { if (!suspended && d.data) { render(f); cnt.r++; } f.close(); } // image et masque de la MÊME prise de vue : aucun décalage
         adapt();
       }
@@ -428,9 +448,11 @@ function infer() {
     if (busy && performance.now() - busySince < 10000) return;
     busy = true; busySince = performance.now();
     try {
-      const frame = new VideoFrame(video, { timestamp: Math.round(busySince * 1000) });
-      if (sync) { held = frame; const c = frame.clone(); segWorker.postMessage({ type: "frame", frame: c, ts: busySince }, [c]); } // on garde l'image : elle sera affichée avec SON masque
-      else segWorker.postMessage({ type: "frame", frame, ts: busySince }, [frame]);
+      const frame = new VideoFrame(video, { timestamp: Math.round(busySince * 1000) }), vr = visibleRect();
+      let c; try { c = vr ? new VideoFrame(frame, { visibleRect: { x: vr.px, y: vr.py, width: vr.pw, height: vr.ph } }) : frame.clone(); sentRect = vr ? vr.r : [0, 0, 1, 1]; }
+      catch { c = frame.clone(); sentRect = [0, 0, 1, 1]; }
+      if (sync) held = frame; else frame.close(); // synchro : on garde l'image, elle sera affichée avec SON masque
+      segWorker.postMessage({ type: "frame", frame: c, ts: busySince }, [c]);
     }
     catch { createImageBitmap(video).then((frame) => segWorker.postMessage({ type: "frame", frame, ts: busySince }, [frame])).catch(() => (busy = false)); }
     return;
@@ -445,17 +467,38 @@ function infer() {
 
 /* ---------- Caméra ---------- */
 let facing = "user", stream = null;
+/* Caméra : on essaie plusieurs formats et on garde le meilleur portrait (≥ 1080 de large, ≥ 24 i/s même dans la pénombre).
+   Selon les téléphones, Chrome interprète largeur/hauteur dans le sens du capteur ou de l'écran : on teste les deux.
+   Le format retenu est mémorisé : les lancements suivants ouvrent directement la bonne caméra. */
+const CAM_TRIES = [
+  { width: { ideal: 1080 }, height: { ideal: 1920 }, frameRate: { ideal: 30, min: 24 } },
+  { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, min: 24 } },
+  { width: { ideal: 1440 }, height: { ideal: 2560 }, frameRate: { ideal: 30, min: 24 } },
+  { width: { ideal: 1080 }, height: { ideal: 1920 }, frameRate: { ideal: 30 } },
+  { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+  {},
+];
+let camInfo = "";
+async function openCam(f, c) {
+  const s = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: f }, ...c } });
+  const st = s.getVideoTracks()[0].getSettings(); return { s, w: st.width || 0, h: st.height || 0, fps: st.frameRate || 0 };
+}
+const camScore = (r) => (r.h > r.w ? 2 : 1) * Math.min(r.w, r.h, 1080) * (r.fps >= 24 || !r.fps ? 1 : 0.6);
 async function startCam(f) {
   stream?.getTracks().forEach((t) => t.stop());
-  const tries = [{ facingMode: { ideal: f }, width: { ideal: 1080 }, height: { ideal: 1440 }, aspectRatio: { ideal: 3 / 4 }, frameRate: { ideal: 30, max: 30 } }, { facingMode: { ideal: f }, width: { ideal: 1080 }, height: { ideal: 1920 }, frameRate: { ideal: 30 } }, { facingMode: { ideal: f } }, true];
-  let s = null, lastErr;
-  for (const v of tries) {
-    try { s = await navigator.mediaDevices.getUserMedia({ audio: false, video: v }); break; }
-    catch (e) { lastErr = e; if (e.name === "NotAllowedError" || e.name === "SecurityError" || e.name === "NotFoundError") break; }
+  let best = null, lastErr, saved = null;
+  try { saved = JSON.parse(localStorage.getItem("gs.cam." + f) || "null"); } catch {}
+  const order = saved != null ? [saved, ...CAM_TRIES.keys()].filter((v, i, a) => a.indexOf(v) === i) : [...CAM_TRIES.keys()];
+  for (const i of order) {
+    let r; try { r = await openCam(f, CAM_TRIES[i]); r.i = i; }
+    catch (e) { lastErr = e; if (["NotAllowedError", "SecurityError", "NotFoundError"].includes(e.name)) break; continue; }
+    if (!best || camScore(r) > camScore(best)) { best?.s.getTracks().forEach((t) => t.stop()); best = r; } else r.s.getTracks().forEach((t) => t.stop());
+    if (best.h > best.w && Math.min(best.w, best.h) >= 1080 && (best.fps >= 24 || !best.fps)) break; // idéal atteint
   }
-  if (!s) throw lastErr;
-  stream = s;
-  facing = f; video.srcObject = stream; await video.play(); setCz(camFit());
+  if (!best) throw lastErr;
+  try { localStorage.setItem("gs.cam." + f, JSON.stringify(best.i)); } catch {}
+  stream = best.s; camInfo = `${best.w}×${best.h}${best.fps ? " · " + Math.round(best.fps) + " i/s" : ""}`;
+  facing = f; video.srcObject = stream; await video.play(); setCz(1); // plein cadre : l'image remplit tout l'écran
   stream.getVideoTracks()[0].addEventListener("ended", () => { if (rec && rec.state !== "inactive") stopRec(); showErr("Caméra interrompue. Rechargez la page."); });
   S.mirror = f === "user"; $("bMirror").setAttribute("aria-pressed", String(S.mirror));
 }
@@ -469,7 +512,7 @@ function camLoop() {
   if (running) video.requestVideoFrameCallback(camLoop);
 }
 setInterval(() => { for (const k in cnt) { rate[k] = cnt[k] * 2; cnt[k] = 0; }
-  if (running) $("perf").textContent = `Cam ${rate.cam} · IA ${rate.ai} · Rendu ${rate.r} fps · ${inferMs.toFixed(0)} ms${segWorker && sync ? " · synchro" : ""}`; }, 500);
+  if (running) $("perf").textContent = `Cam ${rate.cam} · IA ${rate.ai} · Rendu ${rate.r} fps · ${inferMs.toFixed(0)} ms${segWorker && sync ? " · synchro" : ""} · caméra ${camInfo}`; }, 500);
 
 // L'IA se prépare dès l'ouverture de la page (pendant que vous lisez l'écran d'accueil) : prête quand la caméra s'allume.
 const segP = (async () => { try { await initSeg(); return true; } catch (e) { console.error(e); segmenter = null; return false; } })();
@@ -590,7 +633,7 @@ async function startRec() {
   const vs = canvas.captureStream(30);
   if (hasMic) dest.stream.getAudioTracks().forEach((t) => vs.addTrack(t)); else toast("Micro indisponible : enregistrement sans son.");
   let r;
-  try { r = new MediaRecorder(vs, { mimeType: recMime, videoBitsPerSecond: H > 1280 ? 12e6 : 8e6, audioBitsPerSecond: 192000 }); } catch (e) { return toast("Enregistreur impossible : " + e.message); }
+  try { r = new MediaRecorder(vs, { mimeType: recMime, videoBitsPerSecond: H > 1920 ? 20e6 : H > 1280 ? 14e6 : 8e6, audioBitsPerSecond: 192000 }); } catch (e) { return toast("Enregistreur impossible : " + e.message); }
   writer = null; chunks = [];
   const be = await backendP;
   navigator.storage?.persist?.().catch(() => {}); // demande au navigateur de ne jamais effacer les prises pour faire de la place
@@ -900,7 +943,7 @@ const endPtr = (e) => {
     if (gmode === "bg" && Math.abs(dx) > 50 && Math.abs(dx) > 1.5 * Math.abs(dy) && dt < 700) setBg(bi + (dx < 0 ? 1 : -1));
     else if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
       const now = performance.now();
-      if (gmode === "sub" && now - lastTap < 350) { clearTimeout(tapT); S.sx = 0; S.sy = 0; setCz(camFit()); lastTap = 0; }
+      if (gmode === "sub" && now - lastTap < 350) { clearTimeout(tapT); S.sx = 0; S.sy = 0; setCz(1); lastTap = 0; }
       else { lastTap = now; clearTimeout(tapT); tapT = setTimeout(() => openP(null), gmode === "sub" ? 360 : 0); }
     }
   }
@@ -920,6 +963,7 @@ document.querySelectorAll("[data-look]").forEach((b) => (b.onclick = () => {
 $("go").addEventListener("click", () => setTimeout(() => { try { if (!localStorage.gsHint) { localStorage.gsHint = 1; const t = $("toast"); t.classList.add("ok"); toast("Glissez pour vous placer · pincez pour agrandir · double-tap pour recentrer", 6000); setTimeout(() => t.classList.remove("ok"), 6200); } } catch { /* stockage indisponible */ } }, 1800));
 // Diagnostic en lecture seule (tests, et « IA » touché pour l'afficher) : état du décor, du modèle et de la synchro.
 window.gsDebug = { get bg() { return bgCur?.id; }, get model() { return curModel; }, get sync() { return !!(segWorker && sync); }, get inferMs() { return inferMs; },
+  get cam() { return camInfo; }, get maskRect() { return sentRect; },
   get vad() { return !!vad?.speaking; }, get tpPos() { return tpPos; }, get mic() { return micStream?.getAudioTracks()[0]?.label; } };
 $("qSel").value = quality;
 $("qSel").onchange = (e) => { quality = e.target.value; try { localStorage.setItem("gs.q", quality); } catch {} demoted = false;

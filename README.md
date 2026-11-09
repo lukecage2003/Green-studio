@@ -1,4 +1,4 @@
-# Green Studio 3.0 — état réel (alpha.5)
+# Green Studio 3.0 — état réel (alpha.6)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -14,10 +14,10 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - Projet natif : `android/` (Capacitor 8) ; plugin `GalleryPlugin.java` (MediaStore).
 
 ## Tests
-- `npm test` : tests unitaires (Node 22) — 19/19.
+- `npm test` : tests unitaires (Node 22) — 20/20.
 - `npm run test:browser` (avec `npx vite --port 5173` lancé) : tests dans Chromium, caméra simulée.
   - `media.e2e` : vraie vidéo MediaRecorder → extraction audio, export avec coupe (durée exacte), annulation.
-  - `live.e2e` : micro affiché ; changement de décor mesuré (≈ 0–1 ms) ; modèle Précis chargé en arrière-plan ; prompteur qui avance avec la voix et s'arrête au silence.
+  - `live.e2e` (et `LANDSCAPE=1` : caméra limitée au 4:3 paysage) : caméra plein écran ; zone analysée par l'IA limitée au visible ; micro affiché ; changement de décor mesuré (≈ 0–1 ms) ; modèle Précis chargé en arrière-plan ; prompteur qui avance avec la voix et s'arrête au silence.
   - `app.e2e` : compte à rebours → enregistrement → aperçu → ✂ Monter → transcription (Whisper simulé) → suggestions → annuler/rétablir → coupe par sélection de mots → lecture du montage (aucune image coupée affichée, relais entre lecteurs) → sous-titres → export (durée vérifiée, sous-titres gravés vérifiés dans l'image) → réouverture (montage conservé) → Mes prises (liste, montage, suppression). `MP4=1` teste le repli temps réel.
 
 ## Fait ET testé
@@ -45,6 +45,14 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## Nouveautés alpha.6 (d'après l'échantillon 720p/15 i/s fourni)
+- **Plein écran** : l'image caméra remplit toujours le cadre 9:16 (avant : réduite pour tenir entière → silhouette dans une bande, coupée net). Bords adoucis si l'on dézoome.
+- **Caméra négociée** : plusieurs formats essayés (portrait 1080p, sens capteur/écran, 1440p), ≥ 24 i/s demandés même dans la pénombre ; format retenu mémorisé ; affiché dans la pastille IA.
+- **Détourage plus fin** : seule la zone visible de la caméra est envoyée à l'IA (≈ 1,8× plus de détails avec une caméra 4:3 recadrée).
+- **Qualité** : 1080p par défaut, option 1440p ; débits fixes (enregistrement 14 Mbit/s en 1080p, 20 en 1440p ; export 12 Mbit/s en 1080p au lieu de ~1,6).
+- **Transcription** : modèle Whisper **small** (bien plus fidèle en français) automatiquement avec WebGPU, base sinon ; choix manuel small/base/tiny ; replis automatiques.
+- **Bégaiements que Whisper efface** (`analyzeAudio`) : voix sans mot transcrit entre deux mots (« je-je », « euh ») ; mot anormalement long avec coupure interne (« p… présenter ») → seul le début répété est proposé à la coupe.
 
 ## Fait mais NON testé ici (pas de réseau vers huggingface.co, pas de téléphone)
 - Transcription Whisper réelle (`workers/transcribe.worker.ts`, modèle `onnx-community/whisper-base_timestamped`, WebGPU → WASM). Le worker se charge et gère l'échec réseau proprement ; le résultat réel reste à vérifier sur l'appareil.

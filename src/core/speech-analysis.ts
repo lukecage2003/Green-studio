@@ -1,7 +1,7 @@
 /** SpeechAnalysisEngine : suggestions de coupes à partir des mots horodatés. Ne supprime jamais rien : propose seulement. */
 import type { Range, Word } from "./timeline.ts";
 
-export type IssueType = "repetition" | "stutter" | "false_start" | "hesitation" | "long_silence";
+export type IssueType = "repetition" | "stutter" | "false_start" | "hesitation" | "long_silence" | "untranscribed";
 export interface Suggestion { id: string; type: IssueType; range: Range; firstWord: number; lastWord: number; excerpt: string; confidence: number }
 
 export interface AnalysisOptions {
@@ -65,4 +65,59 @@ export function analyze(words: Word[], opt: Partial<AnalysisOptions> = {}): Sugg
     }
   }
   return out.sort((a, b) => a.range.start - b.range.start);
+}
+
+
+/* ---------- Analyse du son : ce que Whisper « nettoie » ---------- */
+// Whisper transcrit la parole « propre » : « je-je-je vais » devient « je vais », « p-p-présenter » devient « présenter »,
+// les « euh » disparaissent souvent. On compare donc le son réel aux mots transcrits.
+
+/** Trames de 20 ms : niveau RMS + seuil de voix adaptatif (plancher de bruit, et −30 dB sous le maximum). */
+export function voiceFrames(pcm: Float32Array, rate: number) {
+  const fr = Math.max(1, Math.round(rate * 0.02)), n = Math.floor(pcm.length / fr), lv = new Float32Array(n);
+  for (let k = 0; k < n; k++) { let a = 0; for (let i = k * fr; i < (k + 1) * fr; i++) a += pcm[i] * pcm[i]; lv[k] = Math.sqrt(a / fr); }
+  const sorted = Array.from(lv).sort((x, y) => x - y), floor = sorted[Math.floor(n * 0.1)] ?? 0, peak = sorted[Math.floor(n * 0.995)] ?? 0;
+  const th = Math.max(floor * 4, peak * 0.03, 1e-3), on = new Uint8Array(n);
+  for (let k = 0; k < n; k++) on[k] = lv[k] > th ? 1 : 0;
+  return { on, dt: fr / rate };
+}
+
+export function analyzeAudio(words: Word[], pcm: Float32Array, rate: number, taken: Suggestion[] = []): Suggestion[] {
+  if (!words.length || !pcm.length) return [];
+  const { on, dt } = voiceFrames(pcm, rate), out: Suggestion[] = [];
+  const busy = (a: number, b: number) => taken.some((s) => s.range.start < b && s.range.end > a);
+  const voicedIn = (a: number, b: number) => { let v = 0; for (let k = Math.max(0, Math.floor(a / dt)); k < Math.min(on.length, Math.ceil(b / dt)); k++) v += on[k]; return v * dt; };
+
+  // 1. Voix entre deux mots, sans mot transcrit (bégaiement, « euh » effacé, syllabe répétée)
+  for (let i = -1; i < words.length; i++) {
+    const a = i >= 0 ? words[i].end + 0.06 : 0, b = i + 1 < words.length ? words[i + 1].start - 0.06 : pcm.length / rate;
+    if (b - a < 0.12) continue;
+    // plus longue plage de voix continue (tolère des micro-coupures de 40 ms) dans le trou
+    let best: [number, number] | null = null, s0 = -1, gap = 0;
+    for (let k = Math.floor(a / dt); k <= Math.min(on.length, Math.ceil(b / dt)); k++) {
+      const v = k < on.length && k * dt < b ? on[k] : 0;
+      if (v) { if (s0 < 0) s0 = k; gap = 0; } else if (s0 >= 0 && ++gap > 2) { const e = k - gap + 1; if (!best || e - s0 > best[1] - best[0]) best = [s0, e]; s0 = -1; gap = 0; }
+    }
+    if (!best) continue;
+    const st = best[0] * dt, en = best[1] * dt, d = en - st;
+    if (d < 0.12 || d > 2.5 || busy(st, en)) continue;
+    const next = words[i + 1], lo = i >= 0 ? words[i].end : 0, hi = next ? next.start : pcm.length / rate;
+    out.push({ id: `untranscribed-${i + 1}`, type: "untranscribed", firstWord: Math.max(0, i + 1 < words.length ? i + 1 : i), lastWord: Math.max(0, i + 1 < words.length ? i + 1 : i),
+      range: { start: Math.max(lo, st - 0.03), end: Math.min(hi, en + 0.03) }, confidence: Math.min(0.85, 0.55 + d * 0.4),
+      excerpt: `[son non transcrit ${d.toFixed(1).replace(".", ",")} s]${next ? ` avant « ${next.text} »` : ""}` });
+  }
+  // 2. Mot anormalement long avec une coupure interne près du début : « p… présenter », « je… je » fusionnés en un mot
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i], len = w.end - w.start, chars = w.text.replace(/[^\p{L}\p{N}]/gu, "").length || 1;
+    if (len < Math.max(0.45, 0.065 * chars + 0.2) || busy(w.start, w.end)) continue;
+    let k0 = -1, run = 0, cut = -1;
+    const kA = Math.floor((w.start + 0.06) / dt), kB = Math.floor((w.end - Math.min(0.25, len * 0.35)) / dt);
+    for (let k = kA; k < kB && k < on.length; k++) {
+      if (!on[k]) { if (k0 < 0) k0 = k; run++; } else { if (run * dt >= 0.08 && voicedIn(w.start, k0 * dt) >= 0.04) { cut = k; break; } k0 = -1; run = 0; }
+    }
+    if (cut < 0) continue;
+    out.push({ id: `stutter-in-${i}`, type: "stutter", firstWord: i, lastWord: i, range: { start: w.start, end: cut * dt - 0.01 },
+      confidence: 0.6, excerpt: `« ${w.text} » : début répété` });
+  }
+  return out;
 }

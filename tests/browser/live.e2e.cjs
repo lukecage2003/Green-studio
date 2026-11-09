@@ -3,10 +3,21 @@ const { chromium } = require('playwright'); const assert = require('assert');
 (async () => {
   const b = await chromium.launch({ args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--enable-unsafe-swiftshader'] });
   const p = await b.newPage({ viewport: { width: 400, height: 800 } }); const errs = [];
+  // LANDSCAPE=1 : caméra qui ne sait fournir que du 4:3 paysage (cas observé sur téléphone)
+  if (process.env.LANDSCAPE) await p.addInitScript(() => { const g = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = (c) => g(c.video ? { ...c, video: { width: { exact: 1440 }, height: { exact: 1080 } } } : c); });
   p.on('pageerror', (e) => errs.push(e.message)); p.on('dialog', (d) => d.accept());
   await p.goto('http://localhost:5173/'); await p.click('#go'); await p.waitForSelector('#rec:not([hidden])');
   // Micro : puce visible avec le nom du micro
   await p.waitForSelector('#micChip:not([hidden])'); console.log('micro :', await p.textContent('#micChip'));
+  // Plein écran : la caméra (simulée, en paysage 4:3) remplit le cadre 9:16 ; l'IA n'analyse que la zone visible
+  const cam = await p.evaluate(() => window.gsDebug.cam); console.log('caméra :', cam);
+  await p.evaluate(() => { const i = document.getElementById('inv'); i.checked = true; i.dispatchEvent(new Event('change')); }); // masque inversé : caméra visible partout
+  await p.waitForTimeout(2500); await p.screenshot({ path: process.argv[2] || require('os').tmpdir() + '/live.png' });
+  const rect = await p.evaluate(() => window.gsDebug.maskRect); console.log('zone analysée :', rect.map((x) => +x.toFixed(2)));
+  const [cw, ch] = cam.split(' ')[0].split('×').map(Number);
+  if (cw > ch) assert.ok(rect[2] < 0.8, "caméra paysage : seule la zone visible est envoyée à l'IA"); else assert.deepEqual(rect, [0, 0, 1, 1]);
+  await p.evaluate(() => { const i = document.getElementById('inv'); i.checked = false; i.dispatchEvent(new Event('change')); });
   // Décors : changement instantané (préchargés sur le GPU), y compris par toucher sur une vignette lointaine
   await p.waitForTimeout(1500);
   const times = [];
@@ -21,6 +32,7 @@ const { chromium } = require('playwright'); const assert = require('assert');
   const seen = new Set(); for (let i = 0; i < 40; i++) { seen.add(await p.evaluate(() => window.gsDebug.model)); await p.waitForTimeout(500); }
   console.log('modèles utilisés :', [...seen], '· inférence', Math.round(await p.evaluate(() => window.gsDebug.inferMs)), 'ms · synchro', await p.evaluate(() => window.gsDebug.sync));
   assert.ok(seen.has('hq'), 'le modèle Précis se charge et tourne');
+  if (process.env.LANDSCAPE) { console.log('erreurs :', errs); assert.equal(errs.length, 0); console.log('OK'); return b.close(); }
   // Prompteur « suit ma voix » : avance quand on parle (bips du micro simulé), s'arrête micro coupé
   await p.click('#bScript'); await p.fill('#tpIn', Array.from({ length: 80 }, (_, i) => `Ligne ${i} du script de test.`).join('\n'));
   await p.selectOption('#tpMode', 'voice'); await p.evaluate(() => { const e = document.getElementById('tpSpd'); e.value = 120; e.dispatchEvent(new Event('input')); });

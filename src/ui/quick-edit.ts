@@ -1,13 +1,13 @@
 /** Quick Edit : montage par le texte. Lecteur qui saute les coupes, forme d'onde + timeline, transcription cliquable,
  *  suggestions (répétitions, hésitations, silences…), annuler/rétablir, export. Tout reste sur l'appareil. */
 import { EditSession, wordsToRange, EPS, type Range, type Word } from "../core/timeline.ts";
-import { analyze, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
+import { analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
 import { peaks as computePeaks, loudnessGain, speechBounds } from "../core/audio.ts";
 import { buildCaptions, drawCaption, lineAt, CAPTION_DEFAULT, PRESETS, type CapLine, type CaptionStyle, type CaptionPreset } from "../core/captions.ts";
 import { probe, extractAudio, exportEdited, webCodecsAvailable } from "../core/media.ts";
 import { exportRealtime } from "../core/export.ts";
 
-const LABEL: Record<IssueType, string> = { repetition: "Répétition", stutter: "Bégaiement", false_start: "Faux départ", hesitation: "Hésitation", long_silence: "Silence long" };
+const LABEL: Record<IssueType, string> = { repetition: "Répétition", stutter: "Bégaiement", false_start: "Faux départ", hesitation: "Hésitation", long_silence: "Silence long", untranscribed: "Bégaiement / son non transcrit" };
 const SAFE = 0.7;
 const fmt = (t: number) => { t = Math.max(0, t); const m = Math.floor(t / 60), s = Math.floor(t % 60); return `${m}:${String(s).padStart(2, "0")}`; };
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -92,6 +92,8 @@ export async function openEditor(o: EditorOptions) {
   if (!duration || !isFinite(duration)) { await new Promise((r) => (video.onloadedmetadata = r)); duration = isFinite(video.duration) ? video.duration : 0; }
   const session = new EditSession(duration, saved?.cuts ?? []);
   let words: Word[] | null = saved?.words ?? null, sugs: Suggestion[] = words ? analyze(words) : [];
+  /** Suggestions du texte + du son (bégaiements et hésitations que Whisper n'a pas écrits). */
+  const suggest = (w: Word[]) => { const t = analyze(w); return pcm ? [...t, ...analyzeAudio(w, pcm, 16000, t)].sort((a, b) => a.range.start - b.range.start) : t; };
   const ignored = new Set(saved?.ignored ?? []);
   let pk: Float32Array | null = saved?.peaks ? Float32Array.from(saved.peaks, (x) => x / 255) : null;
   let pcm: Float32Array | null = null, audioErr = "";
@@ -109,7 +111,7 @@ export async function openEditor(o: EditorOptions) {
 
   /* ---------- Audio : forme d'onde + PCM pour la transcription (lecture par morceaux, pas de chargement complet) ---------- */
   const audioP = extractAudio(o.file, 16000, (p) => { if (!pk) setStatus(`Analyse audio… ${Math.round(p * 100)} %`); }, ctl.signal)
-    .then((a) => { pcm = a.pcm; if (!pk) { pk = computePeaks(a.pcm, 1200); let m = 0; for (const v of pk) m = Math.max(m, v); if (m > 0) for (let i = 0; i < pk.length; i++) pk[i] /= m; save(); } refresh(); })
+    .then((a) => { pcm = a.pcm; if (words) sugs = suggest(words); if (!pk) { pk = computePeaks(a.pcm, 1200); let m = 0; for (const v of pk) m = Math.max(m, v); if (m > 0) for (let i = 0; i < pk.length; i++) pk[i] /= m; save(); } refresh(); })
     .catch((e) => { if (e?.name !== "AbortError") { audioErr = e?.message ?? String(e); refresh(); } });
 
   /* ---------- Rendu ---------- */
@@ -134,7 +136,7 @@ export async function openEditor(o: EditorOptions) {
       body.innerHTML = `<div class="card"><b>Transcription sur l’appareil</b>
         <p>Whisper tourne dans le téléphone : rien n’est envoyé en ligne. Premier usage : téléchargement du modèle (~80 à 300 Mo selon le choix), ensuite hors ligne.</p>
         ${audioErr ? `<p class="error">${esc(audioErr)}</p>` : ""}
-        <label class="row" style="padding:0">Qualité <select data-a="model"><option value="base">Précise (recommandée)</option><option value="tiny">Rapide</option></select></label>
+        <label class="row" style="padding:0">Qualité <select data-a="model"><option value="auto">Auto (la plus précise possible)</option><option value="small">Très précise (~250 Mo)</option><option value="base">Précise (~80 Mo)</option><option value="tiny">Rapide (~40 Mo)</option></select></label>
         <button class="ib go" data-a="transcribe" ${can ? "" : "disabled"}>Transcrire</button>
         <div class="bar" hidden><i></i></div><p data-r="tp"></p>
         <p>Sans transcription, vous pouvez couper avec ⟦ Début / Couper ⟧ sur la timeline.</p></div>`;
@@ -274,7 +276,7 @@ export async function openEditor(o: EditorOptions) {
   /* ---------- Transcription ---------- */
   async function transcribe() {
     const btn = body.querySelector<HTMLButtonElement>("[data-a=transcribe]"), bar = body.querySelector<HTMLElement>(".bar"), tp = body.querySelector<HTMLElement>("[data-r=tp]");
-    const model = body.querySelector<HTMLSelectElement>("[data-a=model]")?.value ?? "base";
+    const model = body.querySelector<HTMLSelectElement>("[data-a=model]")?.value ?? "auto";
     if (btn) btn.disabled = true; if (bar) bar.hidden = false;
     const show = (p: number, m: string) => { if (bar) (bar.firstElementChild as HTMLElement).style.width = Math.round(p * 100) + "%"; if (tp) tp.textContent = m; };
     show(0, "Préparation de l’audio…");
@@ -285,10 +287,10 @@ export async function openEditor(o: EditorOptions) {
     worker.onmessage = (e) => {
       const d = e.data;
       if (d.type === "download") show(d.p, `Téléchargement du modèle (une seule fois) : ${Math.round(d.p * 100)} % de ${Math.round(d.mb)} Mo`);
-      else if (d.type === "loaded") show(0, `Transcription en cours (${d.device === "webgpu" ? "GPU" : "processeur"})…`);
+      else if (d.type === "loaded") show(0, `Transcription en cours (modèle ${d.model}, ${d.device === "webgpu" ? "GPU" : "processeur"})…`);
       else if (d.type === "progress") show(d.p, `Transcription ${Math.round(d.p * 100)} %${d.eta > 1 ? ` · reste ~${fmt(d.eta)}` : ""}`);
       else if (d.type === "done") {
-        worker?.terminate(); worker = null; words = d.words; sugs = analyze(words!); sel = null; save();
+        worker?.terminate(); worker = null; words = d.words; sugs = suggest(words!); sel = null; save();
         body.innerHTML = ""; refresh();
         toast(`Transcrit en ${fmt((performance.now() - t0) / 1000)} · ${sugs.length} suggestion(s).`, 4000);
       } else if (d.type === "error") {
@@ -399,7 +401,7 @@ export async function openEditor(o: EditorOptions) {
       case "preset": style = { ...style, preset: t.closest<HTMLElement>("[data-v]")!.dataset.v as CaptionPreset }; save();
         root.querySelectorAll<HTMLElement>("[data-a=preset]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === style.preset))); break;
       case "fixSel": if (sel && words && sel.a === sel.b) { const v = prompt("Corriger le mot :", words[sel.a].text)?.trim();
-        if (v) { words[sel.a] = { ...words[sel.a], text: v }; const sp = body.querySelector<HTMLElement>(`.tx span[data-i="${sel.a}"]`); if (sp) sp.textContent = v; sugs = analyze(words); sel = null; commit(); } } break;
+        if (v) { words[sel.a] = { ...words[sel.a], text: v }; const sp = body.querySelector<HTMLElement>(`.tx span[data-i="${sel.a}"]`); if (sp) sp.textContent = v; sugs = suggest(words); sel = null; commit(); } } break;
       case "trim": trimEdges(); break;
       case "retx": if (confirm("Refaire la transcription ? Vos coupes sont conservées.")) { words = null; sugs = []; sel = null; body.innerHTML = ""; refresh(); } break;
       case "cutSel": if (sel && words) { session.addCut(wordsToRange(words, sel.a, sel.b)); sel = null; commit(); } break;

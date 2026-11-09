@@ -4,26 +4,42 @@ import { pipeline, env } from "@huggingface/transformers";
 import { splitAtSilences } from "../core/audio.ts";
 env.allowLocalModels = false; env.useBrowserCache = true;
 
-export const MODELS = { base: "onnx-community/whisper-base_timestamped", tiny: "onnx-community/whisper-tiny_timestamped" } as const;
+export const MODELS = {
+  small: "onnx-community/whisper-small_timestamped", // le plus fidèle en français (bégaiements, mots courts) — idéal avec WebGPU
+  base: "onnx-community/whisper-base_timestamped",
+  tiny: "onnx-community/whisper-tiny_timestamped",
+} as const;
+type ModelKey = keyof typeof MODELS | "auto";
 let asr: any = null, loaded = "";
+const resolved: Record<string, string> = {}; // modèle demandé → modèle réellement chargé (après un repli : on ne retente pas à chaque fois)
 const post = (m: unknown) => (self as any).postMessage(m);
 
 self.onmessage = async (e: MessageEvent) => {
-  const { type, audio, language = "fr", model = "base" } = e.data as { type: "run"; audio: Float32Array; language?: string; model?: keyof typeof MODELS };
+  const { type, audio, language = "fr", model = "auto" } = e.data as { type: "run"; audio: Float32Array; language?: string; model?: ModelKey };
   if (type !== "run") return;
   try {
-    const id = MODELS[model] ?? MODELS.base;
-    if (!asr || loaded !== id) {
-      const webgpu = !!(navigator as any).gpu && !!(await (navigator as any).gpu.requestAdapter().catch(() => null));
+    const adapter = (navigator as any).gpu ? await (navigator as any).gpu.requestAdapter().catch(() => null) : null, webgpu = !!adapter;
+    const f16 = !!adapter?.features?.has?.("shader-f16");
+    // Auto : « small » avec le GPU (rapide et précis), « base » sur processeur seul (small y serait trop lent).
+    const key = model === "auto" ? (webgpu ? "small" : "base") : model, id = MODELS[key] ?? MODELS.base;
+    if (!asr || loaded !== (resolved[id] ?? id)) {
       const files = new Map<string, { loaded: number; total: number }>();
       const progress_callback = (p: any) => {
         if (p.status === "progress" && p.total) { files.set(p.file, { loaded: p.loaded, total: p.total });
           let a = 0, t = 0; for (const f of files.values()) { a += f.loaded; t += f.total; } post({ type: "download", p: a / t, mb: t / 1e6 }); }
       };
-      const make = (device: string, dtype: any) => pipeline("automatic-speech-recognition", id, { device, dtype, progress_callback } as any);
-      try { asr = webgpu ? await make("webgpu", { encoder_model: "fp32", decoder_model_merged: "fp32" }) : await make("wasm", "q8"); }
-      catch (err) { if (!webgpu) throw err; asr = await make("wasm", "q8"); } // WebGPU présent mais défaillant
-      loaded = id; post({ type: "loaded", device: webgpu ? "webgpu" : "wasm" });
+      const make = (mid: string, device: string, dtype: any) => pipeline("automatic-speech-recognition", mid, { device, dtype, progress_callback } as any);
+      const gpuDtype = key === "small" ? (f16 ? { encoder_model: "fp16", decoder_model_merged: "q4f16" } : { encoder_model: "fp32", decoder_model_merged: "q4" })
+        : { encoder_model: "fp32", decoder_model_merged: "fp32" };
+      let used = id;
+      try { asr = webgpu ? await make(id, "webgpu", gpuDtype) : await make(id, "wasm", "q8"); }
+      catch (err) {
+        if (webgpu) { try { asr = await make(id, "wasm", "q8"); } catch { asr = null; } } // WebGPU présent mais défaillant
+        if (!asr && id !== MODELS.base) { asr = await make(MODELS.base, "wasm", "q8"); used = MODELS.base; } // dernier recours
+        if (!asr) throw err;
+      }
+      loaded = used; resolved[id] = used;
+      post({ type: "loaded", device: webgpu ? "webgpu" : "wasm", model: loaded.replace(/^.*whisper-|_timestamped$/g, "") });
     }
     const total = audio.length / 16000, t0 = performance.now();
     // Lots de ≤ 28 s coupés aux silences : progression réelle, aucun mot coupé en deux.

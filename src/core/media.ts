@@ -88,7 +88,10 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
     const acodec = at ? await getFirstEncodableAudioCodec(mp4 ? ["aac", "opus"] : ["opus"]) : null;
     const ext = mp4 ? "mp4" : "webm", { target, done } = await makeTarget(ext);
     output = new Output({ format: mp4 ? new Mp4OutputFormat({ fastStart: false }) : new WebMOutputFormat(), target });
-    const vsrc = new VideoSampleSource({ codec: vcodec, bitrate: QUALITY_HIGH, keyFrameInterval: 2 });
+    // Débit fixe et généreux selon la taille de sortie (le mode « qualité » automatique donnait ~1,6 Mbit/s, trop peu pour du visage + texte).
+    const cw = await vt.getCodedWidth(), ch = await vt.getCodedHeight(), outH = Math.min(Math.max(cw, ch), maxHeight > 0 ? maxHeight : Infinity);
+    const bitrate = outH >= 2400 ? 24e6 : outH >= 1800 ? 12e6 : outH >= 1200 ? 6e6 : QUALITY_HIGH;
+    const vsrc = new VideoSampleSource({ codec: vcodec, bitrate, keyFrameInterval: 2 });
     output.addVideoTrack(vsrc);
     const asrc = acodec ? new AudioSampleSource({ codec: acodec, bitrate: 192000 }) : null;
     if (asrc) output.addAudioTrack(asrc);
