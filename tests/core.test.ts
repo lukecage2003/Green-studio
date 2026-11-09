@@ -72,3 +72,20 @@ test("récupération après crash", async () => {
   b.metas.set("r5", { id: "r5", mime: "", startedAt: 0, status: "recording", bytes: 0, chunks: 0, durationMs: 0, backend: "memory" });
   await recoverInterrupted(b); assert.equal(b.metas.get("r5")!.status, "failed");
 });
+
+test("OPFS : parts durables, ordre, aucune recopie, reprise et suppression", async () => {
+  const { OpfsBackend } = await import("../src/core/storage.ts"); const { FakeDir } = await import("./helpers.ts");
+  const d = new FakeDir(); const b = await new OpfsBackend().init(d as any);
+  const w = new RecordingWriter(b, "r6", "video/mp4", { estimate: async () => undefined, flushEveryChunks: 3 });
+  await w.start(); for (let i = 0; i < 7; i++) w.write(new Blob([new Uint8Array(10).fill(i)]), i);
+  await new Promise((r) => setTimeout(r, 10));
+  // crash simulé : seules les parts fermées existent (6 chunks), la 7e est perdue
+  const crashed = await new OpfsBackend().init(d as any); assert.equal((await crashed.file("r6")).size, 60);
+  const m = await w.finish(7); assert.equal(m.bytes, 70);
+  const f = await b.file("r6"); assert.equal(f.type, "video/mp4");
+  const u = new Uint8Array(await f.arrayBuffer()); assert.equal(u.length, 70); assert.equal(u[0], 0); assert.equal(u[69], 6);
+  assert.equal(d.copiedBytes, 0, "aucune recopie des données existantes");
+  // reprise dans une nouvelle session : nouvelle part, rien d'écrasé
+  await crashed.append("r6", new Blob([new Uint8Array(5)])); assert.equal((await crashed.file("r6")).size, 75);
+  await b.remove("r6"); assert.equal(d.files.size, 0);
+});

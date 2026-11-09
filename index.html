@@ -162,7 +162,15 @@ if ("serviceWorker" in navigator && location.protocol.startsWith("http")) naviga
 // Stockage progressif OPTIONNEL : si le module est indisponible (page sans Vite), repli sur l'ancien tableau en mémoire.
 const modP = Promise.all([import("/src/core/storage.ts"), import("/src/core/recovery.ts")]).catch((e) => { console.warn("stockage progressif indisponible", e); return null; });
 const backendP = modP.then((m) => (m ? m[0].openBackend() : null)).catch(() => null);
-backendP.then(async (b) => { if (!b) return; const r = await (await modP)[1].recoverInterrupted(b); if (r.length) toast(`${r.length} enregistrement(s) interrompu(s) récupéré(s).`, 8000); }).catch(() => {});
+// File des prises non encore téléchargées (récupérées après crash ou fermées sans téléchargement) : proposées au démarrage.
+let pendingRecs = [];
+backendP.then(async (b) => {
+  if (!b) return; await (await modP)[1].recoverInterrupted(b);
+  const all = await b.listMeta();
+  for (const m of all) if (m.status === "failed") b.remove(m.id).catch(() => {}); // libère le quota
+  pendingRecs = all.filter((m) => m.status === "complete" || m.status === "recovered").sort((a, c) => c.startedAt - a.startedAt);
+  if (pendingRecs.length) { toast(`${pendingRecs.length} prise(s) non téléchargée(s) retrouvée(s).`, 6000); showPending(); }
+}).catch(() => {});
 let writer = null, chunks = [];
 const $ = (id) => document.getElementById(id);
 let W = 1080, H = 1920; const TA = 9 / 16;
@@ -187,8 +195,16 @@ uniform vec2 uCS,uCO,uBS,uBO,uEdge; uniform float uMir,uBr,uCt,uSa;
 uniform vec2 uPx,uSub; uniform vec3 uFx; // uFx = (anti-halo, lumière du décor, ombre)
 vec3 grade(vec3 c){ c+=uBr; c=(c-.5)*uCt+.5; float l=dot(c,vec3(.2126,.7152,.0722)); return clamp(mix(vec3(l),c,uSa),0.,1.); }
 float refined(vec2 cu){
+  float m0 = texture(uMask,cu).r;
+  // Loin des contours (masque plein ou vide sur tout le voisinage), le filtrage ne change rien : 5 lectures au lieu de 33.
+  // C'est le cas de la grande majorité des pixels : gros gain de GPU, de chaleur et de batterie.
+  if (m0 < .01 || m0 > .99) {
+    vec2 r = uPx*14.;
+    float s4 = texture(uMask,cu+vec2(r.x,0.)).r + texture(uMask,cu-vec2(r.x,0.)).r + texture(uMask,cu+vec2(0.,r.y)).r + texture(uMask,cu-vec2(0.,r.y)).r;
+    if (m0 < .01 ? s4 < .04 : s4 > 3.96) return m0;
+  }
   vec3 c0 = texture(uCam,cu).rgb;
-  float sw = 1., sm = texture(uMask,cu).r;
+  float sw = 1., sm = m0;
   for (int i=0;i<8;i++){
     float an = 0.7853982*float(i);
     vec2 d = vec2(cos(an),sin(an));
@@ -339,9 +355,8 @@ async function startCam(f) {
 
 /* ---------- Boucle ---------- */
 const cnt = { cam: 0, ai: 0, r: 0 }, rate = { cam: 0, ai: 0, r: 0 };
-let newFrame = false, running = false;
+let running = false;
 function camLoop() { cnt.cam++; infer(); render(true); cnt.r++; if (running) video.requestVideoFrameCallback(camLoop); }
-function loop() { if (!running) return; render(newFrame); newFrame = false; cnt.r++; requestAnimationFrame(loop); }
 setInterval(() => { for (const k in cnt) { rate[k] = cnt[k] * 2; cnt[k] = 0; }
   if (running) $("perf").textContent = `Cam ${rate.cam} · IA ${rate.ai} · Rendu ${rate.r} fps · ${inferMs.toFixed(0)} ms`; }, 500);
 
@@ -354,7 +369,7 @@ $("go").onclick = async () => {
     await initMic();
     try { await initSeg(); } catch (e) { console.error(e); segmenter = null; setAi("err", "IA indisponible"); }
     if (segmenter) setAi("ok", "IA : " + backend);
-    $("start").hidden = true; $("bar").hidden = false; $("rec").hidden = false; $("strip").hidden = false; navigator.wakeLock?.request("screen").catch(() => {}); if (!segmenter) toast("Détourage indisponible (modèle non chargé, internet requis au premier lancement) : caméra seule.", 9000);
+    $("start").hidden = true; $("bar").hidden = false; $("rec").hidden = false; $("strip").hidden = false; keepAwake(); if (!segmenter) toast("Détourage indisponible (modèle non chargé, internet requis au premier lancement) : caméra seule.", 9000);
     running = true; video.requestVideoFrameCallback(camLoop);
   } catch (e) {
     setAi("err", "IA : erreur");
@@ -366,24 +381,18 @@ $("go").onclick = async () => {
   }
 };
 
+const keepAwake = () => navigator.wakeLock?.request("screen").catch(() => {});
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") { if (running) keepAwake(); }
+  else if (rec) toast("L’application est passée en arrière-plan : la vidéo enregistrée s’est figée pendant ce temps.", 8000);
+});
 /* ---------- Commandes ---------- */
-$("bDecor").onclick = () => ($("panel").hidden = false);
 $("bClose").onclick = () => ($("panel").hidden = true);
 $("bMirror").onclick = () => { S.mirror = !S.mirror; $("bMirror").setAttribute("aria-pressed", String(S.mirror)); };
 $("bFlip").onclick = async () => { try { await startCam(facing === "user" ? "environment" : "user"); } catch (e) { showErr("Changement de caméra impossible : " + (e?.message ?? e)); } };
 for (const [id, key] of [["zoom","zoom"],["px","px"],["py","py"],["br","br"],["ct","ct"],["sa","sa"],["lo","lo"],["hi","hi"],["stab","stab"],["dsp","dsp"],["wrap","wrap"],["shd","shd"]])
   $(id).oninput = (e) => (S[key] = parseFloat(e.target.value));
 $("inv").onchange = (e) => (S.invert = e.target.checked);
-let objUrl = null;
-$("file").onchange = async (e) => {
-  const f = e.target.files?.[0]; if (!f) return;
-  if (objUrl) URL.revokeObjectURL(objUrl); objUrl = URL.createObjectURL(f);
-  try {
-    if (f.type.startsWith("video/")) { const v = document.createElement("video"); v.src = objUrl; v.loop = true; v.muted = true; v.playsInline = true; await v.play(); bgSrc = v; }
-    else { const im = new Image(); im.src = objUrl; await im.decode(); bgSrc = im; }
-    uploadBg();
-  } catch { showErr("Ce fichier de décor n’a pas pu être lu."); }
-};
 /* ---------- Panneaux ---------- */
 const panels = ["panel", "pScript", "pAudio"];
 const openP = (id) => panels.forEach((p) => ($(p).hidden = p !== id));
@@ -447,13 +456,33 @@ function stopRec() { clearInterval(recTimer); if (rec.state !== "inactive") rec.
 async function finishRec() {
   const type = recMime.split(";")[0], ext = type === "video/mp4" ? "mp4" : "webm";
   rec = null; let blob;
-  if (writer) { const meta = await writer.finish(performance.now() - t0r); blob = await (await backendP).file(meta.id); } // adossé au disque
+  let id = null;
+  if (writer) { const meta = await writer.finish(performance.now() - t0r); id = meta.id; blob = await (await backendP).file(meta.id); } // adossé au disque
   else { blob = new Blob(chunks, { type }); chunks = []; }
-  const url = URL.createObjectURL(blob);
-  $("pvVid").src = url; const a = $("dl"); a.href = url; a.download = `green-studio-${Date.now()}.${ext}`;
-  $("pvInfo").textContent = `${W}×${H} · ${type} · ${(blob.size / 1e6).toFixed(1)} Mo — téléchargez avant de fermer.`; $("pv").hidden = false;
+  openPreview(blob, id, `${W}×${H} · ${type} · ${(blob.size / 1e6).toFixed(1)} Mo — téléchargez avant de fermer.`);
 }
-$("pvClose").onclick = () => { const v = $("pvVid"); $("pv").hidden = true; v.pause(); URL.revokeObjectURL(v.src); v.removeAttribute("src"); v.load(); };
+let pvId = null, pvSaved = false;
+function openPreview(blob, id, info) {
+  const url = URL.createObjectURL(blob), ext = blob.type === "video/mp4" ? "mp4" : "webm";
+  pvId = id; pvSaved = false; $("pvVid").src = url; const a = $("dl"); a.href = url; a.download = `green-studio-${Date.now()}.${ext}`;
+  $("pvInfo").textContent = info; $("pv").hidden = false;
+}
+async function showPending() {
+  const m = pendingRecs.shift(); if (!m || !$("pv").hidden) return;
+  try { const b = await backendP; const f = await b.file(m.id); if (!f.size) { b.remove(m.id).catch(() => {}); return showPending(); }
+    openPreview(f, m.id, `Prise du ${new Date(m.startedAt).toLocaleString()} · ${(f.size / 1e6).toFixed(1)} Mo${m.status === "recovered" ? " (récupérée après interruption)" : ""}${pendingRecs.length ? ` · encore ${pendingRecs.length}` : ""}`);
+  } catch { showPending(); }
+}
+$("dl").addEventListener("click", () => (pvSaved = true));
+$("pvClose").onclick = async () => {
+  const v = $("pvVid"); $("pv").hidden = true; v.pause(); URL.revokeObjectURL(v.src); v.removeAttribute("src"); v.load();
+  if (pvId) {
+    // Téléchargée : on libère l'espace. Sinon on la garde, elle sera reproposée au prochain lancement.
+    if (pvSaved || confirm("Prise non téléchargée. La supprimer définitivement ?")) (await backendP)?.remove(pvId).catch(() => {});
+    else toast("Prise conservée : elle vous sera reproposée au prochain lancement.", 4000);
+  }
+  pvId = null; showPending();
+};
 
 /* ---------- Téléprompteur ---------- */
 const tp = $("tp"); let tpOn = false, tpLast = 0, tpY = 0;

@@ -13,41 +13,64 @@ export interface Backend {
 }
 
 /* ---------- OPFS ---------- */
+/** Chaque enregistrement est découpé en fichiers « parts » (id.00000.part, …). Fermer une part la rend durable sans
+ *  recopier ce qui précède : l'ancienne version rouvrait le fichier entier avec keepExistingData, ce qui recopiait
+ *  tout l'enregistrement à chaque flush (coût quadratique, retard d'écriture sur les longues prises). */
 export class OpfsBackend implements Backend {
   readonly name = "opfs";
   private dir!: FileSystemDirectoryHandle;
-  private offsets = new Map<string, number>();
+  private parts = new Map<string, number>();
   private writers = new Map<string, FileSystemWritableFileStream>();
   static async available() { try { return !!(navigator.storage?.getDirectory) && !!(await navigator.storage.getDirectory()); } catch { return false; } }
-  async init() { const root = await navigator.storage.getDirectory(); this.dir = await root.getDirectoryHandle("gs-rec", { create: true }); return this; }
+  /** dir injectable pour les tests. */
+  async init(dir?: FileSystemDirectoryHandle) {
+    this.dir = dir ?? await (await navigator.storage.getDirectory()).getDirectoryHandle("gs-rec", { create: true }); return this;
+  }
   async putMeta(m: RecMeta) {
     const h = await this.dir.getFileHandle(m.id + ".json", { create: true }); const w = await h.createWritable();
     await w.write(JSON.stringify(m)); await w.close();
   }
+  private async names(): Promise<string[]> { const out: string[] = []; for await (const name of (this.dir as any).keys()) out.push(name); return out; }
+  private async meta(id: string): Promise<RecMeta | null> {
+    try { return JSON.parse(await (await (await this.dir.getFileHandle(id + ".json")).getFile()).text()); } catch { return null; }
+  }
   async listMeta() {
     const out: RecMeta[] = [];
-    for await (const [name, h] of (this.dir as any).entries()) if (name.endsWith(".json")) {
-      try { out.push(JSON.parse(await (await (h as FileSystemFileHandle).getFile()).text())); } catch { /* méta corrompue ignorée */ }
-    }
+    for (const name of await this.names()) if (name.endsWith(".json")) { const m = await this.meta(name.slice(0, -5)); if (m) out.push(m); }
     return out;
+  }
+  private async partNames(id: string) {
+    const n = await this.names();
+    // id.bin = format des versions précédentes, conservé pour relire les anciens enregistrements.
+    return [...n.filter((x) => x === id + ".bin"), ...n.filter((x) => x.startsWith(id + ".") && x.endsWith(".part")).sort()];
   }
   async append(id: string, data: Blob) {
     let w = this.writers.get(id);
     if (!w) {
-      const h = await this.dir.getFileHandle(id + ".bin", { create: true });
-      this.offsets.set(id, (await h.getFile()).size);
-      w = await h.createWritable({ keepExistingData: true }); this.writers.set(id, w);
+      let k = this.parts.get(id);
+      if (k == null) k = (await this.partNames(id)).length; // reprise après rechargement : ne jamais écraser une part
+      this.parts.set(id, k + 1);
+      const h = await this.dir.getFileHandle(`${id}.${String(k).padStart(5, "0")}.part`, { create: true });
+      w = await h.createWritable(); this.writers.set(id, w);
     }
-    const off = this.offsets.get(id)!;
-    await w.write({ type: "write", position: off, data }); this.offsets.set(id, off + data.size);
+    await w.write(data);
   }
-  /** Ferme le flux : OPFS ne rend les données durables qu'à close(). Appelée à chaque ~N chunks pour limiter la perte en cas de crash. */
+  /** Ferme la part en cours : elle devient durable. La suivante repart d'un fichier vide (aucune recopie). */
   async flush(id: string) {
     const w = this.writers.get(id); if (!w) return;
-    await w.close(); this.writers.delete(id);
+    this.writers.delete(id); await w.close();
   }
-  async file(id: string) { await this.flush(id); return (await (await this.dir.getFileHandle(id + ".bin")).getFile()); }
-  async remove(id: string) { await this.flush(id).catch(() => {}); for (const n of [id + ".bin", id + ".json"]) await this.dir.removeEntry(n).catch(() => {}); }
+  async file(id: string) {
+    await this.flush(id);
+    const files: Blob[] = [];
+    for (const n of await this.partNames(id)) files.push(await (await this.dir.getFileHandle(n)).getFile());
+    return new Blob(files, { type: (await this.meta(id))?.mime || "video/webm" }); // Blob composé de fichiers disque : pas de copie en mémoire
+  }
+  async remove(id: string) {
+    const w = this.writers.get(id); this.writers.delete(id); await w?.abort?.().catch(() => {});
+    for (const n of [...await this.partNames(id), id + ".json"]) await this.dir.removeEntry(n).catch(() => {});
+    this.parts.delete(id);
+  }
 }
 
 /* ---------- IndexedDB (repli) ---------- */
@@ -75,7 +98,8 @@ export class IdbBackend implements Backend {
     const keys = await this.tx<IDBValidKey[]>("chunks", "readonly", (s) => s.getAllKeys(IDBKeyRange.bound(id + ":", id + ":\uffff")));
     const parts: Blob[] = [];
     for (const k of keys) parts.push(await this.tx<Blob>("chunks", "readonly", (s) => s.get(k)));
-    return new Blob(parts, { type: this.mimes.get(id) ?? "video/webm" });
+    const mime = this.mimes.get(id) ?? (await this.tx<RecMeta | undefined>("meta", "readonly", (s) => s.get(id)))?.mime;
+    return new Blob(parts, { type: mime || "video/webm" });
   }
   async remove(id: string) {
     const keys = await this.tx<IDBValidKey[]>("chunks", "readonly", (s) => s.getAllKeys(IDBKeyRange.bound(id + ":", id + ":\uffff")));
@@ -92,7 +116,7 @@ export async function openBackend(): Promise<Backend> {
 /* ---------- Écriture progressive ---------- */
 export interface WriterOptions { minFreeBytes: number; maxQueue: number; metaEveryChunks: number; flushEveryChunks: number; estimate: () => Promise<{ quota?: number; usage?: number } | undefined> }
 export const WRITER_DEFAULTS: WriterOptions = {
-  minFreeBytes: 150e6, maxQueue: 20, metaEveryChunks: 5, flushEveryChunks: 30,
+  minFreeBytes: 150e6, maxQueue: 20, metaEveryChunks: 5, flushEveryChunks: 5,
   estimate: async () => (typeof navigator !== "undefined" ? navigator.storage?.estimate?.() : undefined),
 };
 
