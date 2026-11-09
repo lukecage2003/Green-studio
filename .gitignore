@@ -1,3 +1,6 @@
 node_modules/
 dist/
 public/mediapipe/
+public/models/
+scripts/out/
+GreenStudio-*.apk

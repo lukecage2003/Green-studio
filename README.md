@@ -6,6 +6,13 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 `npm install && npm run dev` (HTTPS requis pour la caméra sur Android : `vite --host` + tunnel HTTPS, ou déploiement statique de `npm run build`).
 `npm install` copie MediaPipe dans `public/mediapipe/` (plus de dépendance au CDN).
 
+## App Android (APK)
+- Installer : copier `GreenStudio-<version>.apk` sur le téléphone, l'ouvrir, autoriser « installer des applis inconnues » pour l'appli utilisée (Fichiers, Chrome…).
+- Construire : `npm run apk` (JDK 21, SDK Android dans `$ANDROID_HOME`, clé dans `android/keystore.properties`, non versionnée).
+- **Clé de signature** : toutes les mises à jour doivent être signées avec la même clé, sinon Android refuse la mise à jour (il faudrait désinstaller et les prises seraient perdues). La conserver précieusement.
+- Différences avec la version web : vidéos enregistrées dans la **Galerie** (Movies › Green Studio) et **partage Android** (TikTok, Instagram, WhatsApp…) ; modèles de détourage et MediaPipe inclus (hors ligne) ; écran maintenu allumé ; portrait. « Suit mes mots » n'existe pas dans l'app (pas de reconnaissance vocale dans la WebView) : repli sur « Suit ma voix ». La transcription Whisper télécharge son modèle au premier usage.
+- Projet natif : `android/` (Capacitor 8) ; plugin `GalleryPlugin.java` (MediaStore).
+
 ## Tests
 - `npm test` : tests unitaires (Node 22) — 19/19.
 - `npm run test:browser` (avec `npx vite --port 5173` lancé) : tests dans Chromium, caméra simulée.

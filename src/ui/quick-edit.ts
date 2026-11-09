@@ -54,7 +54,11 @@ const CSS = `
 
 interface Saved { v: 1; duration: number; words: Word[] | null; cuts: Range[]; ignored: string[]; peaks?: number[]; style?: CaptionStyle; norm?: boolean; q720?: boolean }
 
-export interface EditorOptions { file: Blob; key: string; name?: string; onClose?: () => void; toast?: (m: string, ms?: number) => void }
+export interface EditorOptions {
+  file: Blob; key: string; name?: string; onClose?: () => void; toast?: (m: string, ms?: number) => void;
+  /** App Android : enregistrer dans la Galerie / partager (sinon : lien de téléchargement et partage web). */
+  save?: (b: Blob, name: string) => Promise<void>; share?: (b: Blob, name: string) => Promise<void>;
+}
 
 export async function openEditor(o: EditorOptions) {
   if (!document.getElementById("qe-css")) { const st = document.createElement("style"); st.id = "qe-css"; st.textContent = CSS; document.head.appendChild(st); }
@@ -351,9 +355,12 @@ export async function openEditor(o: EditorOptions) {
       const file = new File([blob], name, { type: blob.type });
       const canShare = !!navigator.canShare?.({ files: [file] });
       m.querySelector(".card")!.innerHTML = `<b>Export terminé ✓</b><p>${(blob.size / 1e6).toFixed(1)} Mo · ${fmt(session.editedDuration)} · ${how} · ${((performance.now() - t0) / 1000).toFixed(1)} s</p>
-        <div class="row" style="padding:0"><a class="ib go" href="${href}" download="${name}">Télécharger</a>${canShare ? `<button class="ib" data-x="share">Partager…</button>` : ""}<button class="ib" data-x="ok">Fermer</button></div>`;
+        <div class="row" style="padding:0">${o.save ? `<button class="ib go" data-x="save">💾 Galerie</button>` : `<a class="ib go" href="${href}" download="${name}">Télécharger</a>`}${o.share || canShare ? `<button class="ib" data-x="share">Partager…</button>` : ""}<button class="ib" data-x="ok">Fermer</button></div>`;
       m.querySelector<HTMLElement>("[data-x=ok]")!.onclick = () => { URL.revokeObjectURL(href); m.remove(); };
-      const sh = m.querySelector<HTMLElement>("[data-x=share]"); if (sh) sh.onclick = () => navigator.share({ files: [file], title: "Green Studio" }).catch(() => {});
+      const sh = m.querySelector<HTMLElement>("[data-x=share]");
+      if (sh) sh.onclick = () => (o.share ? o.share(blob, name) : navigator.share({ files: [file], title: "Green Studio" })).catch((e: any) => toast("Partage impossible : " + (e?.message ?? e), 5000));
+      const sv = m.querySelector<HTMLButtonElement>("[data-x=save]");
+      if (sv) sv.onclick = () => { sv.disabled = true; o.save!(blob, name).then(() => (sv.textContent = "✓ Dans la Galerie")).catch((e: any) => { sv.disabled = false; toast("Échec de l’enregistrement : " + (e?.message ?? e), 6000); }); };
     } catch (e: any) {
       if (e?.name === "AbortError") { toast("Export annulé.", 2000); return; }
       m.querySelector(".card")!.innerHTML = `<b>Export impossible</b><p class="error">${esc(e?.message ?? String(e))}</p><button class="ib" data-x="ok">Fermer</button>`;

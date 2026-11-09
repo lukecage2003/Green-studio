@@ -19,8 +19,13 @@ function stabilize(f, n, out) {
 
 let ImageSegmenter = null;
 async function create(model) {
+  let lastErr;
+  for (const url of model.urls) { try { return await createFrom(model, url); } catch (e) { lastErr = e; } } // fichier local, puis en ligne
+  throw lastErr;
+}
+async function createFrom(model, url) {
   const make = (delegate) => ImageSegmenter.createFromOptions(fileset, {
-    baseOptions: { modelAssetPath: model.url, delegate }, runningMode: "VIDEO", outputConfidenceMasks: true, outputCategoryMask: false,
+    baseOptions: { modelAssetPath: url, delegate }, runningMode: "VIDEO", outputConfidenceMasks: true, outputCategoryMask: false,
     ...(delegate === "GPU" && typeof OffscreenCanvas !== "undefined" ? { canvas: new OffscreenCanvas(1, 1) } : {}),
   });
   let s, b = "GPU";

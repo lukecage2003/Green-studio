@@ -35,6 +35,8 @@ export interface LibraryOptions {
   onPlay: (m: RecMeta, f: Blob) => void;
   onEdit: (m: RecMeta, f: Blob) => void;
   toast: (m: string, ms?: number) => void;
+  /** Enregistre la vidéo (Galerie dans l'app Android, téléchargement dans le navigateur). */
+  save: (f: Blob, name: string) => Promise<void>;
   onClose?: () => void;
 }
 
@@ -89,8 +91,8 @@ export async function openLibrary(o: LibraryOptions) {
     if (a === "play") o.onPlay(m, f);
     else if (a === "edit") o.onEdit(m, f);
     else if (a === "dl") {
-      const url = URL.createObjectURL(f), l = document.createElement("a"); l.href = url; l.download = `green-studio-${new Date(m.startedAt).toISOString().slice(0, 16).replace(/[:T]/g, "-")}.${f.type.includes("mp4") ? "mp4" : "webm"}`;
-      document.body.appendChild(l); l.click(); l.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+      try { await o.save(f, `green-studio-${new Date(m.startedAt).toISOString().slice(0, 16).replace(/[:T]/g, "-")}.${f.type.includes("mp4") ? "mp4" : "webm"}`); }
+      catch (err: any) { o.toast("Échec de l’enregistrement : " + (err?.message ?? err), 6000); return; }
       await o.backend.putMeta({ ...m, downloaded: true }); render();
     }
   });

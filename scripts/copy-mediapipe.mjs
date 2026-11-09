@@ -8,3 +8,15 @@ if (!existsSync(dst + "/wasm/vision_wasm_internal.wasm")) {
   cpSync(src + "/vision_bundle.mjs", dst + "/vision_bundle.mjs"); cpSync(src + "/wasm", dst + "/wasm", { recursive: true });
 }
 console.log("MediaPipe", v, "->", dst);
+
+// Modèles de détourage livrés avec l'app (hors ligne, démarrage instantané) ; en cas d'échec, l'app les télécharge en ligne.
+const MODELS = {
+  "selfie_segmenter.tflite": "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite",
+  "selfie_multiclass_256x256.tflite": "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite",
+};
+mkdirSync("public/models", { recursive: true });
+for (const [name, url] of Object.entries(MODELS)) {
+  if (existsSync("public/models/" + name)) continue;
+  try { const r = await fetch(url); if (!r.ok) throw new Error(r.status); (await import("node:fs")).writeFileSync("public/models/" + name, Buffer.from(await r.arrayBuffer())); console.log("modèle", name); }
+  catch (e) { console.warn("modèle non téléchargé (l'app le chargera en ligne) :", name, e.message); }
+}

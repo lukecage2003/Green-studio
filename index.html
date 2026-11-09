@@ -137,7 +137,7 @@ body{font-family:ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",
   <section class="pv" id="pv" hidden>
     <video id="pvVid" controls playsinline></video>
     <p id="pvInfo" style="margin:0;font-size:12px;color:var(--muted)"></p>
-    <div class="row"><a id="dl" class="round primary" style="text-decoration:none">Télécharger</a><button class="round" id="pvEdit">✂ Monter</button><button class="round" id="pvClose">Fermer</button></div>
+    <div class="row"><a id="dl" class="round primary" style="text-decoration:none">Télécharger</a><button class="round" id="pvShare" hidden>Partager</button><button class="round" id="pvEdit">✂ Monter</button><button class="round" id="pvClose">Fermer</button></div>
   </section>
   <aside class="panel" id="panel" hidden>
     <div class="head"><strong>Décor et détourage</strong><button class="x" id="bClose" aria-label="Fermer">✕</button></div>
@@ -172,7 +172,18 @@ body{font-family:ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",
 </main>
 
 <script type="module">
-if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("/sw.js").catch(() => {});
+// App Android (Capacitor) : tout est déjà dans l'APK, pas de service worker ; enregistrement vers la Galerie et partage natif.
+const NATIVE = !!window.Capacitor?.isNativePlatform?.();
+const nativeP = NATIVE ? import("/src/native.ts") : null;
+if (!NATIVE && "serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("/sw.js").catch(() => {});
+/** Enregistre une vidéo : Galerie (app Android) ou téléchargement (navigateur). */
+async function saveBlob(blob, name) {
+  if (!NATIVE) { const u = URL.createObjectURL(blob), a = document.createElement("a"); a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 60000); return; }
+  const n = await nativeP; toast("Enregistrement dans la Galerie…", 60000);
+  await n.saveToGallery(blob, name, (p) => toast(`Enregistrement dans la Galerie… ${Math.round(p * 100)} %`, 60000));
+  toast("✓ Enregistrée dans la Galerie (Movies › Green Studio).", 4000);
+}
+async function shareBlob(blob, name) { const n = await nativeP; toast("Préparation du partage…", 60000); await n.shareVideo(blob, name); $("toast").hidden = true; }
 // Stockage progressif OPTIONNEL : si le module est indisponible (page sans Vite), repli sur l'ancien tableau en mémoire.
 const modP = Promise.all([import("/src/core/storage.ts"), import("/src/core/recovery.ts")]).catch((e) => { console.warn("stockage progressif indisponible", e); return null; });
 const backendP = modP.then((m) => (m ? m[0].openBackend() : null)).catch(() => null);
@@ -191,10 +202,10 @@ let W = 1080, H = 1920; const TA = 9 / 16;
 // MediaPipe hébergé avec l'app (copié par scripts/copy-mediapipe.mjs, version = package.json), CDN en secours.
 const MPV = "0.10.21", MP_BASES = [new URL(`/mediapipe/${MPV}`, location.href).href, `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MPV}`];
 const MODELS = {
-  fast: { id: "fast", url: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite", multi: false },
-  hq: { id: "hq", url: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite", multi: true },
+  // Fichier livré avec l'app d'abord (hors ligne), sinon téléchargement.
+  fast: { id: "fast", urls: [new URL("/models/selfie_segmenter.tflite", location.href).href, "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite"], multi: false },
+  hq: { id: "hq", urls: [new URL("/models/selfie_multiclass_256x256.tflite", location.href).href, "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite"], multi: true },
 };
-const MODEL = MODELS.fast.url;
 let quality = "auto"; try { quality = localStorage.getItem("gs.q") || "auto"; } catch {}
 
 const video = $("cam"), canvas = $("out");
@@ -381,8 +392,11 @@ async function initSeg() {
     try {
       const { FilesetResolver, ImageSegmenter } = await import(/* @vite-ignore */ base + "/vision_bundle.mjs");
       const fileset = await FilesetResolver.forVisionTasks(base + "/wasm");
-      const make = (delegate) => ImageSegmenter.createFromOptions(fileset, { baseOptions: { modelAssetPath: MODEL, delegate }, runningMode: "VIDEO", outputConfidenceMasks: true, outputCategoryMask: false });
-      try { segmenter = await make("GPU"); backend = "GPU"; } catch { segmenter = await make("CPU"); backend = "CPU"; }
+      for (const url of MODELS.fast.urls) {
+        const make = (delegate) => ImageSegmenter.createFromOptions(fileset, { baseOptions: { modelAssetPath: url, delegate }, runningMode: "VIDEO", outputConfidenceMasks: true, outputCategoryMask: false });
+        try { try { segmenter = await make("GPU"); backend = "GPU"; } catch { segmenter = await make("CPU"); backend = "CPU"; } break; } catch (e) { lastErr = e; }
+      }
+      if (!segmenter) throw lastErr;
       return;
     } catch (e) { lastErr = e; }
   }
@@ -409,7 +423,9 @@ function infer() {
   if (video.readyState < 2) return;
   if (segWorker) {
     const o = S.stab + "|" + S.invert; if (o !== wOpts) { wOpts = o; segWorker.postMessage({ type: "opts", stab: S.stab, invert: S.invert }); }
-    if (busy && performance.now() - busySince < 2000) return; // image précédente encore en traitement : on saute celle-ci
+    // Image précédente encore en traitement : on saute celle-ci. Jamais de file d'attente côté worker (sinon le retard
+    // s'accumule et les changements de modèle restent bloqués derrière) ; on ne renvoie qu'en cas de blocage réel.
+    if (busy && performance.now() - busySince < 10000) return;
     busy = true; busySince = performance.now();
     try {
       const frame = new VideoFrame(video, { timestamp: Math.round(busySince * 1000) });
@@ -613,7 +629,12 @@ async function showPending() {
     openPreview(f, m.id, `Prise du ${new Date(m.startedAt).toLocaleString()} · ${(f.size / 1e6).toFixed(1)} Mo${m.status === "recovered" ? " (récupérée après interruption)" : ""}${pendingRecs.length ? ` · encore ${pendingRecs.length}` : ""}`);
   } catch { showPending(); }
 }
-$("dl").addEventListener("click", () => (pvSaved = true));
+$("dl").addEventListener("click", (e) => {
+  pvSaved = true; if (!NATIVE) return;
+  e.preventDefault(); saveBlob(pvBlob, $("dl").download).catch((err) => { pvSaved = false; toast("Échec de l’enregistrement : " + (err?.message ?? err), 6000); });
+});
+if (NATIVE) { $("dl").textContent = "💾 Galerie"; $("pvShare").hidden = false; }
+$("pvShare").onclick = () => pvBlob && shareBlob(pvBlob, $("dl").download).then(() => (pvSaved = true)).catch((err) => toast("Partage impossible : " + (err?.message ?? err), 6000));
 $("pvClose").onclick = async () => {
   const v = $("pvVid"); $("pv").hidden = true; v.pause(); URL.revokeObjectURL(v.src); v.removeAttribute("src"); v.load();
   if (pvId) {
@@ -628,7 +649,7 @@ $("pvClose").onclick = async () => {
 /* ---------- Montage (Quick Edit) ---------- */
 async function edit(file, key, fromLib = false) {
   $("pvVid").pause(); suspended = true;
-  try { const { openEditor } = await import("/src/ui/quick-edit.ts"); await openEditor({ file, key, toast, onClose: () => (suspended = fromLib || !!libRefresh) }); }
+  try { const { openEditor } = await import("/src/ui/quick-edit.ts"); await openEditor({ file, key, toast, ...(NATIVE ? { save: saveBlob, share: shareBlob } : {}), onClose: () => (suspended = fromLib || !!libRefresh) }); }
   catch (e) { suspended = false; toast("Montage indisponible : " + (e?.message ?? e), 6000); }
 }
 // La prise reste dans le stockage tant que l'aperçu est ouvert : le montage lit le fichier sur disque, sans copie.
@@ -640,7 +661,7 @@ async function library() {
   const b = await backendP; if (!b) return toast("Stockage indisponible sur ce navigateur.");
   suspended = true;
   const { openLibrary } = await import("/src/ui/library.ts");
-  const lib = await openLibrary({ backend: b, toast,
+  const lib = await openLibrary({ backend: b, toast, save: saveBlob,
     onPlay: (m, f) => openPreview(f, m.id, `Prise du ${new Date(m.startedAt).toLocaleString()} · ${(f.size / 1e6).toFixed(1)} Mo`),
     onEdit: (m, f) => edit(f, m.id, true),
     onClose: () => { suspended = false; libRefresh = null; } });
