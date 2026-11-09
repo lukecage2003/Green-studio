@@ -1,4 +1,4 @@
-# Green Studio 3.0 — état réel (alpha.8)
+# Green Studio 3.0 — état réel (alpha.9)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,12 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## Nouveautés alpha.9 (testées sur une vraie scène : enregistrement de la caméra du S25, contre-jour dans un train)
+- **Lumière auto** : corrige le contre-jour (fond réel plus clair que le visage) et les scènes très sombres, sans jamais viser une luminosité fixe (le teint est respecté) ; exposition du capteur si la caméra le permet (`exposureCompensation`), sinon courbe numérique douce ; curseur Lumière ±.
+- **Peau** (lissage qui préserve contours, yeux et lunettes) et **Chaleur** ; appliqués au sujet seulement ; enregistrés dans les profils.
+- Miniature de la dernière prise sur le bouton « Mes prises » ; vibrations (déclencheur, compte à rebours, objectifs, décors).
+- Vérifié sur image fixe de la scène réelle : main dans les cheveux, lunettes, écouteur et cheveux bien détourés (Rapide et Précis).
 
 ## Nouveautés alpha.8 (d'après la 2e vidéo : gels de 0,8 s et 0,5 s, disparition du sujet, cadrage trop serré, liseré clair)
 - **Plus de gel ni de disparition au changement de modèle** : chaque modèle est préparé et préchauffé dans un worker séparé, puis échangé d'un coup ; jamais de préparation pendant une prise (reportée à la fin, annulée si elle avait commencé) ; mesures ignorées le temps de se stabiliser (plus d'aller-retour Précis ↔ Rapide).

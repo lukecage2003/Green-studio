@@ -55,6 +55,7 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stro
 #strip .th.on{border:3px solid #fff;transform:scale(1.1)}
 #strip .add{display:grid;place-items:center;font-size:26px;font-weight:300;background:rgba(255,255,255,.12);backdrop-filter:blur(20px);border-style:dashed}
 .dock{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:0 28px}
+.dock .lib.has{background:#222 center/cover;border:2px solid #fff}.dock .lib.has svg{display:none}
 .dock .lib{justify-self:start;width:48px;height:48px;border-radius:12px;display:grid;place-items:center;background:rgba(255,255,255,.14);backdrop-filter:blur(20px);border:1.5px solid rgba(255,255,255,.35)}
 .dock #bFlip{justify-self:end;width:48px;height:48px;background:rgba(255,255,255,.14)}
 .recbtn{width:80px;height:80px;border-radius:50%;border:4px solid #fff;display:grid;place-items:center;transition:transform .12s}
@@ -200,9 +201,16 @@ textarea:focus{box-shadow:0 0 0 2px var(--accent)}
 </section>
 
 <aside class="panel" id="panel" hidden>
-  <div class="head"><strong>Décor et caméra</strong><button class="x" id="bClose">OK</button></div>
+  <div class="head"><strong>Réglages</strong><button class="x" id="bClose">OK</button></div>
   <div class="gh">Rendu</div>
   <div class="seg look" id="look"><button data-look="nat">Naturel<small>discret</small></button><button data-look="stu" class="on">Studio<small>recommandé</small></button><button data-look="net">Net<small>bord précis</small></button></div>
+  <div class="gh">Visage</div>
+  <div class="group">
+    <label><span>Lumière auto<span class="sub">Contre-jour, pièce sombre</span></span><input type="checkbox" id="autoLight" checked></label>
+    <label>Lumière <input type="range" id="lgt" min="-1" max="1" step="0.01" value="0"></label>
+    <label>Peau <input type="range" id="skin" min="0" max="0.8" step="0.01" value="0.25"></label>
+    <label>Chaleur <input type="range" id="warm" min="-1" max="1" step="0.01" value="0"></label>
+  </div>
   <div class="gh">Détourage</div>
   <div class="group">
     <label>Qualité <select id="qSel"><option value="auto">Auto</option><option value="hq">Précis</option><option value="fast">Rapide</option></select></label>
@@ -345,7 +353,8 @@ const FS = `#version 300 es
 precision highp float; in vec2 v; out vec4 o;
 uniform sampler2D uCam,uBg,uMask,uBg2;
 uniform vec2 uBS2,uBO2; uniform float uMix;
-uniform vec2 uMO,uMS; // zone de l'image caméra analysée par l'IA (décalage, taille) : le masque ne couvre que cette zone // fondu enchaîné entre l'ancien et le nouveau décor
+uniform vec2 uMO,uMS;
+uniform vec2 uSL; uniform float uSkin; // retouche du sujet : (courbe de lumière, chaleur), lissage de peau // zone de l'image caméra analysée par l'IA (décalage, taille) : le masque ne couvre que cette zone // fondu enchaîné entre l'ancien et le nouveau décor
 uniform vec2 uCS,uCO,uBS,uBO,uEdge; uniform float uMir,uBr,uCt,uSa;
 uniform vec2 uPx,uSub; uniform vec3 uFx; // uFx = (anti-halo, lumière du décor, ombre)
 vec3 grade(vec3 c){ c+=uBr; c=(c-.5)*uCt+.5; float l=dot(c,vec3(.2126,.7152,.0722)); return clamp(mix(vec3(l),c,uSa),0.,1.); }
@@ -420,6 +429,15 @@ void main(){
       }
     }
   }
+  if (a>.02){ // retouche du sujet seulement (le décor n'est pas touché)
+    if (uSkin>.001){ // lissage de peau : moyenne des voisins de couleur proche (les contours, yeux, lunettes restent nets)
+      vec3 sm=cam; float sw=1.;
+      for(int i=0;i<8;i++){ float an=.7853982*float(i)+.39; vec3 c=texture(uCam,cu+vec2(cos(an),sin(an))*uPx*4.5).rgb; vec3 df=c-cam; float w=exp(-dot(df,df)*140.); sm+=w*c; sw+=w; }
+      cam=mix(cam,sm/sw,uSkin);
+    }
+    cam = 1.-pow(1.-clamp(cam,0.,1.),vec3(uSL.x)); // éclaircit les ombres et les tons moyens sans brûler les hautes lumières
+    cam *= vec3(1.+uSL.y*.07,1.,1.-uSL.y*.07);
+  }
   o = vec4(mix(bg,cam,a),1.);
 }`;
 function sh(t, s) { const x = gl.createShader(t); gl.shaderSource(x, s); gl.compileShader(x); if (!gl.getShaderParameter(x, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(x)); return x; }
@@ -429,7 +447,7 @@ gl.linkProgram(prog); gl.useProgram(prog);
 gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
 const loc = gl.getAttribLocation(prog, "p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-const U = {}; for (const n of ["uMO","uMS","uCam","uBg","uMask","uBg2","uBS2","uBO2","uMix","uCS","uCO","uBS","uBO","uEdge","uMir","uBr","uCt","uSa","uPx","uSub","uFx"]) U[n] = gl.getUniformLocation(prog, n);
+const U = {}; for (const n of ["uSL","uSkin","uMO","uMS","uCam","uBg","uMask","uBg2","uBS2","uBO2","uMix","uCS","uCO","uBS","uBO","uEdge","uMir","uBr","uCt","uSa","uPx","uSub","uFx"]) U[n] = gl.getUniformLocation(prog, n);
 gl.uniform1i(U.uCam, 0); gl.uniform1i(U.uBg, 1); gl.uniform1i(U.uMask, 2); gl.uniform1i(U.uBg2, 3); gl.uniform1f(U.uMix, 1); gl.uniform2f(U.uMO, 0, 0); gl.uniform2f(U.uMS, 1, 1);
 function tex(unit) { const t = gl.createTexture(); gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t);
   for (const [k, val] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR],[gl.TEXTURE_MAG_FILTER, gl.LINEAR],[gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, val);
@@ -438,7 +456,7 @@ const tCam = tex(0), tBg = tex(1), tMask = tex(2);
 gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
 gl.activeTexture(gl.TEXTURE2); gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 1, 1, 0, gl.RED, gl.UNSIGNED_BYTE, new Uint8Array([255]));
 
-const S = { sx: 0, sy: 0, mirror: true, cz: 1, zoom: 1, px: 0, py: 0, br: 0, ct: 1, sa: 1, lo: .35, hi: .65, stab: .6, dsp: .6, wrap: .3, shd: .25, invert: false };
+const S = { sx: 0, sy: 0, mirror: true, cz: 1, zoom: 1, px: 0, py: 0, br: 0, ct: 1, sa: 1, lo: .35, hi: .65, stab: .6, dsp: .6, wrap: .3, shd: .25, invert: false, lgt: 0, skin: .25, warm: 0, autoLight: true };
 let maskW = 0, maskH = 0;
 /* Décors : chaque image est envoyée UNE fois au GPU puis gardée (texture en cache) ; changer de décor = changer de texture,
    sans décodage ni envoi : instantané. Les décors vidéo ont leur texture mise à jour à chaque image. */
@@ -480,6 +498,7 @@ function render(frame) {
   gl.uniform2f(U.uBS, b[0], b[1]); gl.uniform2f(U.uBO, b[2], b[3]);
   gl.uniform2f(U.uSub, S.sx, S.sy); gl.uniform3f(U.uFx, S.dsp, S.wrap, S.shd); gl.uniform2f(U.uEdge, S.lo, Math.max(S.hi, S.lo + .01));
   gl.uniform1f(U.uMir, S.mirror ? 1 : 0); gl.uniform1f(U.uBr, S.br); gl.uniform1f(U.uCt, S.ct); gl.uniform1f(U.uSa, S.sa);
+  gl.uniform2f(U.uSL, lightG, S.warm); gl.uniform1f(U.uSkin, S.skin);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 
@@ -543,6 +562,7 @@ function makeWorker(model) {
       else if (d.type === "error") { clearTimeout(to); w.terminate(); rej(new Error(d.message)); }
       else if (d.type === "mask" && w === segWorker) {
         busy = false; const f = held; held = null;
+        if (d.lum) { subjLum = subjLum == null ? d.lum.subj : subjLum * 0.7 + d.lum.subj * 0.3; if (d.lum.bg != null) bgLum = bgLum == null ? d.lum.bg : bgLum * 0.7 + d.lum.bg * 0.3; }
         if (d.data) { uploadMask(d.data, d.w, d.h); gl.uniform2f(U.uMO, sentRect[0], sentRect[1]); gl.uniform2f(U.uMS, sentRect[2], sentRect[3]); inferMs += (d.ms - inferMs) * .15; cnt.ai++; }
         if (f) { if (!suspended && d.data) { render(f); cnt.r++; } f.close(); } // image et masque de la MÊME prise de vue : aucun décalage
         adapt();
@@ -657,7 +677,7 @@ async function startCam(f) {
   if (!best) throw lastErr;
   try { localStorage.setItem("gs.cam." + f, JSON.stringify(best.i)); } catch {}
   stream = best.s; camInfo = `${best.w}×${best.h}${best.fps ? " · " + Math.round(best.fps) + " i/s" : ""}`;
-  facing = f; video.srcObject = stream; await video.play(); setupLens();
+  facing = f; video.srcObject = stream; await video.play(); setupLens(); setupExposure(); subjLum = null;
   stream.getVideoTracks()[0].addEventListener("ended", () => { if (rec && rec.state !== "inactive") stopRec(); showErr("Caméra interrompue. Rechargez la page."); });
   S.mirror = f === "user"; $("bMirror").setAttribute("aria-pressed", String(S.mirror));
 }
@@ -681,7 +701,35 @@ function setupLens() {
   if (wideOk) for (const m of ["wide", "mid"]) $("lens").querySelector(`[data-lens="${m}"]`).textContent = lensZoom(m).toFixed(1).replace(".", ",");
   applyLens(lens);
 }
-document.querySelectorAll("[data-lens]").forEach((b) => (b.onclick = () => { lens = b.dataset.lens; try { localStorage.setItem("gs.lens", lens); } catch {} applyLens(lens); }));
+document.querySelectorAll("[data-lens]").forEach((b) => (b.onclick = () => { buzz(); lens = b.dataset.lens; try { localStorage.setItem("gs.lens", lens); } catch {} applyLens(lens); }));
+
+/* Lumière du sujet. Auto : on corrige le CONTRE-JOUR (fond réel bien plus clair que le visage → le capteur sous-expose le visage)
+   et les scènes vraiment sombres — jamais vers une luminosité fixe, qui délaverait les peaux foncées : le teint reste le vôtre.
+   Si la caméra le permet, on agit sur l'exposition du capteur (image plus propre) ; le fond surexposé n'importe pas, il est
+   remplacé par le décor. Une courbe numérique complète en douceur. Curseur Lumière : réglage personnel (±). */
+let subjLum = null, bgLum = null, lightG = 1, expo = null;
+function lightTarget() {
+  if (subjLum == null) return null;
+  let t = subjLum; const r = bgLum != null ? bgLum / Math.max(0.02, subjLum) : 1;
+  if (r > 1.4) t = subjLum * Math.min(1.8, Math.sqrt(r / 1.4)); // contre-jour : compensation proportionnelle, plafonnée
+  if (subjLum < 0.2) t = Math.max(t, Math.min(0.26, subjLum * 1.8)); // pièce très sombre
+  return Math.min(0.8, t * Math.pow(1.35, S.lgt * 2));
+}
+setInterval(() => {
+  let gt = Math.exp(S.lgt * 0.7);
+  if (S.autoLight && subjLum != null) { const t = lightTarget(), l = Math.min(0.95, Math.max(0.03, subjLum)); gt = Math.log(1 - t) / Math.log(1 - l); }
+  gt = Math.min(2.2, Math.max(0.8, gt)); lightG += (gt - lightG) * 0.15;
+}, 100);
+function setupExposure() {
+  expo = null; const tr = stream?.getVideoTracks()[0], c = tr?.getCapabilities?.();
+  if (c?.exposureCompensation && c.exposureCompensation.max > c.exposureCompensation.min) expo = { tr, min: c.exposureCompensation.min, max: c.exposureCompensation.max, step: c.exposureCompensation.step || 1 / 3, v: 0 };
+}
+setInterval(() => {
+  if (!expo || !S.autoLight || subjLum == null) return;
+  const err = lightTarget() - subjLum; if (Math.abs(err) < 0.05) return;
+  const v = Math.min(expo.max, Math.max(expo.min, expo.v + Math.sign(err) * expo.step * (Math.abs(err) > 0.15 ? 2 : 1)));
+  if (v === expo.v) return; expo.v = v; expo.tr.applyConstraints({ advanced: [{ exposureCompensation: v }] }).catch(() => (expo = null));
+}, 700);
 
 /* ---------- Boucle ---------- */
 const cnt = { cam: 0, ai: 0, r: 0 }, rate = { cam: 0, ai: 0, r: 0 };
@@ -733,7 +781,7 @@ document.addEventListener("visibilitychange", () => {
 $("bClose").onclick = () => ($("panel").hidden = true);
 $("bMirror").onclick = () => { S.mirror = !S.mirror; $("bMirror").setAttribute("aria-pressed", String(S.mirror)); };
 $("bFlip").onclick = async () => { try { await startCam(facing === "user" ? "environment" : "user"); } catch (e) { showErr("Changement de caméra impossible : " + (e?.message ?? e)); } };
-for (const [id, key] of [["zoom","zoom"],["px","px"],["py","py"],["br","br"],["ct","ct"],["sa","sa"],["lo","lo"],["hi","hi"],["stab","stab"],["dsp","dsp"],["wrap","wrap"],["shd","shd"]])
+for (const [id, key] of [["zoom","zoom"],["px","px"],["py","py"],["br","br"],["ct","ct"],["sa","sa"],["lo","lo"],["hi","hi"],["stab","stab"],["dsp","dsp"],["wrap","wrap"],["shd","shd"],["lgt","lgt"],["skin","skin"],["warm","warm"]])
   $(id).oninput = (e) => (S[key] = parseFloat(e.target.value));
 $("inv").onchange = (e) => (S.invert = e.target.checked);
 /* ---------- Panneaux ---------- */
@@ -796,12 +844,13 @@ $("cdOn").onchange = (e) => { try { localStorage.setItem("gs.cd", e.target.check
 function countdown() {
   return new Promise((res) => {
     let n = 3; const el = $("cd"); el.hidden = false; $("rec").classList.add("on");
-    const show = () => { el.textContent = n; el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop"); };
+    const show = () => { buzz(12); el.textContent = n; el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop"); };
     show(); cdTimer = setInterval(() => { if (--n > 0) return show(); clearInterval(cdTimer); cdTimer = 0; el.hidden = true; res(true); }, 1000);
     countdown.cancel = () => { clearInterval(cdTimer); cdTimer = 0; el.hidden = true; $("rec").classList.remove("on"); res(false); };
   });
 }
 $("rec").onclick = async () => {
+  buzz(18);
   if (rec) return stopRec();
   if (cdTimer) return countdown.cancel();
   if ($("cdOn").checked && !(await countdown())) return;
@@ -853,6 +902,7 @@ async function finishRec() {
   let id = null;
   if (writer) { const meta = await writer.finish(performance.now() - t0r); id = meta.id; blob = await (await backendP).file(meta.id); } // adossé au disque
   else { blob = new Blob(chunks, { type }); chunks = []; }
+  if (id) refreshLibThumb(blob, id);
   openPreview(blob, id, `${W}×${H} · ${type} · ${(blob.size / 1e6).toFixed(1)} Mo — téléchargez avant de fermer.`);
 }
 let pvId = null, pvSaved = false, pvBlob = null;
@@ -894,6 +944,21 @@ async function edit(file, key, fromLib = false) {
 // La prise reste dans le stockage tant que l'aperçu est ouvert : le montage lit le fichier sur disque, sans copie.
 $("pvEdit").onclick = () => pvBlob && edit(pvBlob, pvId ?? `mem-${pvBlob.size}`);
 $("openEdit").onclick = () => $("editFile").click();
+/* Miniature de la dernière prise sur le bouton « Mes prises » (comme l'appareil photo du téléphone). */
+function setLibThumb(d) { const b = $("bLib"); if (!d) { b.classList.remove("has"); b.style.backgroundImage = ""; return; } b.style.backgroundImage = `url(${d})`; b.classList.add("has"); }
+async function refreshLibThumb(blob, id) {
+  try {
+    if (blob && id) { const { thumb } = await import("/src/ui/library.ts"); const d = await thumb(blob); try { localStorage.setItem("gs.th." + id, d); } catch {} return setLibThumb(d); }
+    const b = await backendP; if (!b) return;
+    const last = (await b.listMeta()).filter((m) => m.status !== "failed" && m.status !== "recording").sort((x, y) => y.startedAt - x.startedAt)[0];
+    let d = null; try { d = last && localStorage.getItem("gs.th." + last.id); } catch {}
+    if (last && !d) { const { thumb } = await import("/src/ui/library.ts"); d = await thumb(await b.file(last.id)).catch(() => null); try { d && localStorage.setItem("gs.th." + last.id, d); } catch {} }
+    setLibThumb(d);
+  } catch { /* miniature facultative */ }
+}
+refreshLibThumb();
+/** Petite vibration de confirmation (déclencheur, objectifs, décors). */
+const buzz = (ms = 8) => { try { navigator.vibrate?.(ms); } catch {} };
 /* ---------- Mes prises ---------- */
 let libRefresh = null;
 async function library() {
@@ -903,7 +968,7 @@ async function library() {
   const lib = await openLibrary({ backend: b, toast, save: saveBlob,
     onPlay: (m, f) => openPreview(f, m.id, `Prise du ${new Date(m.startedAt).toLocaleString()} · ${(f.size / 1e6).toFixed(1)} Mo`),
     onEdit: (m, f) => edit(f, m.id, true),
-    onClose: () => { suspended = false; libRefresh = null; } });
+    onClose: () => { suspended = false; libRefresh = null; refreshLibThumb(); } });
   libRefresh = lib.refresh;
 }
 $("openLib").onclick = $("bLib").onclick = library;
@@ -979,14 +1044,14 @@ $("tpTop").onclick = tpRestart;
 try { $("tpIn").value = localStorage.getItem("gs.script") || ""; const m = localStorage.getItem("gs.tpMode"); if (m) $("tpMode").value = m; } catch {}
 
 /* ---------- Profils ---------- */
-const SK = ["zoom", "px", "py", "br", "ct", "sa", "lo", "hi", "stab", "dsp", "wrap", "shd"];
+const SK = ["zoom", "px", "py", "br", "ct", "sa", "lo", "hi", "stab", "dsp", "wrap", "shd", "lgt", "skin", "warm"];
 const DEF = {
   "Comics News": { zoom: 1.1, ct: 1.05, sa: 1.1, spd: 40, size: 26, pos: 12 },
   "Comic Analysis": { lo: .38, hi: .68, spd: 30, size: 24, pos: 10 },
   "Hot Takes": { zoom: 1.2, ct: 1.15, sa: 1.25, lo: .33, hi: .62, spd: 55, size: 28, pos: 14 },
   "Podcast": { br: -.05, ct: 1.05, sa: .9, gain: 1.1, ns: true, spd: 25, size: 24, pos: 8 },
 };
-const BASE = { zoom: 1, px: 0, py: 0, br: 0, ct: 1, sa: 1, lo: .35, hi: .65, stab: .6, dsp: .6, wrap: .3, shd: .25, spd: 40, size: 26, pos: 12, gain: 1, ns: false };
+const BASE = { zoom: 1, px: 0, py: 0, br: 0, ct: 1, sa: 1, lo: .35, hi: .65, stab: .6, dsp: .6, wrap: .3, shd: .25, lgt: 0, skin: .25, warm: 0, spd: 40, size: 26, pos: 12, gain: 1, ns: false };
 let presets = null; try { presets = JSON.parse(localStorage.getItem("gs.presets")); } catch {}
 if (!presets || !Object.keys(presets).length) presets = JSON.parse(JSON.stringify(DEF));
 const savePre = () => { try { localStorage.setItem("gs.presets", JSON.stringify(presets)); } catch { toast("Stockage local indisponible : profils non conservés."); } };
@@ -1059,7 +1124,7 @@ async function setBg(i) {
   if (!e) { let s; try { s = await srcFor(i); } catch { toast('Décor illisible.'); return; } if (tok !== swTok || !s) return; e = texFor(it.id, s); }
   if (bgCur?.video && bgCur !== e) setTimeout(((v) => () => v !== bgCur?.src && v.pause())(bgCur.src), MIX_MS + 50);
   if (e.video) e.src.play().catch(() => {});
-  showBg(e); bi = i; markStrip();
+  if (bgCur !== e) buzz(6); showBg(e); bi = i; markStrip();
   setTimeout(() => { if (tok !== swTok) return; prune(); for (let d = 1; d <= KEEP; d++) { prefetch(i + d); prefetch(i - d); } }, MIX_MS + 30); // après le fondu
 }
 function markStrip() {
@@ -1161,7 +1226,14 @@ $("go").addEventListener("click", () => setTimeout(() => { try { if (!localStora
 // Diagnostic en lecture seule (tests, et « IA » touché pour l'afficher) : état du décor, du modèle et de la synchro.
 window.gsDebug = { get renders() { return renderCount; }, get pending() { return pendingModel; }, get deferred() { return deferredModel; }, get recording() { return !!rec; }, get lens() { return lens; }, get bg() { return bgCur?.id; }, get model() { return curModel; }, get sync() { return !!(segWorker && sync); }, get inferMs() { return inferMs; },
   get cam() { return camInfo; }, get maskRect() { return sentRect; },
+  get light() { return { subjLum, bgLum, target: lightTarget(), lightG, expo: expo?.v ?? null }; },
   get vad() { return !!vad?.speaking; }, get tpPos() { return tpPos; }, get mic() { return micStream?.getAudioTracks()[0]?.label; } };
+try { S.autoLight = localStorage.getItem("gs.autoLight") !== "0"; } catch {}
+$("autoLight").checked = S.autoLight;
+$("autoLight").onchange = (e) => {
+  S.autoLight = e.target.checked; try { localStorage.setItem("gs.autoLight", S.autoLight ? "1" : "0"); } catch {}
+  if (!S.autoLight && expo) { expo.v = 0; expo.tr.applyConstraints({ advanced: [{ exposureCompensation: 0 }] }).catch(() => {}); }
+};
 $("qSel").value = quality;
 $("qSel").onchange = (e) => { quality = e.target.value; try { localStorage.setItem("gs.q", quality); } catch {} demoted = false;
   setModel(quality === "fast" ? "fast" : "hq"); toast(quality === "fast" ? "Détourage Rapide." : "Détourage Précis : chargement du modèle…", 2500); };

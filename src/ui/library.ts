@@ -26,7 +26,7 @@ const CSS = `
 const mb = (b: number) => (b >= 1e9 ? (b / 1e9).toFixed(1).replace(".", ",") + " Go" : Math.max(0.1, b / 1e6).toFixed(1).replace(".", ",") + " Mo");
 const dur = (ms: number) => { const s = Math.round(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
 
-async function thumb(file: Blob): Promise<string> {
+export async function thumb(file: Blob): Promise<string> {
   const v = document.createElement("video"), url = URL.createObjectURL(file); v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = url;
   try {
     await new Promise((r, j) => { v.onloadeddata = r; v.onerror = j; setTimeout(j, 8000); });

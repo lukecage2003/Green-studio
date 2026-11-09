@@ -20,7 +20,19 @@ function stabilize(f, n, out) {
   holds = 0; lastCov = cov;
   prev.set(out);
 }
-let lastCov = 0, holds = 0;
+let lastCov = 0, holds = 0, lumN = 0, lumCv = null;
+function subjectLum(frame, m) {
+  lumCv ??= new OffscreenCanvas(32, 32); const g = lumCv.getContext("2d", { willReadFrequently: true });
+  g.drawImage(frame, 0, 0, 32, 32); const px = g.getImageData(0, 0, 32, 32).data;
+  // sujet (masque > 0,6) et fond réel (masque < 0,2) : le rapport des deux révèle le contre-jour
+  let s = 0, w = 0, bs = 0, bw = 0;
+  for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) {
+    const a = m.data[Math.floor((y + 0.5) / 32 * m.h) * m.w + Math.floor((x + 0.5) / 32 * m.w)] / 255, i = (y * 32 + x) * 4;
+    const l = (0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]) / 255;
+    if (a > 0.6) { s += a * l; w += a; } else if (a < 0.2) { bs += l; bw++; }
+  }
+  return w > 20 ? { subj: s / w, bg: bw > 20 ? bs / bw : null } : null; // assez de sujet visible pour mesurer
+}
 
 let ImageSegmenter = null;
 async function create(model) {
@@ -75,7 +87,10 @@ self.onmessage = async (e) => {
         r.close?.();
       });
     } catch (err) { self.postMessage({ type: "frameError", message: String(err?.message ?? err) }); }
+    // Lumière auto : luminosité moyenne du SUJET (pas du fond), mesurée toutes les 6 images sur une miniature 32×32.
+    let lum = null;
+    try { if (res && ++lumN % 6 === 0) lum = subjectLum(d.frame, res); } catch { /* mesure facultative */ }
     finally { d.frame.close?.(); }
-    self.postMessage({ type: "mask", ms: performance.now() - t0, ...(res ?? {}) }, res ? [res.data.buffer] : []);
+    self.postMessage({ type: "mask", ms: performance.now() - t0, lum, ...(res ?? {}) }, res ? [res.data.buffer] : []);
   }
 };
