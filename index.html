@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#0b0d0c" />
 <link rel="manifest" href="/manifest.webmanifest" />
+<link rel="icon" href="/icons/icon-192.png" />
+<link rel="apple-touch-icon" href="/icons/icon-192.png" />
 <title>Green Studio</title>
 <style>
 :root{--bg:#070b09;--fg:#eef4f0;--muted:#8fa196;--accent:#34e08b;--line:rgba(255,255,255,.09);--glass:rgba(12,18,15,.62);color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
@@ -89,6 +91,8 @@ body{font-family:ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",
     <div class="how"><span>Votre décor, en direct, sans fond vert.</span><span>Glissez pour vous placer, pincez pour agrandir.</span></div>
     <p>Tout reste sur votre téléphone : aucune vidéo n’est envoyée.</p>
     <button class="primary" id="go">Activer la caméra</button>
+    <button class="round" id="openEdit">✂ Monter une vidéo existante</button>
+    <input type="file" id="editFile" accept="video/*" hidden />
     <p class="error" id="err" hidden></p>
   </section>
 
@@ -124,7 +128,7 @@ body{font-family:ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",
   <section class="pv" id="pv" hidden>
     <video id="pvVid" controls playsinline></video>
     <p id="pvInfo" style="margin:0;font-size:12px;color:var(--muted)"></p>
-    <div class="row"><a id="dl" class="round primary" style="text-decoration:none">Télécharger</a><button class="round" id="pvClose">Fermer</button></div>
+    <div class="row"><a id="dl" class="round primary" style="text-decoration:none">Télécharger</a><button class="round" id="pvEdit">✂ Monter</button><button class="round" id="pvClose">Fermer</button></div>
   </section>
   <aside class="panel" id="panel" hidden>
     <div class="head"><strong>Décor et détourage</strong><button class="x" id="bClose" aria-label="Fermer">✕</button></div>
@@ -174,7 +178,8 @@ backendP.then(async (b) => {
 let writer = null, chunks = [];
 const $ = (id) => document.getElementById(id);
 let W = 1080, H = 1920; const TA = 9 / 16;
-const MP = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21";
+// MediaPipe hébergé avec l'app (copié par scripts/copy-mediapipe.mjs, version = package.json), CDN en secours.
+const MPV = "0.10.21", MP_BASES = [new URL(`/mediapipe/${MPV}`, location.href).href, `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MPV}`];
 const MODEL = "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite";
 
 const video = $("cam"), canvas = $("out");
@@ -299,14 +304,45 @@ function render(newFrame) {
 }
 
 /* ---------- Segmentation (MediaPipe) ---------- */
-let segmenter = null, backend = "GPU", lastTs = 0, prev = null, cur = null, out = null, inferMs = 0;
-async function initSeg() {
-  const { FilesetResolver, ImageSegmenter } = await import(MP + "/vision_bundle.mjs");
-  const fileset = await FilesetResolver.forVisionTasks(MP + "/wasm");
-  const make = (delegate) => ImageSegmenter.createFromOptions(fileset, { baseOptions: { modelAssetPath: MODEL, delegate }, runningMode: "VIDEO", outputConfidenceMasks: true, outputCategoryMask: false });
-  try { segmenter = await make("GPU"); backend = "GPU"; } catch { segmenter = await make("CPU"); backend = "CPU"; }
+let segmenter = null, segWorker = null, backend = "GPU", lastTs = 0, prev = null, cur = null, out = null, inferMs = 0;
+function uploadMask(data, w, h) {
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, tMask);
+  if (w !== maskW || h !== maskH) { gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, data); maskW = w; maskH = h; }
+  else gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RED, gl.UNSIGNED_BYTE, data);
 }
-/* Stabilité temporelle : zone morte (ignore le bruit), lissage fort sur les pixels calmes, réaction immédiate au mouvement réel. */
+/* Détourage dans un worker : l'inférence ne bloque plus le rendu ni l'interface. Le rendu suit la caméra (30 i/s),
+   l'IA traite la dernière image disponible à son propre rythme (une seule image en vol, les autres sont sautées). */
+let busy = false, busySince = 0, wOpts = "";
+function initWorker() {
+  return new Promise((res, rej) => {
+    const w = new Worker("/seg.worker.js"); const to = setTimeout(() => { w.terminate(); rej(new Error("délai dépassé")); }, 45000);
+    w.onmessage = (e) => {
+      const d = e.data;
+      if (d.type === "ready") { clearTimeout(to); backend = d.backend; segWorker = w; res(); }
+      else if (d.type === "error") { clearTimeout(to); w.terminate(); rej(new Error(d.message)); }
+      else if (d.type === "mask") { busy = false; if (d.data) { uploadMask(d.data, d.w, d.h); inferMs += (d.ms - inferMs) * .15; cnt.ai++; } }
+    };
+    w.onerror = (e) => { clearTimeout(to); rej(new Error(e.message || "worker")); };
+    w.postMessage({ type: "init", bases: MP_BASES, model: MODEL });
+  });
+}
+async function initSeg() {
+  if (typeof Worker !== "undefined" && typeof OffscreenCanvas !== "undefined") {
+    try { await initWorker(); return; } catch (e) { console.warn("Détourage en worker indisponible, repli sur le thread principal", e); }
+  }
+  let lastErr;
+  for (const base of MP_BASES) {
+    try {
+      const { FilesetResolver, ImageSegmenter } = await import(/* @vite-ignore */ base + "/vision_bundle.mjs");
+      const fileset = await FilesetResolver.forVisionTasks(base + "/wasm");
+      const make = (delegate) => ImageSegmenter.createFromOptions(fileset, { baseOptions: { modelAssetPath: MODEL, delegate }, runningMode: "VIDEO", outputConfidenceMasks: true, outputCategoryMask: false });
+      try { segmenter = await make("GPU"); backend = "GPU"; } catch { segmenter = await make("CPU"); backend = "CPU"; }
+      return;
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr;
+}
+/* Stabilité temporelle (repli thread principal ; même algorithme que seg.worker.js). */
 function stabilizeMask(cur, prev, out, stab) {
   const base = 0.45 - 0.4 * stab, dead = (3 + 9 * stab) | 0;
   for (let i = 0, n = cur.length; i < n; i++) {
@@ -321,14 +357,19 @@ function onMask(f, w, h) {
   if (!cur || cur.length !== n) { cur = new Uint8Array(n); prev = new Uint8Array(n); out = new Uint8Array(n); }
   for (let i = 0; i < n; i++) { const x = S.invert ? 1 - f[i] : f[i]; cur[i] = x <= 0 ? 0 : x >= 1 ? 255 : (x * 255) | 0; }
   stabilizeMask(cur, prev, out, S.stab);
-  prev.set(out);
-  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, tMask);
-  if (w !== maskW || h !== maskH) { gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, out); maskW = w; maskH = h; }
-  else gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RED, gl.UNSIGNED_BYTE, out);
+  prev.set(out); uploadMask(out, w, h);
 }
-let busy = false;
 function infer() {
-  if (!segmenter || video.readyState < 2 || busy) return;
+  if (video.readyState < 2) return;
+  if (segWorker) {
+    const o = S.stab + "|" + S.invert; if (o !== wOpts) { wOpts = o; segWorker.postMessage({ type: "opts", stab: S.stab, invert: S.invert }); }
+    if (busy && performance.now() - busySince < 2000) return; // image précédente encore en traitement : on saute celle-ci
+    busy = true; busySince = performance.now();
+    try { const frame = new VideoFrame(video, { timestamp: Math.round(busySince * 1000) }); segWorker.postMessage({ type: "frame", frame, ts: busySince }, [frame]); }
+    catch { createImageBitmap(video).then((frame) => segWorker.postMessage({ type: "frame", frame, ts: busySince }, [frame])).catch(() => (busy = false)); }
+    return;
+  }
+  if (!segmenter || busy) return;
   busy = true; const t0 = performance.now(); lastTs = Math.max(lastTs + 1, Math.round(t0));
   try {
     segmenter.segmentForVideo(video, lastTs, (r) => { const m = r.confidenceMasks?.[0]; if (m) onMask(m.getAsFloat32Array(), m.width, m.height); r.close(); });
@@ -356,7 +397,8 @@ async function startCam(f) {
 /* ---------- Boucle ---------- */
 const cnt = { cam: 0, ai: 0, r: 0 }, rate = { cam: 0, ai: 0, r: 0 };
 let running = false;
-function camLoop() { cnt.cam++; infer(); render(true); cnt.r++; if (running) video.requestVideoFrameCallback(camLoop); }
+let suspended = false; // vrai pendant le montage : on ne calcule plus l'image caméra (batterie)
+function camLoop() { if (!suspended) { cnt.cam++; infer(); render(true); cnt.r++; } if (running) video.requestVideoFrameCallback(camLoop); }
 setInterval(() => { for (const k in cnt) { rate[k] = cnt[k] * 2; cnt[k] = 0; }
   if (running) $("perf").textContent = `Cam ${rate.cam} · IA ${rate.ai} · Rendu ${rate.r} fps · ${inferMs.toFixed(0)} ms`; }, 500);
 
@@ -368,8 +410,8 @@ $("go").onclick = async () => {
     await startCam("user");
     await initMic();
     try { await initSeg(); } catch (e) { console.error(e); segmenter = null; setAi("err", "IA indisponible"); }
-    if (segmenter) setAi("ok", "IA : " + backend);
-    $("start").hidden = true; $("bar").hidden = false; $("rec").hidden = false; $("strip").hidden = false; keepAwake(); if (!segmenter) toast("Détourage indisponible (modèle non chargé, internet requis au premier lancement) : caméra seule.", 9000);
+    if (segmenter || segWorker) setAi("ok", "IA : " + backend + (segWorker ? " · worker" : ""));
+    $("start").hidden = true; $("bar").hidden = false; $("rec").hidden = false; $("strip").hidden = false; keepAwake(); if (!segmenter && !segWorker) toast("Détourage indisponible (modèle non chargé, internet requis au premier lancement) : caméra seule.", 9000);
     running = true; video.requestVideoFrameCallback(camLoop);
   } catch (e) {
     setAi("err", "IA : erreur");
@@ -461,10 +503,10 @@ async function finishRec() {
   else { blob = new Blob(chunks, { type }); chunks = []; }
   openPreview(blob, id, `${W}×${H} · ${type} · ${(blob.size / 1e6).toFixed(1)} Mo — téléchargez avant de fermer.`);
 }
-let pvId = null, pvSaved = false;
+let pvId = null, pvSaved = false, pvBlob = null;
 function openPreview(blob, id, info) {
   const url = URL.createObjectURL(blob), ext = blob.type === "video/mp4" ? "mp4" : "webm";
-  pvId = id; pvSaved = false; $("pvVid").src = url; const a = $("dl"); a.href = url; a.download = `green-studio-${Date.now()}.${ext}`;
+  pvId = id; pvBlob = blob; pvSaved = false; $("pvVid").src = url; const a = $("dl"); a.href = url; a.download = `green-studio-${Date.now()}.${ext}`;
   $("pvInfo").textContent = info; $("pv").hidden = false;
 }
 async function showPending() {
@@ -481,8 +523,18 @@ $("pvClose").onclick = async () => {
     if (pvSaved || confirm("Prise non téléchargée. La supprimer définitivement ?")) (await backendP)?.remove(pvId).catch(() => {});
     else toast("Prise conservée : elle vous sera reproposée au prochain lancement.", 4000);
   }
-  pvId = null; showPending();
+  pvId = null; pvBlob = null; showPending();
 };
+/* ---------- Montage (Quick Edit) ---------- */
+async function edit(file, key) {
+  $("pvVid").pause(); suspended = true;
+  try { const { openEditor } = await import("/src/ui/quick-edit.ts"); await openEditor({ file, key, toast, onClose: () => (suspended = false) }); }
+  catch (e) { suspended = false; toast("Montage indisponible : " + (e?.message ?? e), 6000); }
+}
+// La prise reste dans le stockage tant que l'aperçu est ouvert : le montage lit le fichier sur disque, sans copie.
+$("pvEdit").onclick = () => pvBlob && edit(pvBlob, pvId ?? `mem-${pvBlob.size}`);
+$("openEdit").onclick = () => $("editFile").click();
+$("editFile").onchange = (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) edit(f, `file-${f.name}-${f.size}-${f.lastModified}`); };
 
 /* ---------- Téléprompteur ---------- */
 const tp = $("tp"); let tpOn = false, tpLast = 0, tpY = 0;

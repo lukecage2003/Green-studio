@@ -89,3 +89,19 @@ test("OPFS : parts durables, ordre, aucune recopie, reprise et suppression", asy
   await crashed.append("r6", new Blob([new Uint8Array(5)])); assert.equal((await crashed.file("r6")).size, 75);
   await b.remove("r6"); assert.equal(d.files.size, 0);
 });
+
+test("audio : rééchantillonnage, crêtes, fondus, découpe aux silences", async () => {
+  const { Resampler, peaks, fadeGain, splitAtSilences, toMono } = await import("../src/core/audio.ts");
+  const r = new Resampler(48000, 16000); const sine = new Float32Array(48000).map((_, i) => Math.sin(2 * Math.PI * 100 * i / 48000));
+  r.push(sine.subarray(0, 20000)); r.push(sine.subarray(20000)); r.pad(0.5);
+  const o = r.result(); assert.ok(Math.abs(o.length - 24000) <= 2, String(o.length));
+  assert.ok(Math.abs(o[4000] - Math.sin(2 * Math.PI * 100 * 0.25)) < 0.05, "signal conservé"); assert.equal(o[23000], 0);
+  assert.deepEqual([...toMono([new Float32Array([1, 0]), new Float32Array([0, 1])])], [0.5, 0.5]);
+  assert.deepEqual([...peaks(new Float32Array([0, -0.5, 0.2, 0.9]), 2)].map((x) => +x.toFixed(2)), [0.5, 0.9]);
+  assert.equal(fadeGain(0, 10, 0.01), 0); assert.equal(fadeGain(5, 10, 0.01), 1); assert.ok(fadeGain(0.005, 10, 0.01) > 0.6 && fadeGain(0.005, 10, 0.01) < 0.8);
+  assert.equal(fadeGain(10, 10, 0.01), 0);
+  // 70 s de « parole » avec des silences à 25 s et 50 s : les coupes tombent dans les silences
+  const rate = 100, x = new Float32Array(70 * rate).fill(0.5); x.fill(0, 25 * rate, 25.5 * rate); x.fill(0, 50 * rate, 50.5 * rate);
+  const b = splitAtSilences(x, rate); assert.equal(b[0], 0); assert.equal(b[b.length - 1], x.length);
+  for (let i = 1; i < b.length - 1; i++) { assert.equal(x[b[i]], 0, "coupe dans un silence"); assert.ok(b[i] - b[i - 1] <= 28 * rate); }
+});
