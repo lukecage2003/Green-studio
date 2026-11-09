@@ -1,4 +1,4 @@
-# Green Studio 3.0 — état réel (alpha.9)
+# Green Studio 3.0 — état réel (alpha.10)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,10 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## Correctif alpha.10 (d'après la vidéo alpha.9 : plus aucun gel, 27,9 i/s — mais masque corrompu sur le S25)
+- **Masque corrompu** (fond du train conservé, rayures horizontales) : préchauffage sur image factice 256×256 supprimé (ajouté en alpha.8 ; sur le GPU du téléphone, le modèle restait calé sur ce format).
+- **Garde-fou** : sortie du modèle anormale pendant ≈ 1,5 s (masque « tout personne » ou rayures : sauts entre lignes > 3× les sauts entre pixels voisins) → détourage relancé automatiquement, même pendant une prise. Seuils vérifiés : masques réels ≈ 0,7–1 (aucune fausse alerte), masques corrompus simulés ≈ 27–31.
 
 ## Nouveautés alpha.9 (testées sur une vraie scène : enregistrement de la caméra du S25, contre-jour dans un train)
 - **Lumière auto** : corrige le contre-jour (fond réel plus clair que le visage) et les scènes très sombres, sans jamais viser une luminosité fixe (le teint est respecté) ; exposition du capteur si la caméra le permet (`exposureCompensation`), sinon courbe numérique douce ; curseur Lumière ±.

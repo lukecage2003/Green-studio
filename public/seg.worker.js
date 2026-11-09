@@ -18,9 +18,16 @@ function stabilize(f, n, out) {
   let cov = 0; for (let i = 0; i < n; i += 7) cov += out[i]; cov /= (n / 7) * 255;
   if (cov < 0.004 && lastCov > 0.03 && holds < 8) { holds++; out.set(prev); return; }
   holds = 0; lastCov = cov;
+  // Garde-fou : sortie du modèle anormale qui dure (≈ 1,5 s) → on prévient l'app, qui relance le détourage.
+  // Deux signatures : masque « tout personne », ou rayures horizontales (sauts d'une ligne à l'autre bien plus forts
+  // que d'un pixel au voisin — impossible sur une vraie silhouette).
+  let dh = 0, dv = 0; const w = maskW;
+  for (let i = 0; i + w < n; i += 3) { dh += Math.abs(out[i] - out[i + 1]); dv += Math.abs(out[i] - out[i + w]); }
+  dh /= n / 3 * 255; dv /= n / 3 * 255; quality = { cov, dh, dv };
+  if (cov > 0.97 || (dv > 0.03 && dv > 3 * dh)) { if (++fullN === 45) self.postMessage({ type: "suspect" }); } else fullN = 0;
   prev.set(out);
 }
-let lastCov = 0, holds = 0, lumN = 0, lumCv = null;
+let lastCov = 0, holds = 0, lumN = 0, lumCv = null, fullN = 0, maskW = 256, quality = null;
 function subjectLum(frame, m) {
   lumCv ??= new OffscreenCanvas(32, 32); const g = lumCv.getContext("2d", { willReadFrequently: true });
   g.drawImage(frame, 0, 0, 32, 32); const px = g.getImageData(0, 0, 32, 32).data;
@@ -57,10 +64,9 @@ async function init({ bases, model }) {
       ({ ImageSegmenter } = await import(base + "/vision_bundle.mjs"));
       fileset = await (await import(base + "/vision_bundle.mjs")).FilesetResolver.forVisionTasks(base + "/wasm");
       const b = await create(model);
-      // Préchauffage : la 1re inférence compile les shaders GPU (lent) ; on la fait ici, avant d'être utilisé.
-      try { const c = new OffscreenCanvas(256, 256), g = c.getContext("2d"); g.fillStyle = "#777"; g.fillRect(0, 0, 256, 256);
-        for (let k = 0; k < 2; k++) seg.segmentForVideo(c, ++lastTs, (r) => r.close?.()); } catch { /* sans gravité */ }
-      prev = null; lastCov = 0; holds = 0;
+      // Pas de préchauffage sur une image factice : sur le GPU du téléphone, le modèle restait calé sur ce format et
+      // rendait ensuite des masques corrompus (rayures, fond conservé). La 1re vraie image fait office de préchauffage.
+      prev = null; lastCov = 0; holds = 0; fullN = 0;
       return b;
     } catch (e) { lastErr = e; }
   }
@@ -83,7 +89,7 @@ self.onmessage = async (e) => {
       lastTs = Math.max(lastTs + 1, Math.round(d.ts));
       seg.segmentForVideo(d.frame, lastTs, (r) => {
         const m = r.confidenceMasks?.[0]; // modèle Précis : masque 0 = fond
-        if (m) { const n = m.width * m.height, out = new Uint8Array(n); stabilize(m.getAsFloat32Array(), n, out); res = { w: m.width, h: m.height, data: out }; }
+        if (m) { const n = m.width * m.height, out = new Uint8Array(n); maskW = m.width; stabilize(m.getAsFloat32Array(), n, out); res = { w: m.width, h: m.height, data: out }; }
         r.close?.();
       });
     } catch (err) { self.postMessage({ type: "frameError", message: String(err?.message ?? err) }); }
@@ -91,6 +97,6 @@ self.onmessage = async (e) => {
     let lum = null;
     try { if (res && ++lumN % 6 === 0) lum = subjectLum(d.frame, res); } catch { /* mesure facultative */ }
     finally { d.frame.close?.(); }
-    self.postMessage({ type: "mask", ms: performance.now() - t0, lum, ...(res ?? {}) }, res ? [res.data.buffer] : []);
+    self.postMessage({ type: "mask", ms: performance.now() - t0, lum, q: quality, ...(res ?? {}) }, res ? [res.data.buffer] : []);
   }
 };

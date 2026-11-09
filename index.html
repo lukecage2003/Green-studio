@@ -560,8 +560,10 @@ function makeWorker(model) {
       const d = e.data;
       if (d.type === "ready") { clearTimeout(to); res({ w, backend: d.backend }); }
       else if (d.type === "error") { clearTimeout(to); w.terminate(); rej(new Error(d.message)); }
+      else if (d.type === "suspect" && w === segWorker) recoverSeg();
       else if (d.type === "mask" && w === segWorker) {
         busy = false; const f = held; held = null;
+        if (d.q) maskQ = d.q;
         if (d.lum) { subjLum = subjLum == null ? d.lum.subj : subjLum * 0.7 + d.lum.subj * 0.3; if (d.lum.bg != null) bgLum = bgLum == null ? d.lum.bg : bgLum * 0.7 + d.lum.bg * 0.3; }
         if (d.data) { uploadMask(d.data, d.w, d.h); gl.uniform2f(U.uMO, sentRect[0], sentRect[1]); gl.uniform2f(U.uMS, sentRect[2], sentRect[3]); inferMs += (d.ms - inferMs) * .15; cnt.ai++; }
         if (f) { if (!suspended && d.data) { render(f); cnt.r++; } f.close(); } // image et masque de la MÊME prise de vue : aucun décalage
@@ -572,7 +574,16 @@ function makeWorker(model) {
     w.postMessage({ type: "init", bases: MP_BASES, model });
   });
 }
-let warmUntil = 0, lastMade = null, pendingWk = null;
+let warmUntil = 0, lastMade = null, pendingWk = null, recoveries = 0, maskQ = null, recovering = false;
+/** Masque anormal signalé par le worker : on relance le détourage avec l'autre modèle (sans attendre la fin d'une prise :
+   une image cassée est pire qu'un court à-coup). */
+function recoverSeg() {
+  if (pendingModel || recoveries > 3) return; recoveries++;
+  const id = curModel === "hq" ? "fast" : "fast"; if (curModel === "hq") demoted = true;
+  pendingModel = id; recovering = true; const pr = makeWorker(MODELS[id]); const wk = (pendingWk = lastMade);
+  pr.then((r) => { recovering = false; if (!wk.cancelled) useWorker(r, id); else r.w.terminate(); }).catch(() => { recovering = false; pendingModel = null; });
+  toast("Détourage relancé automatiquement.", 3000);
+}
 function useWorker(r, id) {
   const old = segWorker; segWorker = r.w; backend = r.backend; curModel = id; pendingModel = null;
   busy = false; held?.close(); held = null; wOpts = ""; inferMs = 0; slowSince = 0; warmUntil = performance.now() + 2500; // mesures ignorées le temps de se stabiliser
@@ -859,7 +870,7 @@ $("rec").onclick = async () => {
 };
 /** Au début d'une prise : une préparation de modèle en cours est annulée (elle chargerait le GPU), puis relancée à la fin. */
 function pauseModelPrep() {
-  if (!pendingModel) return;
+  if (!pendingModel || recovering) return; // une relance de secours n'est jamais suspendue
   if (pendingWk) { pendingWk.cancelled = true; pendingWk.terminate(); }
   deferredModel = pendingModel; pendingModel = null; pendingWk = null;
 }
@@ -1226,6 +1237,7 @@ $("go").addEventListener("click", () => setTimeout(() => { try { if (!localStora
 // Diagnostic en lecture seule (tests, et « IA » touché pour l'afficher) : état du décor, du modèle et de la synchro.
 window.gsDebug = { get renders() { return renderCount; }, get pending() { return pendingModel; }, get deferred() { return deferredModel; }, get recording() { return !!rec; }, get lens() { return lens; }, get bg() { return bgCur?.id; }, get model() { return curModel; }, get sync() { return !!(segWorker && sync); }, get inferMs() { return inferMs; },
   get cam() { return camInfo; }, get maskRect() { return sentRect; },
+  get maskQ() { return maskQ; },
   get light() { return { subjLum, bgLum, target: lightTarget(), lightG, expo: expo?.v ?? null }; },
   get vad() { return !!vad?.speaking; }, get tpPos() { return tpPos; }, get mic() { return micStream?.getAudioTracks()[0]?.label; } };
 try { S.autoLight = localStorage.getItem("gs.autoLight") !== "0"; } catch {}
