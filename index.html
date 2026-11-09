@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0b0d0c" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<title>Green Studio</title>
+<style>
+:root{--bg:#070b09;--fg:#eef4f0;--muted:#8fa196;--accent:#34e08b;--line:rgba(255,255,255,.09);--glass:rgba(12,18,15,.62);color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Roboto,sans-serif;overflow:hidden}
+.stage{position:relative;height:100%;margin:0 auto;aspect-ratio:9/16;max-width:100vw;background:#000;overflow:hidden}
+canvas{width:100%;height:100%;display:block}
+.top{position:absolute;top:8px;left:8px;right:8px;display:flex;justify-content:space-between;gap:6px;pointer-events:none}
+.chip{background:var(--glass);padding:6px 10px;border-radius:999px;font-size:12px}
+.chip.ok{color:var(--accent)}.chip.err{color:#ff6b6b}
+.ov{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;background:var(--bg)}
+.ov h1{margin:0;font-size:28px}.ov p{margin:0;color:var(--muted);font-size:14px}
+.error{color:#ff6b6b!important}
+button{font:inherit;color:inherit;border:0;cursor:pointer}
+button:disabled{opacity:.5}
+.primary{background:var(--accent);color:#04120a;font-weight:600;padding:14px 22px;border-radius:14px}
+.bar{position:absolute;bottom:14px;left:0;right:0;display:flex;justify-content:center;gap:10px}
+.round{background:var(--glass);padding:12px 16px;border-radius:999px;font-size:13px}
+.round[aria-pressed="true"]{outline:1px solid var(--accent)}
+.panel{position:absolute;left:0;right:0;bottom:0;max-height:64%;overflow-y:auto;background:var(--glass);backdrop-filter:blur(14px);border-radius:18px 18px 0 0;padding:14px 16px 20px;display:flex;flex-direction:column;gap:10px}
+.panel label{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px;color:var(--muted)}
+.panel input[type=range]{flex:1;accent-color:var(--accent)}
+.head{display:flex;justify-content:space-between;align-items:center}
+.x{background:none;font-size:18px}
+hr{border:0;border-top:1px solid #ffffff1a;width:100%;margin:2px 0}
+.top{flex-wrap:wrap}.bar{flex-wrap:wrap;padding:0 6px;gap:6px}.round{padding:10px 12px;font-size:12px}
+.recbtn{position:absolute;bottom:64px;left:50%;transform:translateX(-50%);width:64px;height:64px;border-radius:50%;background:#ffffff22;border:3px solid #fff;display:grid;place-items:center;padding:0}
+.recbtn i{width:36px;height:36px;border-radius:50%;background:#ff3b30;transition:.15s}.recbtn.on i{width:22px;height:22px;border-radius:5px}
+#tp{position:absolute;left:0;right:0;top:12%;height:30%;overflow-y:auto;background:rgba(0,0,0,.5);padding:10px 16px;text-align:center;font-weight:600;font-size:26px;line-height:1.4;white-space:pre-wrap;touch-action:pan-y;scrollbar-width:none}
+#tp::-webkit-scrollbar{display:none}
+#toast{position:absolute;top:46px;left:8px;right:8px;text-align:center;white-space:normal;pointer-events:none;z-index:6}
+.meter{height:8px;border-radius:4px;background:#ffffff1a;overflow:hidden}.meter b{display:block;height:100%;width:0;background:var(--accent)}.meter.clip b{background:#ff3b30}
+select,textarea,button.sm{background:#ffffff14;color:var(--fg);border:1px solid #ffffff22;border-radius:8px;padding:6px 8px;font:inherit;font-size:13px}
+textarea{width:100%;min-height:90px}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.pv{position:absolute;inset:0;background:#000;display:flex;flex-direction:column;gap:10px;padding:12px;z-index:5}.pv video{flex:1;min-height:0;width:100%;object-fit:contain}
+#out{touch-action:none}#ai{pointer-events:auto}
+#strip{position:absolute;left:0;right:0;bottom:140px;display:flex;gap:8px;padding:0 12px;overflow-x:auto;scrollbar-width:none;scroll-snap-type:x proximity}
+#strip::-webkit-scrollbar{display:none}
+#strip .th{flex:0 0 auto;width:48px;height:48px;border-radius:12px;border:2px solid transparent;padding:0;scroll-snap-align:center;background:#222}
+#strip .th.on{border-color:#fff}
+#strip .add{display:grid;place-items:center;font-size:24px;background:var(--glass);color:#fff}
+#panel:not(.adv) label:has(input[type=range]){display:none}
+[hidden]{display:none!important}
+
+/* --- Refonte v3 : rail latéral façon appli caméra, dock d'enregistrement, panneau simplifié --- */
+body{font-family:ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;letter-spacing:-.005em}
+.chip{backdrop-filter:blur(10px);border:1px solid var(--line)}
+.round,.panel{backdrop-filter:blur(16px) saturate(1.3);border:1px solid var(--line)}
+.bar{inset:auto 10px auto auto;top:58px;left:auto;right:10px;bottom:auto;flex-direction:column;align-items:stretch;gap:8px;padding:0;width:62px;top:96px}
+.bar .round{padding:11px 4px;text-align:center;font-size:12px;font-weight:600;border-radius:16px}
+#gmode{position:absolute;left:14px;bottom:36px;z-index:3;padding:12px 16px;font-size:13px;font-weight:600}
+#bar[hidden]+#gmode{display:none}
+.recbtn{bottom:26px;width:72px;height:72px;border-width:4px;background:#ffffff14;transition:transform .12s}
+.recbtn:active{transform:translateX(-50%) scale(.93)}
+.recbtn:not(.on){animation:breathe 3.2s ease-in-out infinite}
+@keyframes breathe{50%{box-shadow:0 0 0 9px #34e08b22}}
+#strip{bottom:118px}#strip .th.on{border-color:var(--accent)}
+.primary{box-shadow:0 8px 30px #34e08b40;font-size:16px;padding:16px 28px;border-radius:18px}
+.ov{background:radial-gradient(120% 70% at 50% 0%,#0f2a1d 0%,var(--bg) 62%)}
+.ov h1{font-size:40px;font-weight:700;letter-spacing:-.03em}
+.ov .how{display:flex;flex-direction:column;gap:6px;color:var(--fg);font-size:15px;opacity:.9}
+.panel{border-radius:24px 24px 0 0;padding:16px 16px 22px;gap:12px}
+.look{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.look button{padding:14px 6px;border-radius:14px;background:#ffffff10;border:1px solid var(--line);font-weight:600;font-size:14px}
+.look button small{display:block;font-weight:400;color:var(--muted);font-size:11px;margin-top:2px}
+.look button.on{border-color:var(--accent);background:#34e08b1f}
+#panel:not(.adv) .advonly{display:none}
+#toast.ok{color:var(--accent)}
+.stage:has(.panel:not([hidden])) #gmode{display:none}
+#panel:not(.adv) label:has(#inv){display:none}
+@media (prefers-reduced-motion:reduce){.recbtn{animation:none!important}}
+</style>
+</head>
+<body>
+<main class="stage">
+  <canvas id="out" width="1080" height="1920"></canvas>
+  <video id="cam" playsinline muted autoplay hidden></video>
+  <div class="top"><span class="chip" id="ai">IA : en attente</span><span class="chip" id="perf" hidden>—</span><span class="chip err" id="recChip" hidden></span></div>
+
+  <section class="ov" id="start">
+    <h1>Green Studio</h1>
+    <div class="how"><span>Votre décor, en direct, sans fond vert.</span><span>Glissez pour vous placer, pincez pour agrandir.</span></div>
+    <p>Tout reste sur votre téléphone : aucune vidéo n’est envoyée.</p>
+    <button class="primary" id="go">Activer la caméra</button>
+    <p class="error" id="err" hidden></p>
+  </section>
+
+  <nav class="bar" id="bar" hidden>
+        <button class="round" id="bDecor">Décor</button><button class="round" id="bScript">Script</button><button class="round" id="bAudio">Audio</button>
+    <button class="round" id="bFlip">Caméra</button>
+    <button class="round" id="bMirror" aria-pressed="true">Miroir</button>
+  </nav>
+  <button class="round" id="gmode" aria-pressed="true">✋ Sujet</button>
+
+  <div id="strip" hidden></div>
+  <div id="tp" hidden></div>
+  <div class="chip err" id="toast" hidden></div>
+  <button class="recbtn" id="rec" hidden aria-label="Enregistrer"><i></i></button>
+  <aside class="panel" id="pScript" hidden>
+    <div class="head"><strong>Téléprompteur</strong><button class="x" data-close aria-label="Fermer">✕</button></div>
+    <textarea id="tpIn" placeholder="Collez votre script ici…"></textarea>
+    <label>Vitesse <input type="range" id="tpSpd" min="5" max="200" step="1" value="40"></label>
+    <label>Taille du texte <input type="range" id="tpSize" min="16" max="48" step="1" value="26"></label>
+    <label>Position <input type="range" id="tpPos" min="0" max="60" step="1" value="12"></label>
+    <div class="row"><button class="round" id="tpPlay">▶ Lancer</button><button class="round" id="tpTop">⏮ Début</button><label style="gap:6px">Afficher <input type="checkbox" id="tpShow"></label></div>
+    <p style="margin:0;font-size:12px;color:var(--muted)">Le texte n’apparaît jamais dans la vidéo enregistrée. Touchez le texte pour lancer ou mettre en pause.</p>
+  </aside>
+  <aside class="panel" id="pAudio" hidden>
+    <div class="head"><strong>Audio</strong><button class="x" data-close aria-label="Fermer">✕</button></div>
+    <label>Micro <select id="micSel"><option>—</option></select></label>
+    <div class="meter" id="meter"><b></b></div>
+    <label>Volume <input type="range" id="gain" min="0" max="2" step="0.01" value="1"></label>
+    <label>Réduction du bruit <input type="checkbox" id="ns"></label>
+    <label>Écoute au casque <input type="checkbox" id="mon"></label>
+    <p style="margin:0;font-size:12px;color:var(--muted)">La voix n’est pas modifiée par défaut. Le niveau devient rouge en cas de saturation. N’activez l’écoute qu’avec un casque.</p>
+  </aside>
+  <section class="pv" id="pv" hidden>
+    <video id="pvVid" controls playsinline></video>
+    <p id="pvInfo" style="margin:0;font-size:12px;color:var(--muted)"></p>
+    <div class="row"><a id="dl" class="round primary" style="text-decoration:none">Télécharger</a><button class="round" id="pvClose">Fermer</button></div>
+  </section>
+  <aside class="panel" id="panel" hidden>
+    <div class="head"><strong>Décor et détourage</strong><button class="x" id="bClose" aria-label="Fermer">✕</button></div>
+    <div class="look" id="look"><button data-look="nat">Naturel<small>discret</small></button><button data-look="stu" class="on">Studio<small>recommandé</small></button><button data-look="net">Net<small>bord précis</small></button></div>
+    <div class="advonly"><label>Profil <select id="preSel"></select></label>
+    <div class="row"><button class="sm" id="preSave">Enregistrer</button><button class="sm" id="preNew">Nouveau</button><button class="sm" id="preDup">Dupliquer</button><button class="sm" id="preDel">Supprimer</button></div>
+    <label>Zoom caméra <input type="range" id="cz" min="0.3" max="3" step="0.01" value="1"></label>
+    <div class="row"><button class="sm" id="czFit">Vue large (image complète)</button><button class="sm" id="czFill">Plein écran</button></div>
+    <div class="row" hidden><span>Contours</span><button class="sm" data-e="0.28,0.62">Doux</button><button class="sm" data-e="0.4,0.62">Normal</button><button class="sm" data-e="0.5,0.7">Net</button></div>
+    
+    <label>Qualité de sortie <select id="res"><option value="1920">1080 × 1920</option><option value="1280">720 × 1280</option></select></label>
+    <hr>
+    </div>
+    <button class="sm" id="advBtn">Plus de réglages</button>
+    <label>Importer image ou vidéo <input type="file" id="file" accept="image/*,video/*" style="max-width:55%"></label>
+    <label>Zoom <input type="range" id="zoom" min="1" max="3" step="0.01" value="1"></label>
+    <label>Position X <input type="range" id="px" min="-1" max="1" step="0.01" value="0"></label>
+    <label>Position Y <input type="range" id="py" min="-1" max="1" step="0.01" value="0"></label>
+    <label>Luminosité <input type="range" id="br" min="-0.5" max="0.5" step="0.01" value="0"></label>
+    <label>Contraste <input type="range" id="ct" min="0.5" max="1.5" step="0.01" value="1"></label>
+    <label>Saturation <input type="range" id="sa" min="0" max="2" step="0.01" value="1"></label>
+    <hr>
+    <label>Anti-halo (bord) <input type="range" id="dsp" min="0" max="1" step="0.01" value="0.6"></label>
+    <label>Lumière du décor <input type="range" id="wrap" min="0" max="1" step="0.01" value="0.3"></label>
+    <label>Ombre douce <input type="range" id="shd" min="0" max="1" step="0.01" value="0.25"></label>
+    <label>Stabilité du contour <input type="range" id="stab" min="0" max="1" step="0.01" value="0.6"></label>
+    <label>Seuil bas <input type="range" id="lo" min="0" max="0.8" step="0.01" value="0.35"></label>
+    <label>Seuil haut <input type="range" id="hi" min="0.2" max="1" step="0.01" value="0.65"></label>
+    <label>Inverser le masque <input type="checkbox" id="inv"></label>
+  </aside>
+</main>
+
+<script type="module">
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("/sw.js").catch(() => {});
+// Stockage progressif OPTIONNEL : si le module est indisponible (page sans Vite), repli sur l'ancien tableau en mémoire.
+const modP = Promise.all([import("/src/core/storage.ts"), import("/src/core/recovery.ts")]).catch((e) => { console.warn("stockage progressif indisponible", e); return null; });
+const backendP = modP.then((m) => (m ? m[0].openBackend() : null)).catch(() => null);
+backendP.then(async (b) => { if (!b) return; const r = await (await modP)[1].recoverInterrupted(b); if (r.length) toast(`${r.length} enregistrement(s) interrompu(s) récupéré(s).`, 8000); }).catch(() => {});
+let writer = null, chunks = [];
+const $ = (id) => document.getElementById(id);
+let W = 1080, H = 1920; const TA = 9 / 16;
+const MP = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21";
+const MODEL = "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite";
+
+const video = $("cam"), canvas = $("out");
+const gl = canvas.getContext("webgl2", { alpha: false, antialias: false, powerPreference: "high-performance" });
+const showErr = (m) => { $("err").hidden = !m; $("err").textContent = m || ""; if (m && $("start").hidden) toast(m); };
+let toastT; function toast(m, ms = 5000) { const t = $("toast"); t.textContent = m; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => (t.hidden = true), ms); }
+const setAi = (s, t) => { const c = $("ai"); c.className = "chip " + s; c.textContent = t; };
+if (!gl) showErr("WebGL2 indisponible sur cet appareil.");
+
+/* ---------- Compositeur WebGL2 ---------- */
+const VS = `#version 300 es
+in vec2 p; out vec2 v;
+void main(){ v = vec2(p.x*.5+.5, .5-p.y*.5); gl_Position = vec4(p,0.,1.); }`;
+const FS = `#version 300 es
+precision highp float; in vec2 v; out vec4 o;
+uniform sampler2D uCam,uBg,uMask;
+uniform vec2 uCS,uCO,uBS,uBO,uEdge; uniform float uMir,uBr,uCt,uSa;
+uniform vec2 uPx,uSub; uniform vec3 uFx; // uFx = (anti-halo, lumière du décor, ombre)
+vec3 grade(vec3 c){ c+=uBr; c=(c-.5)*uCt+.5; float l=dot(c,vec3(.2126,.7152,.0722)); return clamp(mix(vec3(l),c,uSa),0.,1.); }
+float refined(vec2 cu){
+  vec3 c0 = texture(uCam,cu).rgb;
+  float sw = 1., sm = texture(uMask,cu).r;
+  for (int i=0;i<8;i++){
+    float an = 0.7853982*float(i);
+    vec2 d = vec2(cos(an),sin(an));
+    for (int k=0;k<2;k++){
+      vec2 o = d*uPx*(k==0?6.:14.);
+      vec3 df = texture(uCam,cu+o).rgb-c0;
+      float w = exp(-dot(df,df)*30.);
+      sw += w; sm += w*texture(uMask,cu+o).r;
+    }
+  }
+  return sm/sw;
+}
+vec2 camUV(vec2 sv){ return vec2(mix(sv.x,1.-sv.x,uMir), sv.y)*uCS+uCO; }
+float mq(vec2 sv){ vec2 c=camUV(sv); vec2 q=step(vec2(0.),c)*step(c,vec2(1.)); return smoothstep(uEdge.x,uEdge.y,texture(uMask,c).r)*q.x*q.y; }
+const vec2 R[6] = vec2[6](vec2(1.,0.),vec2(.5,.866),vec2(-.5,.866),vec2(-1.,0.),vec2(-.5,-.866),vec2(.5,-.866));
+void main(){
+  vec2 s0 = v-uSub; vec2 cu = camUV(s0);
+  vec3 cam = texture(uCam,cu).rgb;
+  vec3 bg = grade(texture(uBg,v*uBS+uBO).rgb);
+  float a = smoothstep(uEdge.x,uEdge.y,refined(cu));
+  vec2 q=step(vec2(0.),cu)*step(cu,vec2(1.)); a*=q.x*q.y;
+  vec2 asp = vec2(1., 1.7778); // pixels ~carrés à l'écran 9:16
+  if (uFx.z>.001 && a<.999){ // ombre portée douce, décalée vers le bas/droite
+    float sh = mq(s0-vec2(.012,.008)*asp)*.25;
+    for(int i=0;i<6;i++) sh += mq(s0-vec2(.012,.008)*asp+R[i]*.02*asp)*.125;
+    bg *= 1.-uFx.z*.65*sh;
+  }
+  if (a>.02 && (uFx.x>.001 || uFx.y>.001)){
+    float ab = mq(s0)*.25; for(int i=0;i<6;i++) ab += mq(s0+R[i]*.018*asp)*.125; // alpha flouté : <1 près du bord
+    float inner = a*(1.-ab);
+    if (uFx.y>.001){ // light wrap : le décor « enveloppe » légèrement le bord
+      vec3 bl = vec3(0.); for(int i=0;i<6;i++) bl += grade(texture(uBg,(v+R[i]*.03*asp)*uBS+uBO).rgb)/6.;
+      cam += (bl-cam)*clamp(uFx.y*inner*2.2,0.,.6);
+    }
+    float band = clamp(4.*a*(1.-a)+2.*inner,0.,1.);
+    if (uFx.x>.001 && band>.02){ // anti-halo : remplace la teinte du bord par celle de l'intérieur du sujet
+      vec3 F = vec3(0.); float W = 0.;
+      for(int i=0;i<6;i++){ vec2 sv=s0+R[i]*.016*asp; float w=smoothstep(.8,.97,mq(sv)); F+=w*texture(uCam,camUV(sv)).rgb; W+=w; }
+      if (W>.3) cam = mix(cam, F/W, clamp(uFx.x*band,0.,.9));
+    }
+  }
+  o = vec4(mix(bg,cam,a),1.);
+}`;
+function sh(t, s) { const x = gl.createShader(t); gl.shaderSource(x, s); gl.compileShader(x); if (!gl.getShaderParameter(x, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(x)); return x; }
+const prog = gl.createProgram();
+gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog); gl.useProgram(prog);
+gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+const loc = gl.getAttribLocation(prog, "p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+const U = {}; for (const n of ["uCam","uBg","uMask","uCS","uCO","uBS","uBO","uEdge","uMir","uBr","uCt","uSa","uPx","uSub","uFx"]) U[n] = gl.getUniformLocation(prog, n);
+gl.uniform1i(U.uCam, 0); gl.uniform1i(U.uBg, 1); gl.uniform1i(U.uMask, 2);
+function tex(unit) { const t = gl.createTexture(); gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t);
+  for (const [k, val] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR],[gl.TEXTURE_MAG_FILTER, gl.LINEAR],[gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, val);
+  return t; }
+const tCam = tex(0), tBg = tex(1), tMask = tex(2);
+gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+gl.activeTexture(gl.TEXTURE2); gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 1, 1, 0, gl.RED, gl.UNSIGNED_BYTE, new Uint8Array([255]));
+
+const S = { sx: 0, sy: 0, mirror: true, cz: 1, zoom: 1, px: 0, py: 0, br: 0, ct: 1, sa: 1, lo: .35, hi: .65, stab: .6, dsp: .6, wrap: .3, shd: .25, invert: false };
+let bgSrc = null, bgW = 1, bgH = 1, maskW = 0, maskH = 0;
+function uploadBg() {
+  if (!bgSrc) return;
+  const w = bgSrc.videoWidth ?? bgSrc.width, h = bgSrc.videoHeight ?? bgSrc.height;
+  if (!w || !h) return; bgW = w; bgH = h;
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, tBg);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bgSrc);
+}
+function defaultBg() {
+  const c = document.createElement("canvas"); c.width = 720; c.height = 1280; const g = c.getContext("2d");
+  const gr = g.createLinearGradient(0, 0, 0, 1280); gr.addColorStop(0, "#0f2a1d"); gr.addColorStop(1, "#1c6b46");
+  g.fillStyle = gr; g.fillRect(0, 0, 720, 1280); return c;
+}
+bgSrc = defaultBg(); uploadBg();
+function cover(sw, sh_, zoom, px, py) {
+  const a = sw / sh_; let sx = 1, sy = 1;
+  if (a > TA) sx = TA / a; else sy = a / TA;
+  sx /= zoom; sy /= zoom;
+  return [sx, sy, (1 - sx) / 2 * (1 + px), (1 - sy) / 2 * (1 + py)];
+}
+function render(newFrame) {
+  if (video.videoWidth === 0) return;
+  if (newFrame) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tCam); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video); }
+  if (bgSrc instanceof HTMLVideoElement && bgSrc.readyState >= 2) uploadBg();
+  const c = cover(video.videoWidth, video.videoHeight, S.cz, 0, 0), b = cover(bgW, bgH, S.zoom, S.px, S.py);
+  gl.viewport(0, 0, W, H); gl.uniform2f(U.uPx, 1 / video.videoWidth, 1 / video.videoHeight);
+  gl.uniform2f(U.uCS, c[0], c[1]); gl.uniform2f(U.uCO, c[2], c[3]);
+  gl.uniform2f(U.uBS, b[0], b[1]); gl.uniform2f(U.uBO, b[2], b[3]);
+  gl.uniform2f(U.uSub, S.sx, S.sy); gl.uniform3f(U.uFx, S.dsp, S.wrap, S.shd); gl.uniform2f(U.uEdge, S.lo, Math.max(S.hi, S.lo + .01));
+  gl.uniform1f(U.uMir, S.mirror ? 1 : 0); gl.uniform1f(U.uBr, S.br); gl.uniform1f(U.uCt, S.ct); gl.uniform1f(U.uSa, S.sa);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+/* ---------- Segmentation (MediaPipe) ---------- */
+let segmenter = null, backend = "GPU", lastTs = 0, prev = null, cur = null, out = null, inferMs = 0;
+async function initSeg() {
+  const { FilesetResolver, ImageSegmenter } = await import(MP + "/vision_bundle.mjs");
+  const fileset = await FilesetResolver.forVisionTasks(MP + "/wasm");
+  const make = (delegate) => ImageSegmenter.createFromOptions(fileset, { baseOptions: { modelAssetPath: MODEL, delegate }, runningMode: "VIDEO", outputConfidenceMasks: true, outputCategoryMask: false });
+  try { segmenter = await make("GPU"); backend = "GPU"; } catch { segmenter = await make("CPU"); backend = "CPU"; }
+}
+/* Stabilité temporelle : zone morte (ignore le bruit), lissage fort sur les pixels calmes, réaction immédiate au mouvement réel. */
+function stabilizeMask(cur, prev, out, stab) {
+  const base = 0.45 - 0.4 * stab, dead = (3 + 9 * stab) | 0;
+  for (let i = 0, n = cur.length; i < n; i++) {
+    const d = cur[i] - prev[i], a = d < 0 ? -d : d;
+    if (a <= dead) { out[i] = prev[i]; continue; }
+    const r = a / 255, k = Math.min(1, base + 6 * r * r); // petit écart = bruit (très lissé), grand écart = mouvement réel (immédiat)
+    out[i] = Math.round(prev[i] + d * k);
+  }
+}
+function onMask(f, w, h) {
+  const n = w * h;
+  if (!cur || cur.length !== n) { cur = new Uint8Array(n); prev = new Uint8Array(n); out = new Uint8Array(n); }
+  for (let i = 0; i < n; i++) { const x = S.invert ? 1 - f[i] : f[i]; cur[i] = x <= 0 ? 0 : x >= 1 ? 255 : (x * 255) | 0; }
+  stabilizeMask(cur, prev, out, S.stab);
+  prev.set(out);
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, tMask);
+  if (w !== maskW || h !== maskH) { gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, out); maskW = w; maskH = h; }
+  else gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RED, gl.UNSIGNED_BYTE, out);
+}
+let busy = false;
+function infer() {
+  if (!segmenter || video.readyState < 2 || busy) return;
+  busy = true; const t0 = performance.now(); lastTs = Math.max(lastTs + 1, Math.round(t0));
+  try {
+    segmenter.segmentForVideo(video, lastTs, (r) => { const m = r.confidenceMasks?.[0]; if (m) onMask(m.getAsFloat32Array(), m.width, m.height); r.close(); });
+    inferMs += (performance.now() - t0 - inferMs) * .15; cnt.ai++;
+  } catch (e) { console.error(e); } finally { busy = false; }
+}
+
+/* ---------- Caméra ---------- */
+let facing = "user", stream = null;
+async function startCam(f) {
+  stream?.getTracks().forEach((t) => t.stop());
+  const tries = [{ facingMode: { ideal: f }, width: { ideal: 1080 }, height: { ideal: 1440 }, aspectRatio: { ideal: 3 / 4 }, frameRate: { ideal: 30, max: 30 } }, { facingMode: { ideal: f }, width: { ideal: 1080 }, height: { ideal: 1920 }, frameRate: { ideal: 30 } }, { facingMode: { ideal: f } }, true];
+  let s = null, lastErr;
+  for (const v of tries) {
+    try { s = await navigator.mediaDevices.getUserMedia({ audio: false, video: v }); break; }
+    catch (e) { lastErr = e; if (e.name === "NotAllowedError" || e.name === "SecurityError" || e.name === "NotFoundError") break; }
+  }
+  if (!s) throw lastErr;
+  stream = s;
+  facing = f; video.srcObject = stream; await video.play(); setCz(camFit());
+  stream.getVideoTracks()[0].addEventListener("ended", () => { if (rec && rec.state !== "inactive") stopRec(); showErr("Caméra interrompue. Rechargez la page."); });
+  S.mirror = f === "user"; $("bMirror").setAttribute("aria-pressed", String(S.mirror));
+}
+
+/* ---------- Boucle ---------- */
+const cnt = { cam: 0, ai: 0, r: 0 }, rate = { cam: 0, ai: 0, r: 0 };
+let newFrame = false, running = false;
+function camLoop() { cnt.cam++; infer(); render(true); cnt.r++; if (running) video.requestVideoFrameCallback(camLoop); }
+function loop() { if (!running) return; render(newFrame); newFrame = false; cnt.r++; requestAnimationFrame(loop); }
+setInterval(() => { for (const k in cnt) { rate[k] = cnt[k] * 2; cnt[k] = 0; }
+  if (running) $("perf").textContent = `Cam ${rate.cam} · IA ${rate.ai} · Rendu ${rate.r} fps · ${inferMs.toFixed(0)} ms`; }, 500);
+
+$("go").onclick = async () => {
+  $("go").disabled = true; showErr(null); setAi("", "IA : chargement…");
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error("Caméra indisponible dans ce contexte (HTTPS requis).");
+    if (!("requestVideoFrameCallback" in video)) throw new Error("Chrome récent requis.");
+    await startCam("user");
+    await initMic();
+    try { await initSeg(); } catch (e) { console.error(e); segmenter = null; setAi("err", "IA indisponible"); }
+    if (segmenter) setAi("ok", "IA : " + backend);
+    $("start").hidden = true; $("bar").hidden = false; $("rec").hidden = false; $("strip").hidden = false; navigator.wakeLock?.request("screen").catch(() => {}); if (!segmenter) toast("Détourage indisponible (modèle non chargé, internet requis au premier lancement) : caméra seule.", 9000);
+    running = true; video.requestVideoFrameCallback(camLoop);
+  } catch (e) {
+    setAi("err", "IA : erreur");
+    const n = e?.name;
+    showErr(!isSecureContext ? "Page non sécurisée (" + location.protocol + "). Chrome bloque la caméra : ouvrez la page en https:// ou http://localhost." : n === "NotAllowedError" ? "Accès caméra refusé. Autorisez la caméra pour ce site (icône à gauche de l’adresse), ou ouvrez la page hors d’un aperçu intégré." : n === "NotReadableError" ? "Caméra utilisée par une autre application : fermez-la puis réessayez."
+      : n === "NotFoundError" ? "Aucune caméra détectée."
+      : "Erreur : " + (e?.message ?? e) + " — si le modèle ne se charge pas, ce contexte bloque probablement les requêtes réseau.");
+    $("go").disabled = false;
+  }
+};
+
+/* ---------- Commandes ---------- */
+$("bDecor").onclick = () => ($("panel").hidden = false);
+$("bClose").onclick = () => ($("panel").hidden = true);
+$("bMirror").onclick = () => { S.mirror = !S.mirror; $("bMirror").setAttribute("aria-pressed", String(S.mirror)); };
+$("bFlip").onclick = async () => { try { await startCam(facing === "user" ? "environment" : "user"); } catch (e) { showErr("Changement de caméra impossible : " + (e?.message ?? e)); } };
+for (const [id, key] of [["zoom","zoom"],["px","px"],["py","py"],["br","br"],["ct","ct"],["sa","sa"],["lo","lo"],["hi","hi"],["stab","stab"],["dsp","dsp"],["wrap","wrap"],["shd","shd"]])
+  $(id).oninput = (e) => (S[key] = parseFloat(e.target.value));
+$("inv").onchange = (e) => (S.invert = e.target.checked);
+let objUrl = null;
+$("file").onchange = async (e) => {
+  const f = e.target.files?.[0]; if (!f) return;
+  if (objUrl) URL.revokeObjectURL(objUrl); objUrl = URL.createObjectURL(f);
+  try {
+    if (f.type.startsWith("video/")) { const v = document.createElement("video"); v.src = objUrl; v.loop = true; v.muted = true; v.playsInline = true; await v.play(); bgSrc = v; }
+    else { const im = new Image(); im.src = objUrl; await im.decode(); bgSrc = im; }
+    uploadBg();
+  } catch { showErr("Ce fichier de décor n’a pas pu être lu."); }
+};
+/* ---------- Panneaux ---------- */
+const panels = ["panel", "pScript", "pAudio"];
+const openP = (id) => panels.forEach((p) => ($(p).hidden = p !== id));
+$("bDecor").onclick = () => openP("panel"); $("bScript").onclick = () => openP("pScript"); $("bAudio").onclick = () => openP("pAudio");
+document.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => (b.closest(".panel").hidden = true)));
+$("res").onchange = (e) => { if (rec) { e.target.value = String(H); toast("Changez la qualité avant d’enregistrer."); return; } H = +e.target.value; W = Math.round(H * TA); canvas.width = W; canvas.height = H; };
+
+/* ---------- Audio ---------- */
+let actx, micSrc, gainN, analyser, dest, micStream, hasMic = false;
+async function initMic(id) {
+  try {
+    micStream?.getTracks().forEach((t) => t.stop());
+    micStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: { deviceId: id ? { exact: id } : undefined, noiseSuppression: $("ns").checked, echoCancellation: false, autoGainControl: false, channelCount: 1 } });
+    actx ??= new AudioContext(); await actx.resume();
+    if (!gainN) { gainN = actx.createGain(); analyser = actx.createAnalyser(); analyser.fftSize = 1024; dest = actx.createMediaStreamDestination(); gainN.connect(analyser); gainN.connect(dest); }
+    micSrc?.disconnect(); micSrc = actx.createMediaStreamSource(micStream); micSrc.connect(gainN);
+    gainN.gain.value = +$("gain").value; hasMic = true;
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "audioinput");
+    $("micSel").replaceChildren(...devs.map((d, i) => new Option(d.label || "Micro " + (i + 1), d.deviceId)));
+    const cur = micStream.getAudioTracks()[0].getSettings().deviceId; if (cur) $("micSel").value = cur;
+    micStream.getAudioTracks()[0].addEventListener("ended", () => { hasMic = false; toast("Micro interrompu."); });
+  } catch { hasMic = false; $("micSel").replaceChildren(new Option("Micro indisponible", "")); }
+}
+$("micSel").onchange = (e) => initMic(e.target.value);
+$("ns").onchange = () => initMic($("micSel").value);
+$("gain").oninput = (e) => gainN && (gainN.gain.value = +e.target.value);
+$("mon").onchange = (e) => { if (!gainN) return; if (e.target.checked) gainN.connect(actx.destination); else gainN.disconnect(actx.destination); };
+const abuf = new Float32Array(1024);
+setInterval(() => { if (!analyser) return; analyser.getFloatTimeDomainData(abuf); let pk = 0; for (const v of abuf) pk = Math.max(pk, Math.abs(v)); $("meter").firstElementChild.style.width = Math.min(100, pk * 100) + "%"; $("meter").classList.toggle("clip", pk > .97); }, 60);
+
+/* ---------- Enregistrement ---------- */
+let rec = null, t0r = 0, recTimer = 0, recMime = "";
+const MIMES = ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+$("rec").onclick = () => (rec ? stopRec() : startRec());
+async function startRec() {
+  if (typeof MediaRecorder === "undefined") return toast("MediaRecorder indisponible sur ce navigateur.");
+  recMime = MIMES.find((m) => MediaRecorder.isTypeSupported(m));
+  if (!recMime) return toast("Aucun format d’enregistrement pris en charge.");
+  const est = await navigator.storage?.estimate?.();
+  if (est && est.quota - est.usage < 300e6) toast("Espace de stockage faible : libérez de la place.");
+  const vs = canvas.captureStream(30);
+  if (hasMic) dest.stream.getAudioTracks().forEach((t) => vs.addTrack(t)); else toast("Micro indisponible : enregistrement sans son.");
+  let r;
+  try { r = new MediaRecorder(vs, { mimeType: recMime, videoBitsPerSecond: H > 1280 ? 12e6 : 8e6, audioBitsPerSecond: 192000 }); } catch (e) { return toast("Enregistreur impossible : " + e.message); }
+  writer = null; chunks = [];
+  const be = await backendP;
+  if (be) { try { const RW = (await modP)[0].RecordingWriter; writer = new RW(be, "rec-" + Date.now(), recMime.split(";")[0]); await writer.start(); }
+    catch (e) { writer = null; if (/insuffisant/.test(e.message)) return toast("Espace de stockage insuffisant."); toast("Sauvegarde progressive indisponible : enregistrement en mémoire.", 6000); } }
+  else toast("Mode mémoire (sauvegarde progressive indisponible).", 4000);
+  if (writer) writer.onWarning = (c, d) => toast(c === "low_space" ? "Espace faible : arrêtez bientôt." : c === "backlog" ? "Disque lent : écriture en retard." : "Erreur d’écriture : " + d, 6000);
+  rec = r;
+  r.ondataavailable = (e) => (writer ? writer.write(e.data, performance.now() - t0r) : e.data.size && chunks.push(e.data));
+  r.onerror = (e) => toast("Erreur d’enregistrement : " + (e.error?.message ?? "inconnue"));
+  r.onstop = finishRec;
+  await actx?.resume();
+  r.start(1000); t0r = performance.now();
+  $("rec").classList.add("on"); $("recChip").hidden = false;
+  recTimer = setInterval(() => { const s = ((performance.now() - t0r) / 1000) | 0; $("recChip").textContent = `● REC ${String((s / 60) | 0).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; }, 250);
+}
+function stopRec() { clearInterval(recTimer); if (rec.state !== "inactive") rec.stop(); $("rec").classList.remove("on"); $("recChip").hidden = true; }
+async function finishRec() {
+  const type = recMime.split(";")[0], ext = type === "video/mp4" ? "mp4" : "webm";
+  rec = null; let blob;
+  if (writer) { const meta = await writer.finish(performance.now() - t0r); blob = await (await backendP).file(meta.id); } // adossé au disque
+  else { blob = new Blob(chunks, { type }); chunks = []; }
+  const url = URL.createObjectURL(blob);
+  $("pvVid").src = url; const a = $("dl"); a.href = url; a.download = `green-studio-${Date.now()}.${ext}`;
+  $("pvInfo").textContent = `${W}×${H} · ${type} · ${(blob.size / 1e6).toFixed(1)} Mo — téléchargez avant de fermer.`; $("pv").hidden = false;
+}
+$("pvClose").onclick = () => { const v = $("pvVid"); $("pv").hidden = true; v.pause(); URL.revokeObjectURL(v.src); v.removeAttribute("src"); v.load(); };
+
+/* ---------- Téléprompteur ---------- */
+const tp = $("tp"); let tpOn = false, tpLast = 0, tpY = 0;
+function tpApply() {
+  tp.textContent = $("tpIn").value || "Ajoutez votre script dans le panneau Script.";
+  tp.style.fontSize = $("tpSize").value + "px"; tp.style.top = $("tpPos").value + "%"; tp.hidden = !$("tpShow").checked;
+  try { localStorage.setItem("gs.script", $("tpIn").value); } catch {}
+}
+function tpToggle() { tpOn = !tpOn; if (tpOn) tpY = tp.scrollTop; $("tpPlay").textContent = tpOn ? "⏸ Pause" : "▶ Lancer"; }
+function tpStep(ts) {
+  if (tpOn) { tpY += +$("tpSpd").value * (ts - tpLast) / 1000; tp.scrollTop = tpY; if (tp.scrollTop < tpY - 3) tpToggle(); }
+  tpLast = ts; requestAnimationFrame(tpStep);
+}
+requestAnimationFrame(tpStep);
+$("tpIn").oninput = () => { $("tpShow").checked = !!$("tpIn").value.trim(); tpApply(); };
+$("tpShow").onchange = tpApply; $("tpSize").oninput = tpApply; $("tpPos").oninput = tpApply;
+$("tpPlay").onclick = () => { $("tpShow").checked = true; tpApply(); tpToggle(); }; tp.onclick = tpToggle;
+$("tpTop").onclick = () => { tpY = 0; tp.scrollTop = 0; };
+try { $("tpIn").value = localStorage.getItem("gs.script") || ""; } catch {}
+
+/* ---------- Profils ---------- */
+const SK = ["zoom", "px", "py", "br", "ct", "sa", "lo", "hi", "stab", "dsp", "wrap", "shd"];
+const DEF = {
+  "Comics News": { zoom: 1.1, ct: 1.05, sa: 1.1, spd: 40, size: 26, pos: 12 },
+  "Comic Analysis": { lo: .38, hi: .68, spd: 30, size: 24, pos: 10 },
+  "Hot Takes": { zoom: 1.2, ct: 1.15, sa: 1.25, lo: .33, hi: .62, spd: 55, size: 28, pos: 14 },
+  "Podcast": { br: -.05, ct: 1.05, sa: .9, gain: 1.1, ns: true, spd: 25, size: 24, pos: 8 },
+};
+const BASE = { zoom: 1, px: 0, py: 0, br: 0, ct: 1, sa: 1, lo: .35, hi: .65, stab: .6, dsp: .6, wrap: .3, shd: .25, spd: 40, size: 26, pos: 12, gain: 1, ns: false };
+let presets = null; try { presets = JSON.parse(localStorage.getItem("gs.presets")); } catch {}
+if (!presets || !Object.keys(presets).length) presets = JSON.parse(JSON.stringify(DEF));
+const savePre = () => { try { localStorage.setItem("gs.presets", JSON.stringify(presets)); } catch { toast("Stockage local indisponible : profils non conservés."); } };
+function snap() { const o = {}; for (const k of SK) o[k] = S[k]; o.spd = +$("tpSpd").value; o.size = +$("tpSize").value; o.pos = +$("tpPos").value; o.gain = +$("gain").value; o.ns = $("ns").checked; return o; }
+function applyPre(p) {
+  const v = { ...BASE, ...p };
+  for (const k of SK) { S[k] = v[k]; $(k).value = v[k]; }
+  $("tpSpd").value = v.spd; $("tpSize").value = v.size; $("tpPos").value = v.pos; $("gain").value = v.gain; if (gainN) gainN.gain.value = v.gain;
+  if ($("ns").checked !== v.ns) { $("ns").checked = v.ns; if (hasMic) initMic($("micSel").value); }
+  tpApply();
+}
+function fillPre(sel) { $("preSel").replaceChildren(...Object.keys(presets).map((n) => new Option(n, n))); if (sel) $("preSel").value = sel; }
+$("preSel").onchange = () => { applyPre(presets[$("preSel").value]); try { localStorage.setItem("gs.last", $("preSel").value); } catch {} };
+$("preSave").onclick = () => { presets[$("preSel").value] = snap(); savePre(); toast("Profil enregistré.", 2000); };
+$("preNew").onclick = () => { const n = prompt("Nom du profil :")?.trim(); if (!n) return; presets[n] = snap(); savePre(); fillPre(n); };
+$("preDup").onclick = () => { const n = prompt("Nom de la copie :", $("preSel").value + " (copie)")?.trim(); if (!n) return; presets[n] = snap(); savePre(); fillPre(n); };
+$("preDel").onclick = () => { if (Object.keys(presets).length < 2) return toast("Gardez au moins un profil."); delete presets[$("preSel").value]; savePre(); fillPre(); $("preSel").onchange(); };
+let last = null; try { last = localStorage.getItem("gs.last"); } catch {}
+fillPre(last in presets ? last : null); applyPre(presets[$("preSel").value]);
+/* ---------- Cadrage caméra ---------- */
+function camFit() { const a = video.videoWidth / video.videoHeight; return a ? Math.min(a / TA, TA / a) : 1; }
+function setCz(z) { S.cz = z; $("cz").value = z; }
+$("cz").oninput = (e) => (S.cz = +e.target.value);
+$("czFit").onclick = () => setCz(camFit()); $("czFill").onclick = () => setCz(1);
+/* ---------- Bibliothèque de décors ---------- */
+const GEN = [['#0f2a1d', '#1c6b46'], ['#1a1033', '#6a3cc2'], ['#0b1f33', '#1f7ab8'], ['#2a0f0f', '#c2573c']];
+const lib = GEN.map((g, i) => ({ id: 'g' + i, kind: 'gen', g }));
+let bi = 0, swTok = 0; const cache = new Map();
+function genCanvas(g) { const c = document.createElement('canvas'); c.width = 720; c.height = 1280; const x = c.getContext('2d'); const gr = x.createLinearGradient(0, 0, 0, 1280); gr.addColorStop(0, g[0]); gr.addColorStop(1, g[1]); x.fillStyle = gr; x.fillRect(0, 0, 720, 1280); return c; }
+const idb = new Promise((res, rej) => { try { const r = indexedDB.open('greenstudio', 1); r.onupgradeneeded = () => r.result.createObjectStore('bgs', { keyPath: 'id' }); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); } catch (e) { rej(e); } });
+idb.catch(() => {});
+const dbDo = (mode, fn) => idb.then((db) => new Promise((res, rej) => { const t = db.transaction('bgs', mode); const rq = fn(t.objectStore('bgs')); t.oncomplete = () => res(rq && rq.result); t.onerror = () => rej(t.error); }));
+async function makeThumb(blob, isVideo) {
+  const c = document.createElement('canvas'); c.width = 96; c.height = 96; const x = c.getContext('2d');
+  let src, w, h, url;
+  if (isVideo) {
+    url = URL.createObjectURL(blob); const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.src = url;
+    await new Promise((r, j) => { v.onloadeddata = r; v.onerror = j; });
+    const sk = new Promise((r) => (v.onseeked = r)); v.currentTime = 0.1; await sk;
+    src = v; w = v.videoWidth; h = v.videoHeight;
+  } else { src = await createImageBitmap(blob); w = src.width; h = src.height; }
+  const s = Math.max(96 / w, 96 / h); x.drawImage(src, (96 - w * s) / 2, (96 - h * s) / 2, w * s, h * s);
+  if (url) URL.revokeObjectURL(url); if (src.close) src.close();
+  return c.toDataURL('image/jpeg', 0.7);
+}
+async function srcFor(i) {
+  const it = lib[i]; if (!it) return null; if (cache.has(it.id)) return cache.get(it.id);
+  let s;
+  if (it.kind === 'gen') s = genCanvas(it.g);
+  else if (it.kind === 'img') {
+    const bmp = await createImageBitmap(it.blob); const k = Math.min(1, 1920 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height); bmp.close(); s = c;
+  } else { const v = document.createElement('video'); v.src = URL.createObjectURL(it.blob); v.loop = true; v.muted = true; v.playsInline = true; await v.play(); v.pause(); s = v; }
+  cache.set(it.id, s); return s;
+}
+function prune() {
+  const keep = new Set([bi - 1, bi, bi + 1].map((i) => lib[(i + lib.length) % lib.length].id));
+  for (const [id, s] of cache) if (!keep.has(id)) { if (s instanceof HTMLVideoElement) { s.pause(); URL.revokeObjectURL(s.src); s.removeAttribute('src'); } cache.delete(id); }
+}
+async function setBg(i) {
+  i = (i + lib.length) % lib.length; const tok = ++swTok; let s;
+  try { s = await srcFor(i); } catch { toast('Décor illisible.'); return; }
+  if (tok !== swTok || !s) return;
+  if (bgSrc instanceof HTMLVideoElement) bgSrc.pause();
+  if (s instanceof HTMLVideoElement) s.play().catch(() => {});
+  bgSrc = s; uploadBg(); bi = i; markStrip(); prune();
+  for (const j of [i + 1, i - 1]) srcFor((j + lib.length) % lib.length).catch(() => {});
+}
+function markStrip() {
+  const ch = [...$('strip').children]; ch.forEach((el, k) => el.classList.toggle('on', k === bi + 1));
+  if (ch[bi + 1]) ch[bi + 1].scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+}
+function renderStrip() {
+  const st = $('strip'); st.replaceChildren();
+  const add = document.createElement('button'); add.className = 'th add'; add.textContent = '+'; add.setAttribute('aria-label', 'Ajouter des décors'); add.onclick = () => $('file').click(); st.appendChild(add);
+  lib.forEach((it, i) => {
+    const b = document.createElement('button'); b.className = 'th'; b.setAttribute('aria-label', 'Décor ' + (i + 1));
+    b.style.background = it.kind === 'gen' ? `linear-gradient(${it.g[0]},${it.g[1]})` : `center/cover url(${it.thumb})`;
+    b.onclick = () => setBg(i);
+    if (it.blob) { let tm; b.onpointerdown = () => (tm = setTimeout(() => delBg(i), 700)); b.onpointerup = b.onpointerleave = () => clearTimeout(tm); }
+    st.appendChild(b);
+  });
+  markStrip();
+}
+function delBg(i) {
+  const it = lib[i]; if (!it || !it.blob || !confirm('Supprimer ce décor ?')) return;
+  lib.splice(i, 1); cache.delete(it.id); dbDo('readwrite', (s) => s.delete(it.id)).catch(() => {});
+  bi = Math.min(bi, lib.length - 1); renderStrip(); setBg(bi);
+}
+$('file').multiple = true;
+$('file').onchange = async (e) => {
+  const files = [...e.target.files]; e.target.value = ''; let first = -1;
+  for (const f of files) {
+    const video = f.type.startsWith('video/'); if (!video && !f.type.startsWith('image/')) continue;
+    try {
+      const thumb = await makeThumb(f, video); const id = 'u' + Date.now() + Math.random().toString(36).slice(2, 5);
+      lib.push({ id, kind: video ? 'vid' : 'img', blob: f, thumb }); if (first < 0) first = lib.length - 1;
+      dbDo('readwrite', (s) => s.put({ id, t: Date.now(), video, blob: f, thumb })).catch(() => toast('Décor non mémorisé (stockage local indisponible).'));
+    } catch { toast('Fichier illisible : ' + f.name); }
+  }
+  renderStrip(); if (first >= 0) setBg(first);
+};
+async function loadLib() {
+  try { const rows = await dbDo('readonly', (s) => s.getAll()); rows.sort((a, b) => a.t - b.t).forEach((r) => lib.push({ id: r.id, kind: r.video ? 'vid' : 'img', blob: r.blob, thumb: r.thumb })); } catch {}
+  renderStrip(); setBg(0);
+}
+loadLib();
+
+/* ---------- Gestes : mode Sujet (déplacer / pincer ma silhouette) ou mode Fond (décor) ---------- */
+let gmode = "sub", lastTap = 0, tapT = 0;
+$("gmode").onclick = () => { gmode = gmode === "sub" ? "bg" : "sub"; $("gmode").textContent = gmode === "sub" ? "✋ Sujet" : "🖼 Fond"; $("gmode").setAttribute("aria-pressed", gmode === "sub"); toast(gmode === "sub" ? "Glissez pour déplacer, pincez pour agrandir/réduire. Double-tap : recentrer." : "Pincez pour zoomer le décor, glissez de côté pour changer de décor.", 3500); };
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const pts = new Map(); let sw = null, pinch = null, drag = null;
+const dist = () => { const [a, b] = [...pts.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+const mid = () => { const [a, b] = [...pts.values()]; return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; };
+canvas.onpointerdown = (e) => {
+  canvas.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pts.size === 1) { sw = { x: e.clientX, y: e.clientY, t: performance.now(), multi: false }; drag = { x: e.clientX, y: e.clientY, sx: S.sx, sy: S.sy }; }
+  else if (pts.size === 2) { if (sw) sw.multi = true; const m = mid(); pinch = { d: dist(), z: S.zoom, cz: S.cz, m, m0: m, sx: S.sx, sy: S.sy }; }
+};
+canvas.onpointermove = (e) => {
+  if (!pts.has(e.pointerId)) return; pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (pts.size === 1 && gmode === "sub" && drag) {
+    S.sx = clamp(drag.sx + (e.clientX - drag.x) / w, -1, 1); S.sy = clamp(drag.sy + (e.clientY - drag.y) / h, -1, 1);
+  } else if (pts.size === 2 && pinch) {
+    const m = mid();
+    if (gmode === "sub") {
+      S.cz = clamp(pinch.cz * dist() / pinch.d, .3, 3); $("cz").value = S.cz;
+      S.sx = clamp(pinch.sx + (m.x - pinch.m0.x) / w, -1, 1); S.sy = clamp(pinch.sy + (m.y - pinch.m0.y) / h, -1, 1);
+    } else {
+      S.zoom = clamp(pinch.z * dist() / pinch.d, 1, 4);
+      S.px = clamp(S.px - (m.x - pinch.m.x) / w * 2, -1, 1); S.py = clamp(S.py - (m.y - pinch.m.y) / h * 2, -1, 1); pinch.m = m;
+      $("zoom").value = S.zoom; $("px").value = S.px; $("py").value = S.py;
+    }
+  }
+};
+const endPtr = (e) => {
+  if (!pts.has(e.pointerId)) return; const last = pts.get(e.pointerId); pts.delete(e.pointerId);
+  if (pts.size < 2) pinch = null;
+  if (pts.size === 1) { const [p] = [...pts.values()]; drag = { x: p.x, y: p.y, sx: S.sx, sy: S.sy }; } // reprise du glissement avec le doigt restant
+  if (sw && !sw.multi && pts.size === 0) {
+    const dx = last.x - sw.x, dy = last.y - sw.y, dt = performance.now() - sw.t;
+    if (gmode === "bg" && Math.abs(dx) > 50 && Math.abs(dx) > 1.5 * Math.abs(dy) && dt < 700) setBg(bi + (dx < 0 ? 1 : -1));
+    else if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+      const now = performance.now();
+      if (gmode === "sub" && now - lastTap < 350) { clearTimeout(tapT); S.sx = 0; S.sy = 0; setCz(camFit()); lastTap = 0; }
+      else { lastTap = now; clearTimeout(tapT); tapT = setTimeout(() => openP(null), gmode === "sub" ? 360 : 0); }
+    }
+  }
+  if (pts.size === 0) { sw = null; drag = null; }
+};
+canvas.onpointerup = endPtr; canvas.onpointercancel = endPtr;
+
+/* ---------- Contours et réglages ---------- */
+document.querySelectorAll('[data-e]').forEach((b) => (b.onclick = () => { const [lo, hi] = b.dataset.e.split(',').map(Number); S.lo = lo; S.hi = hi; $('lo').value = lo; $('hi').value = hi; toast('Contours : ' + b.textContent, 1500); }));
+
+/* Looks : un seul toucher règle contour, anti-halo, lumière, ombre et stabilité. */
+const LOOKS = { nat: { dsp: .5, wrap: .2, shd: .12, stab: .6, lo: .4, hi: .62 }, stu: { dsp: .6, wrap: .3, shd: .25, stab: .6, lo: .35, hi: .65 }, net: { dsp: .8, wrap: 0, shd: 0, stab: .5, lo: .5, hi: .7 } };
+document.querySelectorAll("[data-look]").forEach((b) => (b.onclick = () => {
+  Object.entries(LOOKS[b.dataset.look]).forEach(([k, v]) => { S[k] = v; $(k).value = v; });
+  document.querySelectorAll("[data-look]").forEach((x) => x.classList.toggle("on", x === b)); toast("Look : " + b.firstChild.textContent, 1500);
+}));
+$("go").addEventListener("click", () => setTimeout(() => { try { if (!localStorage.gsHint) { localStorage.gsHint = 1; const t = $("toast"); t.classList.add("ok"); toast("Glissez pour vous placer · pincez pour agrandir · double-tap pour recentrer", 6000); setTimeout(() => t.classList.remove("ok"), 6200); } } catch { /* stockage indisponible */ } }, 1800));
+$('advBtn').onclick = () => $('panel').classList.toggle('adv');
+$('ai').onclick = () => ($('perf').hidden = !$('perf').hidden);
+</script>
+</body>
+</html>
