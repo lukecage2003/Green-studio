@@ -3,7 +3,8 @@
 const { chromium } = require('playwright'); const assert = require('assert');
 const said = ['euh', 'attends', 'Salut', 'à', 'tous', "Aujourd'hui", 'on', 'parle', 'du', 'non', "Aujourd'hui", 'on', 'parle', 'du', 'nouveau', 'Spider-Man', 'voilà'];
 let t = 0.2; const WORDS = said.map((x) => { const w = { text: x, start: +t.toFixed(2), end: +(t + 0.25).toFixed(2) }; t += 0.32; return w; });
-const FAKE = `self.onmessage = (e) => { if (e.data.type === 'run') self.postMessage({ type: 'done', words: ${JSON.stringify(WORDS)} }); };`;
+const EN = [{ text: 'Hi', start: 0.84, end: 1.0 }, { text: 'everyone.', start: 1.0, end: 1.6 }, { text: 'Today', start: 3.4, end: 3.7 }, { text: 'we', start: 3.7, end: 3.8 }, { text: 'talk', start: 3.8, end: 4.1 }, { text: 'about', start: 4.1, end: 4.4 }, { text: 'Spider-Man', start: 4.4, end: 5.3 }];
+const FAKE = `self.onmessage = (e) => { if (e.data.type === 'run') self.postMessage({ type: 'done', words: e.data.translate ? ${JSON.stringify(EN)} : ${JSON.stringify(WORDS)} }); };`;
 (async () => {
   const b = await chromium.launch({ args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--enable-unsafe-swiftshader'] });
   const ctx = await b.newContext({ viewport: { width: 384, height: 832 } }); const p = await ctx.newPage(); const errs = [];
@@ -23,5 +24,10 @@ const FAKE = `self.onmessage = (e) => { if (e.data.type === 'run') self.postMess
   assert.equal(cut, '11000111110000001');
   await p.click('.qe [data-tab=sg]'); const card = await p.textContent('.qe .body .card'); console.log('bilan :', card.replace(/\s+/g, ' '));
   assert.match(card, /2 phrase\(s\) gardée\(s\), 1 reprise\(s\) retirée\(s\)/); assert.match(card, /Abonnez-vous/);
+  // Sous-titres anglais : traduction (Whisper simulé), seuls les passages gardés restent
+  await p.click('.qe [data-tab=cc]'); await p.click('.qe [data-a=lang][data-v=en]');
+  await p.waitForFunction(() => /Traduction prête \(7 mots\)/.test(document.querySelector('.qe .body').textContent), null, { timeout: 20000 });
+  await p.click('.qe [data-a=export]'); const sum = await p.textContent('.qe .modal'); console.log('export :', sum.replace(/\s+/g, ' ').slice(0, 160)); assert.match(sum, /Karaoké · anglais/);
+  await p.click('.qe .modal [data-x=no]');
   console.log('erreurs :', errs); assert.equal(errs.length, 0); console.log('OK'); await b.close();
 })().catch((e) => { console.error('ÉCHEC', e); process.exit(1); });

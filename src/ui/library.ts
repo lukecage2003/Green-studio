@@ -3,6 +3,14 @@
 import type { Backend, RecMeta } from "../core/storage.ts";
 
 const CSS = `
+.lib .asm[hidden]{display:none}
+.lib .ib.pick{min-width:38px;font-weight:750}
+.lib .ib.pick[aria-pressed=true]{background:var(--accent);color:#000}
+.lib .asm{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 12px);z-index:5;display:flex;gap:10px;align-items:center;padding:10px 10px 10px 18px;border-radius:28px;
+  background:rgba(30,30,34,.72);backdrop-filter:blur(24px) saturate(1.6);-webkit-backdrop-filter:blur(24px) saturate(1.6);border:1px solid rgba(255,255,255,.14);box-shadow:0 12px 40px rgba(0,0,0,.5)}
+.lib .asm span{flex:1;font-size:15px}
+.lib ul{padding-bottom:96px}
+
 .lib{position:fixed;inset:0;z-index:55;background:#000;color:var(--fg);display:flex;flex-direction:column;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0);font-family:var(--font)}
 .lib header{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;height:50px;padding:0 16px}
 .lib header h2{margin:0;font-size:17px;font-weight:650}
@@ -59,6 +67,8 @@ export interface LibraryOptions {
   /** Enregistre la vidéo (Galerie dans l'app Android, téléchargement dans le navigateur). */
   save: (f: Blob, name: string) => Promise<void>;
   onClose?: () => void;
+  /** Assemble plusieurs prises (dans l'ordre choisi) puis ouvre le montage. */
+  onAssemble?: (files: Blob[], ids: string[]) => void;
 }
 
 export async function openLibrary(o: LibraryOptions) {
@@ -66,10 +76,18 @@ export async function openLibrary(o: LibraryOptions) {
   document.querySelector(".lib")?.remove();
   const root = document.createElement("section"); root.className = "lib"; root.setAttribute("aria-label", "Mes prises");
   root.innerHTML = `<header><button data-a="close">Fermer</button><h2>Mes prises</h2><button data-a="clean" disabled>Nettoyer</button></header>
-    <div class="use"><span data-r="use">…</span><div class="bar"><i style="width:0"></i></div></div><ul></ul>`;
+    <div class="use"><span data-r="use">…</span><div class="bar"><i style="width:0"></i></div></div><ul></ul>
+    <div class="asm" hidden><span data-r="asm"></span><button class="ib" data-a="unpick">Annuler</button><button class="ib go" data-a="asm">Assembler</button></div>`;
   document.body.appendChild(root);
   const ul = root.querySelector("ul")!, close = () => { root.remove(); o.onClose?.(); };
-  let metas: RecMeta[] = [];
+  let metas: RecMeta[] = []; const picked: string[] = [];
+  const asmBar = () => {
+    const bar = root.querySelector<HTMLElement>(".asm")!; bar.hidden = !picked.length;
+    root.querySelector<HTMLElement>("[data-r=asm]")!.textContent = picked.length < 2 ? "Touchez ＋ sur une autre prise" : `${picked.length} prises, dans cet ordre`;
+    root.querySelector<HTMLButtonElement>("[data-a=asm]")!.disabled = picked.length < 2;
+    ul.querySelectorAll<HTMLElement>("[data-a=pick]").forEach((b) => { const k = picked.indexOf(b.closest<HTMLElement>("[data-id]")!.dataset.id!);
+      b.setAttribute("aria-pressed", String(k >= 0)); b.textContent = k >= 0 ? String(k + 1) : "＋"; });
+  };
   const del = async (m: RecMeta) => {
     await o.backend.remove(m.id).catch(() => {});
     try { localStorage.removeItem("gs.qe." + m.id); localStorage.removeItem("gs.th." + m.id); } catch { /* */ }
@@ -88,8 +106,10 @@ export async function openLibrary(o: LibraryOptions) {
       return `<li data-id="${m.id}"><div class="th" style="${th ? `background-image:url(${th})` : ""}"></div><div class="in">
         <b>${new Date(m.startedAt).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}</b>
         <small>${dur(m.durationMs)} · ${mb(m.bytes)} ${m.downloaded ? `<span class="tag">✓ téléchargée</span>` : ""}${m.status === "recovered" ? ` <span class="tag">récupérée</span>` : ""}</small>
-        <div class="acts"><button class="ib" data-a="play">Voir</button><button class="ib go" data-a="edit">Monter</button><button class="ib ic" data-a="dl" aria-label="Enregistrer dans la Galerie"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14"/></svg></button><button class="ib ic" data-a="del" aria-label="Supprimer" style="color:var(--red)"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/></svg></button></div></div></li>`;
+        <div class="acts">${o.onAssemble ? `<button class="ib pick" data-a="pick" aria-label="Choisir pour assembler" aria-pressed="false">＋</button>` : ""}<button class="ib" data-a="play">Voir</button><button class="ib go" data-a="edit">Monter</button><button class="ib ic" data-a="dl" aria-label="Enregistrer dans la Galerie"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14"/></svg></button><button class="ib ic" data-a="del" aria-label="Supprimer" style="color:var(--red)"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/></svg></button></div></div></li>`;
     }).join("");
+    for (let k = picked.length - 1; k >= 0; k--) if (!metas.some((m) => m.id === picked[k])) picked.splice(k, 1);
+    asmBar();
     for (const m of metas) { // vignettes manquantes, une à la fois
       if (root.isConnected === false) return;
       try { if (localStorage.getItem("gs.th." + m.id)) continue; } catch { continue; }
@@ -106,6 +126,9 @@ export async function openLibrary(o: LibraryOptions) {
       const dl = metas.filter((x) => x.downloaded); if (!dl.length || !confirm(`Supprimer ${dl.length} prise(s) déjà téléchargée(s) de l’appareil ?`)) return;
       for (const x of dl) await del(x); o.toast(`${dl.length} prise(s) supprimée(s).`, 2500); return render();
     }
+    if (a === "unpick") { picked.length = 0; return asmBar(); }
+    if (a === "asm" && picked.length >= 2) { const ids = [...picked], files = await Promise.all(ids.map((x) => o.backend.file(x))); picked.length = 0; asmBar(); return o.onAssemble?.(files, ids); }
+    if (a === "pick" && id) { const k = picked.indexOf(id); if (k >= 0) picked.splice(k, 1); else picked.push(id); return asmBar(); }
     if (!m) return;
     if (a === "del") { if (!confirm(m.downloaded ? "Supprimer cette prise ?" : "Cette prise n’a jamais été téléchargée. La supprimer définitivement ?")) return; await del(m); return render(); }
     const f = await o.backend.file(m.id);

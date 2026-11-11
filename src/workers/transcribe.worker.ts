@@ -2,6 +2,7 @@
  *  hormis le téléchargement du modèle au premier usage (ensuite en cache). Horodatage par mot : modèle « _timestamped ». */
 import { pipeline, env } from "@huggingface/transformers";
 import { splitAtSilences } from "../core/audio.ts";
+import { spreadSegment } from "../core/captions.ts";
 env.allowLocalModels = false; env.useBrowserCache = true;
 
 export const MODELS = {
@@ -15,7 +16,7 @@ const resolved: Record<string, string> = {}; // modèle demandé → modèle ré
 const post = (m: unknown) => (self as any).postMessage(m);
 
 self.onmessage = async (e: MessageEvent) => {
-  const { type, audio, language = "fr", model = "auto" } = e.data as { type: "run"; audio: Float32Array; language?: string; model?: ModelKey };
+  const { type, audio, language = "fr", model = "auto", translate = false } = e.data as { type: "run"; audio: Float32Array; language?: string; model?: ModelKey; translate?: boolean };
   if (type !== "run") return;
   try {
     const adapter = (navigator as any).gpu ? await (navigator as any).gpu.requestAdapter().catch(() => null) : null, webgpu = !!adapter;
@@ -47,6 +48,12 @@ self.onmessage = async (e: MessageEvent) => {
     for (let k = 0; k + 1 < b.length; k++) {
       const part = audio.subarray(b[k], b[k + 1]), base = b[k] / 16000;
       if (part.length < 1600) continue; // < 0,1 s
+      if (translate) { // traduction vers l'anglais : horodatage par phrase, réparti ensuite sur les mots
+        const out = await asr(part, { language, task: "translate", return_timestamps: true });
+        const segs = out.chunks?.length ? out.chunks : [{ text: out.text, timestamp: [0, part.length / 16000] }];
+        for (const c of segs) { const s0 = (c.timestamp[0] ?? 0) + base, s1 = (c.timestamp[1] ?? (c.timestamp[0] ?? 0) + 2) + base; words.push(...spreadSegment(String(c.text), s0, Math.min(s1, base + part.length / 16000))); }
+        const done = Math.min(total, base + part.length / 16000); post({ type: "progress", p: done / total, eta: ((performance.now() - t0) / done) * (total - done) / 1000 }); continue;
+      }
       const out = await asr(part, { language, task: "transcribe", return_timestamps: "word" });
       for (const c of out.chunks ?? []) {
         const text = String(c.text).trim(); if (!text) continue;

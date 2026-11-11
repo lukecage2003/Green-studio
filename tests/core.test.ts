@@ -180,3 +180,14 @@ test("meilleure prise : reprises, hors-script, phrase oubliée", async () => {
   const inCut = (i: number) => r.cuts.some((c) => (w[i].start + w[i].end) / 2 > c.start && (w[i].start + w[i].end) / 2 < c.end);
   assert.deepEqual(said.map((_, i) => inCut(i) ? 1 : 0).join(""), "11000111110000001100001");
 });
+
+test("sous-titres traduits : un segment est réparti sur ses mots, dans l'ordre et sans dépasser", async () => {
+  const { spreadSegment, buildCaptions } = await import("../src/core/captions.ts");
+  const w = spreadSegment(" Hello everyone, welcome back ", 2, 5);
+  assert.deepEqual(w.map((x) => x.text), ["Hello", "everyone,", "welcome", "back"]);
+  assert.equal(w[0].start, 2); assert.ok(w[3].end <= 5 && w[3].end > 4.5);
+  for (let i = 1; i < w.length; i++) assert.ok(w[i].start >= w[i - 1].end);
+  assert.ok(w[1].end - w[1].start > w[3].end - w[3].start, "mot long = plus de temps");
+  assert.equal(buildCaptions(w, [{ start: 3.5, end: 5 }]).flatMap((l) => l.words).length, 2, "les mots coupés disparaissent aussi en anglais");
+  assert.deepEqual(spreadSegment("  ", 0, 1), []);
+});

@@ -1,6 +1,6 @@
 {
   "name": "green-studio",
-  "version": "3.1.0-beta.6",
+  "version": "3.1.0-beta.7",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,7 +12,7 @@
     "preview": "vite preview --host",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
-    "test:browser": "node tests/browser/media.e2e.cjs && node tests/browser/live.e2e.cjs && node tests/browser/app.e2e.cjs && node tests/browser/takes.e2e.cjs && node tests/browser/dress.e2e.cjs",
+    "test:browser": "node tests/browser/media.e2e.cjs && node tests/browser/live.e2e.cjs && node tests/browser/app.e2e.cjs && node tests/browser/takes.e2e.cjs && node tests/browser/dress.e2e.cjs && node tests/browser/assemble.e2e.cjs",
     "apk": "bash scripts/build-apk.sh"
   },
   "dependencies": {

@@ -1282,6 +1282,12 @@ async function library() {
   const lib = await openLibrary({ backend: b, toast, save: saveBlob,
     onPlay: (m, f) => openPreview(f, m.id, `Prise du ${new Date(m.startedAt).toLocaleString()} · ${(f.size / 1e6).toFixed(1)} Mo`),
     onEdit: (m, f) => edit(f, m.id, true),
+    onAssemble: async (files, ids) => {
+      try { const { concatVideos } = await import("/src/core/media.ts"); toast("Assemblage des prises…", 60000);
+        const r = await concatVideos(files, { onProgress: (p) => toast(`Assemblage des prises : ${Math.round(p * 100)} %`, 60000) });
+        toast(`${files.length} prises assemblées.`, 2500); logEvent("info", `assemblage ${files.length} prises, ${(r.blob.size / 1e6).toFixed(1)} Mo`);
+        edit(r.blob, "asm-" + ids.join("+"), true);
+      } catch (e) { toast("Assemblage impossible : " + (e?.message ?? e), 6000); logEvent("error", "assemblage : " + (e?.message ?? e)); } },
     onClose: () => { suspended = false; libRefresh = null; refreshLibThumb(); } });
   libRefresh = lib.refresh;
 }

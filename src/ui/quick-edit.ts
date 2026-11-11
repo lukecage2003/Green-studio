@@ -90,7 +90,7 @@ const CSS = `
 .lib ul{margin:0 12px}.lib li:first-child{border-radius:20px 20px 0 0}.lib li:last-child{border-radius:0 0 20px 20px}.lib li:only-child{border-radius:20px}
 `;
 
-interface Saved { overlays?: Overlay[]; titles?: Title[]; v: 1; duration: number; words: Word[] | null; cuts: Range[]; ignored: string[]; peaks?: number[]; style?: CaptionStyle; norm?: boolean; q720?: boolean; voice?: boolean; zooms?: boolean }
+interface Saved { enWords?: Word[] | null; capLang?: "fr" | "en"; overlays?: Overlay[]; titles?: Title[]; v: 1; duration: number; words: Word[] | null; cuts: Range[]; ignored: string[]; peaks?: number[]; style?: CaptionStyle; norm?: boolean; q720?: boolean; voice?: boolean; zooms?: boolean }
 
 export interface EditorOptions {
   file: Blob; key: string; name?: string; onClose?: () => void; toast?: (m: string, ms?: number) => void;
@@ -104,7 +104,7 @@ const AUTO_MIN = 0.5;
 /** Script du prompteur (s'il y en a un) : sert à « Meilleure prise ». */
 const scriptText = () => { try { return (localStorage.getItem("gs.script") || "").trim(); } catch { return ""; } };
 /** Modèle d'émission : réglages de montage réutilisables d'une vidéo à l'autre (style des sous-titres, zooms, voix, volume, bandeau d'ouverture). */
-interface Template { id: string; name: string; style: CaptionStyle; zooms: boolean; voice: boolean; norm: boolean; q720: boolean; intro?: { text: string; sub?: string } }
+interface Template { id: string; name: string; lang?: "fr" | "en"; style: CaptionStyle; zooms: boolean; voice: boolean; norm: boolean; q720: boolean; intro?: { text: string; sub?: string } }
 const loadTpls = (): Template[] => { try { return JSON.parse(localStorage.getItem("gs.tpl") || "[]"); } catch { return []; } };
 const saveTpls = (l: Template[]) => { try { localStorage.setItem("gs.tpl", JSON.stringify(l)); } catch { /* */ } };
 const autoTplId = () => { try { return localStorage.getItem("gs.tplAuto") || ""; } catch { return ""; } };
@@ -155,8 +155,9 @@ export async function openEditor(o: EditorOptions) {
   let style: CaptionStyle = { ...CAPTION_DEFAULT, ...(saved?.style ?? {}) }, norm = saved?.norm ?? true, q720 = saved?.q720 ?? false, voice = saved?.voice ?? true, zooms = saved?.zooms ?? false, lines: CapLine[] = [];
   (root.querySelector("[data-a=zooms]") as HTMLInputElement).checked = zooms;
   let overlays: Overlay[] = saved?.overlays ?? [], titles: Title[] = saved?.titles ?? [];
+  let enWords: Word[] | null = saved?.enWords ?? null, capLang: "fr" | "en" = saved?.capLang ?? "fr";
   function applyTpl(tp: Template) {
-    style = { ...CAPTION_DEFAULT, ...tp.style }; zooms = tp.zooms; voice = tp.voice; norm = tp.norm; q720 = tp.q720;
+    style = { ...CAPTION_DEFAULT, ...tp.style }; capLang = tp.lang ?? "fr"; zooms = tp.zooms; voice = tp.voice; norm = tp.norm; q720 = tp.q720;
     (root.querySelector("[data-a=zooms]") as HTMLInputElement).checked = zooms;
     if (tp.intro?.text && !titles.some((x) => x.id.startsWith("intro"))) titles.push({ id: "intro" + Date.now().toString(36), text: tp.intro.text, sub: tp.intro.sub, start: Math.min(0.3, duration / 4), end: Math.min(duration, 4.3) });
   }
@@ -175,7 +176,7 @@ export async function openEditor(o: EditorOptions) {
   const ctl = new AbortController();
 
   const save = () => {
-    const s: Saved = { v: 1, duration, words, cuts: session.cuts, ignored: [...ignored], style, norm, q720, voice, zooms, overlays, titles, peaks: pk ? Array.from(pk, (x) => Math.round(x * 255)) : undefined };
+    const s: Saved = { v: 1, enWords, capLang, duration, words, cuts: session.cuts, ignored: [...ignored], style, norm, q720, voice, zooms, overlays, titles, peaks: pk ? Array.from(pk, (x) => Math.round(x * 255)) : undefined };
     try { localStorage.setItem(storeKey, JSON.stringify(s)); } catch { /* quota localStorage : on garde en mémoire */ }
   };
   const covered = (r: Range) => session.cuts.some((c) => c.start <= r.start + 0.02 && c.end >= r.end - 0.02);
@@ -197,7 +198,7 @@ export async function openEditor(o: EditorOptions) {
     const open = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range)).length;
     q("[data-tab=sg]").textContent = `Suggestions${sugs.length ? ` (${open})` : ""}`;
     root.querySelectorAll<HTMLElement>("[data-tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
-    lines = words ? buildCaptions(words, session.cuts) : [];
+    { const cw = capLang === "en" && enWords ? enWords : words; lines = cw ? buildCaptions(cw, session.cuts) : []; }
     if (tab === "tx") renderText(); else if (tab === "sg") renderSugs(); else if (tab === "dress") renderDress(); else renderCC();
     renderSel();
   }
@@ -295,6 +296,8 @@ export async function openEditor(o: EditorOptions) {
     if (!words) { body.innerHTML = tplCard() + `<div class="card"><p>Les sous-titres sont générés à partir de la transcription (onglet Texte).</p></div>`; return; }
     if (body.querySelector("[data-cc]")) return; // déjà affiché : on ne casse pas le curseur en cours de glissement
     body.innerHTML = tplCard() + `<div class="card" data-cc><b>Sous-titres incrustés</b><p>Aperçu en direct sur la vidéo. Ils sont gravés dans l’export (visibles partout, même son coupé).</p>
+      <div class="chips" style="margin-bottom:8px"><button class="ib" data-a="lang" data-v="fr" aria-pressed="${capLang === "fr"}">🇫🇷 Français</button><button class="ib" data-a="lang" data-v="en" aria-pressed="${capLang === "en"}">🇬🇧 Anglais (traduit)</button></div>
+      ${capLang === "en" ? `<p data-r="trs">${enWords ? `Traduction prête (${enWords.length} mots). <button class="ib" data-a="retr">Retraduire</button>` : "Traduction en cours…"}</p>` : ""}
       <div class="chips">${(Object.keys(PRESETS) as CaptionPreset[]).map((k) => `<button class="ib" data-a="preset" data-v="${k}" aria-pressed="${style.preset === k}">${PRESETS[k]}</button>`).join("")}</div>
       <label class="opt">Haut <input type="range" data-a="pos" min="0.12" max="0.88" step="0.01" value="${style.pos}"> Bas</label>
       <label class="opt"><input type="checkbox" data-a="upper" ${style.upper ? "checked" : ""}> MAJUSCULES</label>
@@ -439,6 +442,20 @@ export async function openEditor(o: EditorOptions) {
     const copy = pcm.slice(); worker.postMessage({ type: "run", audio: copy, language: "fr", model }, [copy.buffer]);
   }
 
+  /** Sous-titres anglais : Whisper traduit directement l'audio (sur l'appareil), phrase par phrase. */
+  let trWorker: Worker | null = null;
+  async function translateEN() {
+    const msg = (m: string) => { const e = body.querySelector<HTMLElement>("[data-r=trs]"); if (e) e.textContent = m; };
+    await audioP; if (!pcm) { msg(audioErr || "Audio indisponible."); return; }
+    trWorker?.terminate(); trWorker = new Worker(new URL("../workers/transcribe.worker.ts", import.meta.url), { type: "module" });
+    trWorker.onmessage = (e) => { const d = e.data;
+      if (d.type === "download") msg(`Téléchargement du modèle (une seule fois) : ${Math.round(d.p * 100)} %`);
+      else if (d.type === "progress") msg(`Traduction ${Math.round(d.p * 100)} %${d.eta > 1 ? ` · reste ~${fmt(d.eta)}` : ""}`);
+      else if (d.type === "done") { trWorker?.terminate(); trWorker = null; enWords = d.words; save(); if (tab === "cc") body.innerHTML = ""; refresh(); toast("Sous-titres anglais prêts.", 2500); }
+      else if (d.type === "error") { trWorker?.terminate(); trWorker = null; msg("Échec de la traduction : " + d.message); } };
+    const copy = pcm.slice(); trWorker.postMessage({ type: "run", audio: copy, language: "fr", model: "auto", translate: true }, [copy.buffer]);
+  }
+
   /** Coupe le silence avant la première parole et après la dernière (mots si transcrits, sinon énergie audio). */
   async function edgeCuts(): Promise<Range[] | null> {
     let b: { start: number; end: number } | null = null;
@@ -523,7 +540,7 @@ export async function openEditor(o: EditorOptions) {
   function doExport() {
     video.pause();
     const m = document.createElement("div"); m.className = "modal";
-    const cc = !words ? "aucun (pas de transcription)" : style.preset === "none" ? "désactivés" : PRESETS[style.preset];
+    const cc = !words ? "aucun (pas de transcription)" : style.preset === "none" ? "désactivés" : PRESETS[style.preset] + (capLang === "en" ? (enWords ? " · anglais" : " · anglais (traduction pas prête : français)") : "");
     m.innerHTML = `<div class="card"><b>Exporter le montage</b><p>${fmt(session.editedDuration)} · ${session.cuts.length} coupe(s)</p>
       <div class="opt">Sous-titres : ${esc(cc)} ${words ? `<button class="ib" data-x="cc">Modifier</button>` : ""}</div>
       <label class="opt"><input type="checkbox" data-x="zooms" ${zooms ? "checked" : ""}> Zooms dynamiques (à chaque coupe et fin de phrase)</label>
@@ -580,7 +597,7 @@ export async function openEditor(o: EditorOptions) {
   /* ---------- Actions ---------- */
   const commit = () => { save(); refresh(); };
   function close() {
-    closed = true; ctl.abort(); cancelAnimationFrame(raf); worker?.terminate();
+    closed = true; ctl.abort(); cancelAnimationFrame(raf); worker?.terminate(); trWorker?.terminate();
     for (const e of ovSrc.values()) { e.img?.close(); if (e.vid) { e.vid.pause(); URL.revokeObjectURL(e.vid.src); } } for (const v of [video, spare]) { v.pause(); v.removeAttribute("src"); v.load(); }
     URL.revokeObjectURL(url); removeEventListener("keydown", onKey); root.remove(); o.onClose?.();
   }
@@ -613,9 +630,11 @@ export async function openEditor(o: EditorOptions) {
       case "trim": trimEdges(); break;
       case "voiceAB": voiceAB(); break;
       case "zooms": zooms = (t as HTMLInputElement).checked; save(); break;
+      case "lang": capLang = t.closest<HTMLElement>("[data-v]")!.dataset.v as "fr" | "en"; save(); body.innerHTML = ""; refresh(); if (capLang === "en" && !enWords) translateEN(); break;
+      case "retr": enWords = null; save(); body.innerHTML = ""; refresh(); translateEN(); break;
       case "tplSave": { const name = prompt("Nom du modèle (ex. « Mon émission ») :", "Mon émission")?.trim(); if (!name) break;
         const intro = titles.find((x) => x.start < 1.5); const l = loadTpls().filter((x) => x.name !== name);
-        const tp: Template = { id: "t" + Date.now().toString(36), name, style, zooms, voice, norm, q720, intro: intro ? { text: intro.text, sub: intro.sub } : undefined };
+        const tp: Template = { id: "t" + Date.now().toString(36), name, lang: capLang, style, zooms, voice, norm, q720, intro: intro ? { text: intro.text, sub: intro.sub } : undefined };
         l.push(tp); saveTpls(l); if (!autoTplId()) try { localStorage.setItem("gs.tplAuto", tp.id); } catch { /* */ }
         toast(`Modèle « ${name} » enregistré${intro ? " (avec bandeau d’ouverture)" : ""}.`, 2500); body.innerHTML = ""; renderCC(); break; }
       case "tplUse": { const tp = loadTpls().find((x) => x.id === t.closest<HTMLElement>("[data-v]")?.dataset.v); if (!tp) break;

@@ -9,6 +9,13 @@ export const PRESETS: Record<CaptionPreset, string> = { none: "Aucun", karaoke: 
 
 export interface CapLine { start: number; end: number; words: Word[] }
 
+/** Segment traduit (temps de début/fin seulement) → mots horodatés : chaque mot reçoit une part du segment proportionnelle à sa longueur. */
+export function spreadSegment(text: string, start: number, end: number): Word[] {
+  const ws = text.trim().split(/\s+/).filter(Boolean); if (!ws.length || !(end > start)) return [];
+  const tot = ws.reduce((a, w) => a + w.length + 1, 0); let t = start; const k = (end - start) / tot;
+  return ws.map((w) => { const d = (w.length + 1) * k, o = { text: w, start: t, end: t + d * 0.92 }; t += d; return o; });
+}
+
 /** Lignes de ≤ maxWords mots / maxChars caractères ; nouvelle ligne après une pause ou une fin de phrase. Les mots coupés sont exclus. */
 export function buildCaptions(words: Word[], cuts: Range[], o: { maxWords?: number; maxChars?: number; maxGap?: number; hold?: number } = {}): CapLine[] {
   const { maxWords = 4, maxChars = 22, maxGap = 0.6, hold = 0.5 } = o;

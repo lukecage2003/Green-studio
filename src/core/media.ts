@@ -65,9 +65,9 @@ export async function extractClip(file: Blob, start: number, dur: number): Promi
 export interface ExportResult { blob: Blob; ext: "mp4" | "webm"; mime: string; video: string; audio: string | null }
 
 /** Cible d'écriture : fichier OPFS (sur disque) si possible, sinon mémoire. */
-async function makeTarget(ext: string) {
+async function makeTarget(ext: string, folder = "gs-export") {
   try {
-    const root = await navigator.storage.getDirectory(), dir = await root.getDirectoryHandle("gs-export", { create: true });
+    const root = await navigator.storage.getDirectory(), dir = await root.getDirectoryHandle(folder, { create: true });
     for await (const n of (dir as any).keys()) await dir.removeEntry(n).catch(() => {}); // un seul export conservé : économise le quota
     const name = `export-${Date.now()}.${ext}`, h = await dir.getFileHandle(name, { create: true });
     const w = await h.createWritable();
@@ -211,4 +211,76 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
     return { blob: raw.type === mime ? raw : new Blob([raw], { type: mime }), ext, mime, video: vcodec, audio: acodec };
   } catch (e) { await output?.cancel().catch(() => {}); throw e; }
   finally { input.dispose?.(); for (const e of vidSinks.values()) e.input.dispose?.(); }
+}
+
+/**
+ * Assemble plusieurs prises bout à bout en une seule vidéo (dans l'ordre donné), prête pour le montage.
+ * Taille de la première prise ; une prise d'une autre taille est cadrée sans déformation (bandes noires si besoin).
+ * Fondu audio très court à chaque raccord (pas de « clic »), image clé au début de chaque prise.
+ */
+export async function concatVideos(files: Blob[], opts: { onProgress?: (p: number) => void; signal?: AbortSignal } = {}): Promise<ExportResult> {
+  const { onProgress, signal } = opts;
+  if (files.length < 2) throw new Error("Choisissez au moins deux prises.");
+  const inputs = files.map((f) => new Input({ source: new BlobSource(f), formats: FORMATS }));
+  let output: Output | null = null;
+  try {
+    const info = await Promise.all(inputs.map(async (i) => ({ vt: await i.getPrimaryVideoTrack(), at: await i.getPrimaryAudioTrack(), dur: await i.computeDuration() })));
+    const v0 = info[0].vt; if (!v0 || info.some((x) => !x.vt)) throw new Error("Une des prises n’a pas d’image.");
+    const W = await v0.getDisplayWidth(), H = await v0.getDisplayHeight(), total = info.reduce((s, x) => s + x.dur, 0) || 1;
+    let vcodec = await getFirstEncodableVideoCodec(["avc"]), mp4 = !!vcodec;
+    if (!vcodec) vcodec = await getFirstEncodableVideoCodec(["vp9", "vp8"]);
+    if (!vcodec) throw new Error("Aucun encodeur vidéo disponible.");
+    const hasAudio = info.some((x) => x.at), acodec = hasAudio ? await getFirstEncodableAudioCodec(mp4 ? ["aac", "opus"] : ["opus"]) : null;
+    const ext = mp4 ? "mp4" : "webm", { target, done } = await makeTarget(ext, "gs-asm"); // dossier à part : un export ne l'efface pas
+    output = new Output({ format: mp4 ? new Mp4OutputFormat({ fastStart: false }) : new WebMOutputFormat(), target });
+    const outH = Math.max(W, H), bitrate = outH >= 2400 ? 24e6 : outH >= 1800 ? 12e6 : outH >= 1200 ? 6e6 : QUALITY_HIGH;
+    const vsrc = new VideoSampleSource({ codec: vcodec, bitrate, keyFrameInterval: 2 }); output.addVideoTrack(vsrc);
+    const asrc = acodec ? new AudioSampleSource({ codec: acodec, bitrate: 192000 }) : null; if (asrc) output.addAudioTrack(asrc);
+    await output.start();
+    const a0 = info.find((x) => x.at)?.at ?? null, SR = a0 ? await a0.getSampleRate() : 48000, CH = a0 ? Math.min(2, await a0.getNumberOfChannels()) : 2;
+    let cv: OffscreenCanvas | null = null, cx: OffscreenCanvasRenderingContext2D | null = null, offset = 0;
+    for (let k = 0; k < files.length; k++) {
+      const { vt, at, dur } = info[k];
+      const same = (await vt!.getDisplayWidth()) === W && (await vt!.getDisplayHeight()) === H;
+      let first = true, prev: VideoSample | null = null;
+      // chaque image dure jusqu'à la suivante ; la dernière jusqu'à la fin de la prise (pas de trou au raccord)
+      const emit = async (s: VideoSample, end: number) => {
+        const ts = Math.max(0, s.timestamp), t = offset + ts, d = Math.max(1 / 240, Math.min(end, dur) - ts);
+        let o: VideoSample = s;
+        if (!same) {
+          if (!cv) { cv = new OffscreenCanvas(W, H); cx = cv.getContext("2d")!; }
+          cx!.fillStyle = "#000"; cx!.fillRect(0, 0, W, H); s.drawWithFit(cx!, { fit: "contain" });
+          o = new VideoSample(cv, { timestamp: t, duration: d }); s.close();
+        } else { s.setTimestamp(t); s.setDuration(d); }
+        await vsrc.add(o, first ? { keyFrame: true } : undefined); first = false; o.close();
+        onProgress?.(Math.min(0.99, (offset + ts) / total));
+      };
+      for await (const s of new VideoSampleSink(vt!).samples(0, dur)) {
+        if (signal?.aborted) { s.close(); prev?.close(); throw abortErr(); }
+        if (prev) await emit(prev, Math.max(0, s.timestamp)); prev = s;
+      }
+      if (prev) await emit(prev, dur);
+      if (asrc) {
+        if (at) for await (const s of new AudioSampleSink(at).samples(0, dur)) {
+          if (signal?.aborted) { s.close(); throw abortErr(); }
+          const sr = s.sampleRate, src = planes(s), n0 = s.numberOfFrames, t0 = Math.max(0, s.timestamp); s.close();
+          const n = sr === SR ? n0 : Math.floor(n0 * SR / sr); if (n <= 0) continue;
+          const data = new Float32Array(n * CH);
+          for (let c = 0; c < CH; c++) { const x = src[Math.min(c, src.length - 1)], y = data.subarray(c * n, (c + 1) * n);
+            for (let i = 0; i < n; i++) { const p = sr === SR ? i : (i * sr) / SR, j = Math.floor(p), f = p - j; y[i] = j + 1 < n0 ? x[j] * (1 - f) + x[j + 1] * f : x[Math.min(j, n0 - 1)];
+              y[i] *= fadeGain(t0 + i / SR, dur, 0.012); } }
+          const out = new AudioSample({ data, format: "f32-planar", numberOfChannels: CH, sampleRate: SR, timestamp: offset + t0 });
+          await asrc.add(out); out.close();
+        } else { // prise sans son : silence, pour garder l'audio synchronisé
+          for (let t = 0; t < dur; t += 1) { const n = Math.round(Math.min(1, dur - t) * SR); if (n <= 0) break;
+            const out = new AudioSample({ data: new Float32Array(n * CH), format: "f32-planar", numberOfChannels: CH, sampleRate: SR, timestamp: offset + t }); await asrc.add(out); out.close(); }
+        }
+      }
+      offset += dur;
+    }
+    await output.finalize(); onProgress?.(1);
+    const mime = mp4 ? "video/mp4" : "video/webm", raw = await done();
+    return { blob: raw.type === mime ? raw : new Blob([raw], { type: mime }), ext, mime, video: vcodec, audio: acodec };
+  } catch (e) { await output?.cancel().catch(() => {}); throw e; }
+  finally { for (const i of inputs) i.dispose?.(); }
 }

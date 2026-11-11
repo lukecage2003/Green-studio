@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.6)
+# Green Studio 3.1 — état réel (beta.7)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,11 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.7
+- **Sous-titres en anglais** (onglet Sous-titres › 🇬🇧) : Whisper traduit l'audio sur l'appareil, phrase par phrase, puis les mots sont répartis dans le temps (animation karaoké approximative). Les coupes s'appliquent aussi. Enchaînement testé avec un Whisper simulé (takes.e2e) et répartition testée en unitaire. Le vrai modèle n'a pas pu être essayé ici (Hugging Face inaccessible depuis l'environnement de test).
+- **Assembler des prises** (Mes prises › ＋ sur chaque prise, dans l'ordre voulu › Assembler) : une seule vidéo, raccords sans clic, chaque image tenue jusqu'à la suivante, puis ouverture du montage. Testé : `tests/browser/assemble.e2e.cjs` (durée = somme exacte, son synchronisé).
+- Les modèles d'émission retiennent aussi la langue des sous-titres.
 
 ## 3.1.0-beta.6
 - **Habillage** (onglet du montage) : images et extraits vidéo insérés en plein écran, en incrustation ou « moi en petit » (Ken Burns, fondus), bandeaux titres en verre sombre. Aperçu identique à l'export. Testé : `tests/browser/dress.e2e.cjs`.
