@@ -48,6 +48,7 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 
 ## 3.1.0-beta.3
 - **Meilleure prise** (`core/takes.ts`) : la transcription est alignée sur le script du prompteur (programmation dynamique tolérant les reprises, les mots sautés et les erreurs de transcription) ; pour chaque phrase, la prise la plus complète est gardée (la plus récente à égalité), les essais ratés, reprises et hors-script sont retirés, les phrases non dites sont signalées. Intégrée à « ✨ Nettoyer » si la prise suit le script (≥ 40 % des mots reconnus) ; bouton « 🎬 Meilleure prise » et bilan dans Suggestions. Testé : unitaire + `takes.e2e` (prise réelle, Whisper simulé).
+- **Export exact avec une source saccadée** : durée de chaque image bornée au segment conservé (la dernière image débordait au-delà de la coupe ; +0,5 s observé). Testé à 4 et 30 i/s.
 - **Journal de diagnostic** : erreurs, alertes et événements clés gardés sur le téléphone (200 dernières entrées) ; plantages natifs enregistrés et relus au démarrage suivant ; Réglages › Assistance › Partager (fichier .txt) ; version affichée.
 
 ## 3.1.0-beta.2

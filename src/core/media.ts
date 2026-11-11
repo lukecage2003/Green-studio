@@ -112,13 +112,16 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
         const t = offset + Math.max(0, s.timestamp - seg.start);
         if (t <= lastV + 1e-4) { s.close(); continue; }
         lastV = t; let o: VideoSample = s;
+        // durée bornée au segment : sinon, avec une source saccadée (peu d'images/s), la dernière image d'un segment
+        // déborderait au-delà de la coupe et allongerait la vidéo exportée
+        const d = Math.max(1e-3, Math.min(s.timestamp + s.duration, seg.end) - Math.max(s.timestamp, seg.start));
         if (viaCanvas) {
           if (!cv) { const k = maxHeight > 0 ? Math.min(1, maxHeight / s.displayHeight) : 1;
             cv = new OffscreenCanvas(Math.round(s.displayWidth * k / 2) * 2, Math.round(s.displayHeight * k / 2) * 2); cx = cv.getContext("2d")!; }
           s.drawWithFit(cx!, { fit: "fill" });
           if (captions) drawCaption(cx!, 0, 0, cv.width, cv.height, lineAt(captions.lines, s.timestamp), s.timestamp, captions.style);
-          o = new VideoSample(cv, { timestamp: t, duration: s.duration }); s.close();
-        } else s.setTimestamp(t);
+          o = new VideoSample(cv, { timestamp: t, duration: d }); s.close();
+        } else { s.setTimestamp(t); s.setDuration(d); }
         await vsrc.add(o, first ? { keyFrame: true } : undefined); first = false; o.close();
         onProgress?.(Math.min(0.99, (done_ + (t - offset)) / total));
       }
