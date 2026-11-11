@@ -10,6 +10,16 @@ const { chromium } = require('playwright'); const assert = require('assert');
   await p.goto('http://localhost:5173/');
   await p.evaluate(() => { window.__seen = new Set(); setInterval(() => window.gsDebug && window.__seen.add(window.gsDebug.model), 100); }); // modèles vus dès le départ
   await p.click('#go'); await p.waitForSelector('#rec:not([hidden])');
+  // Déclencheur : toujours centré en bas, à la même place, quel que soit l'état de l'écran
+  const recPos = () => p.evaluate(() => { const r = document.getElementById('rec').getBoundingClientRect(); return [Math.round(r.left + r.width / 2 - innerWidth / 2), Math.round(r.bottom)]; });
+  const pos0 = await recPos(); const positions = [pos0];
+  await p.locator('#strip .th').nth(2).click(); await p.waitForTimeout(300); positions.push(await recPos());
+  await p.click('#bDecor'); await p.waitForTimeout(300); await p.click('#bClose'); positions.push(await recPos());
+  await p.evaluate(() => localStorage.setItem('gs.cd', '0'));
+  await p.click('#rec'); await p.waitForSelector('#recChip:not([hidden])', { timeout: 20000 }); positions.push(await recPos());
+  await p.click('#rec'); await p.waitForSelector('#pv:not([hidden])'); await p.click('#pvClose'); await p.waitForTimeout(300); positions.push(await recPos());
+  console.log('déclencheur (écart au centre, bas) :', JSON.stringify(positions));
+  assert.ok(positions.every((q) => Math.abs(q[0]) <= 1 && Math.abs(q[1] - pos0[1]) <= 1), 'le déclencheur reste centré en bas');
   // Micro : puce visible avec le nom du micro
   await p.waitForSelector('#micChip:not([hidden])'); console.log('micro :', await p.textContent('#micChip'));
   // Plein écran : la caméra (simulée, en paysage 4:3) remplit le cadre 9:16 ; l'IA n'analyse que la zone visible

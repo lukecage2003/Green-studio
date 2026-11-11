@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.3)
+# Green Studio 3.1 — état réel (beta.4)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,11 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.4
+- **Voix studio** (`core/voice.ts`) : coupe-bas 80 Hz → débruitage RNNoise (réseau de neurones, WASM, hors ligne, 48 kHz) → égaliseur de voix (−2 dB à 300 Hz, +2,5 dB à 3,2 kHz) → compresseur 3:1 avec expandeur sous −50 dBFS → gain automatique (même niveau de voix qu'en entrée, mesuré pendant la parole). En flux, synchrone avec l'image. Mesuré sur deux vraies prises : bruit de fond −12 et −9 dB, écart voix/bruit +11 et +5 dB, voix au même niveau (−1,5 / −3,9 dB). Option d'export (activée par défaut) ; écoute avant/après (« 🎙 Voix studio » dans le montage).
+- **Zooms dynamiques** : 1× / 1,12× (centré sur le visage) à chaque coupe et fin de phrase ; aperçu dans le lecteur, appliqués à l'export.
+- **Déclencheur toujours centré en bas** : chaque bouton du bas a sa colonne (le bouton pouvait glisser) ; vérifié dans 5 états de l'écran.
 
 ## 3.1.0-beta.3
 - **Meilleure prise** (`core/takes.ts`) : la transcription est alignée sur le script du prompteur (programmation dynamique tolérant les reprises, les mots sautés et les erreurs de transcription) ; pour chaque phrase, la prise la plus complète est gardée (la plus récente à égalité), les essais ratés, reprises et hors-script sont retirés, les phrases non dites sont signalées. Intégrée à « ✨ Nettoyer » si la prise suit le script (≥ 40 % des mots reconnus) ; bouton « 🎬 Meilleure prise » et bilan dans Suggestions. Testé : unitaire + `takes.e2e` (prise réelle, Whisper simulé).

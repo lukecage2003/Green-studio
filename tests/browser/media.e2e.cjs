@@ -32,9 +32,26 @@ const { chromium } = require('playwright');
     rec2.start(500); draw2(); await new Promise((r) => setTimeout(r, 4000)); const s2 = new Promise((r) => (rec2.onstop = r)); rec2.stop(); await s2;
     const slow = new Blob(p2, { type: 'video/webm' }), sd = (await m.probe(slow)).duration, sc = [{ start: 0.5, end: 1 }, { start: 2, end: sd }];
     const so = await m.exportEdited(slow, sc), slowGot = (await m.probe(so.blob)).duration, slowWant = sd - 0.5 - (sd - 2);
-    return { slow: { got: +slowGot.toFixed(3), want: +slowWant.toFixed(3) }, srcMime: src.type, src: info, audioSec: a.pcm.length / 16000, rms: +rms.toFixed(3), out: { ext: out.ext, v: out.video, a: out.audio, size: out.blob.size, ...info2 }, progress: last, ms: Math.round(ms), cancelled };
+    // voix studio à l'export : durée exacte, son présent et synchrone (début de piste audio à 0)
+    const vo = await m.exportEdited(src, [{ start: 1, end: 2 }], { voice: true, gain: 1.2 }), vInfo = await m.probe(vo.blob);
+    const mb = await import('/node_modules/.vite/deps/mediabunny.js'), vin = new mb.Input({ source: new mb.BlobSource(vo.blob), formats: mb.ALL_FORMATS });
+    const at2 = await vin.getPrimaryAudioTrack(); let firstA = null; for await (const s of new mb.AudioSampleSink(at2).samples()) { firstA = s.timestamp; s.close(); break; }
+    const vAudio = await at2.computeDuration();
+    const no = await m.exportEdited(src, [{ start: 1, end: 2 }]), nin = new mb.Input({ source: new mb.BlobSource(no.blob), formats: mb.ALL_FORMATS });
+    let firstN = null; for await (const s of new mb.AudioSampleSink(await nin.getPrimaryAudioTrack()).samples()) { firstN = s.timestamp; s.close(); break; }
+    // zooms dynamiques : durée exacte, et l'image est bien recadrée (les pixels du bord diffèrent de l'export sans zoom)
+    // (chaque export efface le précédent sur le disque : on lit l'export sans zoom AVANT de lancer le suivant)
+    const px = async (bl) => { const i = new mb.Input({ source: new mb.BlobSource(bl), formats: mb.ALL_FORMATS }); const s = await new mb.VideoSampleSink(await i.getPrimaryVideoTrack()).getSample(0.5);
+      const c = new OffscreenCanvas(s.displayWidth, s.displayHeight), g = c.getContext('2d'); s.draw(g, 0, 0); s.close(); const d = g.getImageData(0, 0, c.width, c.height).data;
+      let sum = 0; for (let k = 0; k < d.length; k += 4 * 97) sum += d[k] + d[k + 1] + d[k + 2]; return sum; };
+    const plain = await px(no.blob);
+    const zo = await m.exportEdited(src, [{ start: 1, end: 2 }], { zoom: () => 1.5 }), zDur = (await m.probe(zo.blob)).duration;
+    const zoomInfo = { duration: +zDur.toFixed(3), imageDiffers: (await px(zo.blob)) !== plain };
+    return { zoom: zoomInfo, voice: { duration: +vInfo.duration.toFixed(3), audio: +vAudio.toFixed(3), firstAudio: firstA, firstAudioNormal: firstN }, slow: { got: +slowGot.toFixed(3), want: +slowWant.toFixed(3) }, srcMime: src.type, src: info, audioSec: a.pcm.length / 16000, rms: +rms.toFixed(3), out: { ext: out.ext, v: out.video, a: out.audio, size: out.blob.size, ...info2 }, progress: last, ms: Math.round(ms), cancelled };
   });
   console.log(JSON.stringify(r, null, 1)); console.log('erreurs:', errs);
   if (Math.abs(r.slow.got - r.slow.want) > 0.1) { console.log('ÉCHEC durée source saccadée'); process.exitCode = 1; }
+  if (Math.abs(r.zoom.duration - r.voice.duration) > 0.1 || !r.zoom.imageDiffers) { console.log('ÉCHEC zooms'); process.exitCode = 1; }
+  if (Math.abs(r.voice.audio - (r.src.duration - 1)) > 0.1 || Math.abs(r.voice.firstAudio - r.voice.firstAudioNormal) > 0.01) { console.log('ÉCHEC voix studio'); process.exitCode = 1; }
   await b.close();
 })();
