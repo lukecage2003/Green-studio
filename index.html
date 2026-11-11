@@ -224,6 +224,20 @@ html.native .webonly{display:none!important}
 #check li{display:grid;grid-template-columns:22px 1fr;gap:6px;font-size:15px}
 #check li small{grid-column:2;color:var(--muted);font-size:13px;line-height:1.35}
 #check .ok{color:var(--accent,#30d158)} #check .ko{color:#ffd60a}
+
+/* Décors : mode édition (appui long) — tremblement, ✕, glisser pour déplacer */
+#strip .th{position:relative}
+#strip.edit .th:not(.add):not(.done){animation:wig .32s ease-in-out infinite alternate;touch-action:none}
+#strip.edit .th:nth-child(2n){animation-delay:-.16s}
+@keyframes wig{from{transform:rotate(-2.2deg)}to{transform:rotate(2.2deg)}}
+#strip .th .x{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:10px;background:rgba(60,60,64,.95);border:1px solid rgba(255,255,255,.3);color:#fff;font-size:11px;line-height:18px;display:none;padding:0;box-shadow:0 1px 4px rgba(0,0,0,.5)}
+#strip.edit .th .x{display:block}
+#strip .th.drag{z-index:3;animation:none!important;transform:scale(1.18)!important;box-shadow:0 10px 30px rgba(0,0,0,.6);transition:none}
+#strip .done{display:none;position:sticky;right:0;z-index:4;width:auto!important;box-shadow:-10px 0 16px rgba(0,0,0,.35);padding:0 14px;border-radius:23px!important;font-weight:700;font-size:14px;background:#fff!important;color:#000;border:0!important}
+#strip.edit .done{display:block}
+#snack{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--sb) + 200px);z-index:40;display:flex;gap:14px;align-items:center;padding:10px 10px 10px 18px;border-radius:24px;
+  background:rgba(40,40,44,.9);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,.14);font-size:15px;white-space:nowrap}
+#snack button{background:none;border:0;color:var(--accent,#30d158);font-weight:700;font-size:15px;padding:6px 8px}
 </style>
 </head>
 <body>
@@ -257,6 +271,7 @@ html.native .webonly{display:none!important}
 </div>
 
 <div id="toast" hidden></div>
+<div id="snack" hidden><span></span><button>Annuler</button></div>
 <section id="check" hidden aria-live="polite"><h3><span>Check studio</span><button class="btn sm" id="checkOk">OK</button></h3><ul id="checkList"></ul></section>
 
 <section class="ov" id="onb" hidden aria-label="Bienvenue">
@@ -1509,23 +1524,59 @@ function markStrip() {
   const ch = [...$('strip').children]; ch.forEach((el, k) => el.classList.toggle('on', k === bi + 1));
   if (ch[bi + 1]) ch[bi + 1].scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
 }
+/** Barre « Annuler » quelques secondes après une suppression. */
+let snackT = 0;
+function snack(msg, undo) { const n = $('snack'); n.dataset.shown = '1'; n.firstElementChild.textContent = msg; n.hidden = false; n.lastElementChild.onclick = () => { n.hidden = true; clearTimeout(snackT); undo(); }; clearTimeout(snackT); snackT = setTimeout(() => (n.hidden = true), 5000); }
+const bgPref = (k, v) => { try { if (v === undefined) return JSON.parse(localStorage.getItem(k) || '[]'); localStorage.setItem(k, JSON.stringify(v)); } catch { return []; } };
+const saveOrder = () => bgPref('gs.bgOrder', lib.map((x) => x.id));
+let editing = false;
+function setEditing(on) { editing = on; $('strip').classList.toggle('edit', on); if (on) buzz(12); }
 function renderStrip() {
   const st = $('strip'); st.replaceChildren();
   const add = document.createElement('button'); add.className = 'th add'; add.textContent = '+'; add.setAttribute('aria-label', 'Ajouter des décors'); add.onclick = () => $('file').click(); st.appendChild(add);
   lib.forEach((it, i) => {
-    const b = document.createElement('button'); b.className = 'th'; b.setAttribute('aria-label', 'Décor ' + (i + 1));
+    const b = document.createElement('button'); b.className = 'th'; b.setAttribute('aria-label', 'Décor ' + (i + 1)); b.dataset.id = it.id;
     b.style.background = it.kind === 'gen' ? `linear-gradient(${it.g[0]},${it.g[1]})` : it.kind === 'blur' ? 'radial-gradient(circle at 50% 38%,#b8c2cc 0,#59616b 45%,#2a2f35 100%)' : `center/cover url(${it.thumb})`;
     if (it.kind === 'blur') { b.textContent = 'Flou'; b.style.fontSize = '11px'; b.style.fontWeight = '700'; b.setAttribute('aria-label', 'Fond flouté'); }
-    b.onclick = () => setBg(i); b.addEventListener('pointerdown', () => prefetch(i)); // le décor se prépare pendant l'appui
-    if (it.blob) { let tm; b.onpointerdown = () => (tm = setTimeout(() => delBg(i), 700)); b.onpointerup = b.onpointerleave = () => clearTimeout(tm); }
+    if (it.kind !== 'blur') { const x = document.createElement('span'); x.className = 'x'; x.textContent = '✕'; x.setAttribute('role', 'button'); x.setAttribute('aria-label', 'Supprimer ce décor'); b.appendChild(x); }
+    b.addEventListener('pointerdown', (e) => thumbDown(e, b));
+    b.onclick = (e) => { if (e.target.classList?.contains('x')) return delBg(lib.findIndex((x) => x.id === it.id)); if (b.dataset.dragged) { delete b.dataset.dragged; return; } setBg(lib.findIndex((x) => x.id === it.id)); };
     st.appendChild(b);
   });
-  markStrip();
+  const done = document.createElement('button'); done.className = 'th done'; done.textContent = 'OK'; done.onclick = () => setEditing(false); st.appendChild(done);
+  st.classList.toggle('edit', editing); markStrip();
+}
+/* appui long → mode édition ; en mode édition, glisser une vignette la déplace */
+function thumbDown(e, b) {
+  const id = b.dataset.id, i0 = lib.findIndex((x) => x.id === id); prefetch(i0); // le décor se prépare pendant l'appui
+  const x0 = e.clientX, y0 = e.clientY, tDown = performance.now(); let moved = false, dragging = false;
+  const lp = editing ? 0 : setTimeout(() => { if (!moved) { setEditing(true); b.dataset.dragged = '1'; } }, 450);
+  const move = (ev) => {
+    const dx = ev.clientX - x0; if (Math.abs(dx) > 8 || Math.abs(ev.clientY - y0) > 8) moved = true;
+    if (!editing) { if (moved) clearTimeout(lp); return; }
+    if (!dragging && Math.abs(dx) > 8) { dragging = true; b.classList.add('drag'); b.setPointerCapture?.(ev.pointerId); }
+    if (dragging) b.style.transform = `translateX(${dx}px) scale(1.18)`;
+  };
+  const up = (ev) => {
+        clearTimeout(lp); removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up);
+    if (!editing && !moved && performance.now() - tDown >= 450) { setEditing(true); b.dataset.dragged = '1'; return; } // appui long (même si le minuteur a pris du retard)
+    if (!dragging) return; b.dataset.dragged = '1'; b.classList.remove('drag'); b.style.transform = '';
+    // nouvelle place : d'après le centre de la vignette lâchée parmi les autres
+    const cx = ev.clientX, others = [...$('strip').querySelectorAll('.th[data-id]')].filter((x) => x !== b);
+    let to = others.findIndex((o) => { const r = o.getBoundingClientRect(); return cx < r.left + r.width / 2; }); if (to < 0) to = others.length;
+    const from = lib.findIndex((x) => x.id === id), cur = lib[bi]?.id, [it] = lib.splice(from, 1); lib.splice(to, 0, it);
+    bi = Math.max(0, lib.findIndex((x) => x.id === cur)); saveOrder(); renderStrip(); buzz(8);
+  };
+  addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', up);
 }
 function delBg(i) {
-  const it = lib[i]; if (!it || !it.blob || !confirm('Supprimer ce décor ?')) return;
-  lib.splice(i, 1); cache.delete(it.id); dbDo('readwrite', (s) => s.delete(it.id)).catch(() => {});
-  bi = Math.min(bi, lib.length - 1); renderStrip(); setBg(bi);
+  const it = lib[i]; if (!it || it.kind === 'blur') return;
+  const cur = lib[bi]?.id; lib.splice(i, 1); cache.delete(it.id);
+  if (it.kind === 'gen') bgPref('gs.bgHidden', [...new Set([...bgPref('gs.bgHidden'), it.id])]);
+  saveOrder(); const was = cur === it.id; bi = was ? Math.min(i, lib.length - 1) : Math.max(0, lib.findIndex((x) => x.id === cur)); renderStrip(); if (was) setBg(bi);
+  // suppression définitive (fichier) seulement quand le délai d'annulation est passé
+  const kill = setTimeout(() => { if (it.blob) dbDo('readwrite', (s) => s.delete(it.id)).catch(() => {}); }, 5200);
+  snack('Décor supprimé', () => { clearTimeout(kill); if (it.blob) dbDo('readwrite', (st) => st.put({ id: it.id, t: Date.now(), video: it.kind === 'vid', blob: it.blob, thumb: it.thumb })).catch(() => {}); lib.splice(Math.min(i, lib.length), 0, it); if (it.kind === 'gen') bgPref('gs.bgHidden', bgPref('gs.bgHidden').filter((x) => x !== it.id)); saveOrder(); bi = Math.max(0, lib.findIndex((x) => x.id === cur)); renderStrip(); });
 }
 $('file').multiple = true;
 $('file').onchange = async (e) => {
@@ -1538,10 +1589,13 @@ $('file').onchange = async (e) => {
       dbDo('readwrite', (s) => s.put({ id, t: Date.now(), video, blob: f, thumb })).catch(() => toast('Décor non mémorisé (stockage local indisponible).'));
     } catch { toast('Fichier illisible : ' + f.name); }
   }
-  renderStrip(); if (first >= 0) setBg(first);
+  saveOrder(); renderStrip(); if (first >= 0) setBg(first);
 };
 async function loadLib() {
   try { const rows = await dbDo('readonly', (s) => s.getAll()); rows.sort((a, b) => a.t - b.t).forEach((r) => lib.push({ id: r.id, kind: r.video ? 'vid' : 'img', blob: r.blob, thumb: r.thumb })); } catch {}
+  const hidden = new Set(bgPref('gs.bgHidden')), order = bgPref('gs.bgOrder');
+  for (let k = lib.length - 1; k >= 0; k--) if (hidden.has(lib[k].id)) lib.splice(k, 1);
+  if (order.length) { const pos = (id) => { const p = order.indexOf(id); return p < 0 ? 1e6 : p; }; lib.sort((a, b) => pos(a.id) - pos(b.id)); }
   renderStrip(); setBg(0);
 }
 loadLib();
@@ -1554,6 +1608,7 @@ const pts = new Map(); let sw = null, pinch = null, drag = null;
 const dist = () => { const [a, b] = [...pts.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
 const mid = () => { const [a, b] = [...pts.values()]; return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; };
 canvas.onpointerdown = (e) => {
+  if (editing) setEditing(false); // toucher l'image termine le mode édition des décors
   canvas.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (pts.size === 1) { sw = { x: e.clientX, y: e.clientY, t: performance.now(), multi: false }; drag = { x: e.clientX, y: e.clientY, sx: S.sx, sy: S.sy }; }
   else if (pts.size === 2) { if (sw) sw.multi = true; const m = mid(); pinch = { d: dist(), z: S.zoom, cz: S.cz, m, m0: m, sx: S.sx, sy: S.sy }; }

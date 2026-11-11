@@ -92,6 +92,8 @@ export class EditSession {
     }
     this.commit(next);
   }
+  /** Remplace toutes les coupes (rognage au doigt sur la timeline) : une seule étape d'annulation. */
+  replace(next: Range[]) { this.commit(next); }
   /** Ajuste les bornes d'une coupe existante (index dans this.cuts). */
   adjust(index: number, start: number, end: number) {
     const next = this.cuts.map((c, i) => (i === index ? { start, end } : c)); this.commit(next);

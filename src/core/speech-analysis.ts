@@ -1,24 +1,33 @@
 /** SpeechAnalysisEngine : suggestions de coupes à partir des mots horodatés. Ne supprime jamais rien : propose seulement. */
 import type { Range, Word } from "./timeline.ts";
 
-export type IssueType = "retake" | "repetition" | "stutter" | "false_start" | "hesitation" | "long_silence" | "untranscribed";
+export type IssueType = "retake" | "filler_word" | "repetition" | "stutter" | "false_start" | "hesitation" | "long_silence" | "untranscribed";
 export interface Suggestion { id: string; type: IssueType; range: Range; firstWord: number; lastWord: number; excerpt: string; confidence: number }
 
+/** Tics de langage par défaut (modifiables par l'utilisateur). */
+export const TICS = ["du coup", "en fait", "tu vois", "tu sais", "vous voyez", "je veux dire", "j'veux dire", "en gros", "genre", "voila", "bref", "quoi", "hein", "style", "disons", "enfin bref", "bon ben", "ben voila"];
 export interface AnalysisOptions {
   maxRepeatGap: number;      // s entre deux occurrences d'un mot répété
   longSilence: number;       // s
   fillers: string[];
+  tics: string[];            // tics de langage (retirés seulement quand ils sont isolés par une pause ou une virgule)
   emphaticWords: string[];   // répétitions souvent volontaires : confiance réduite
   maxPhrase: number;         // taille max (mots) d'une phrase recommencée
 }
 export const DEFAULTS: AnalysisOptions = {
   maxRepeatGap: 0.8, longSilence: 1.5, maxPhrase: 5,
-  fillers: ["euh", "heu", "hum", "hmm", "mmh", "euhh", "bah", "ben"],
+  fillers: ["euh", "heu", "hum", "hmm", "mmh", "euhh", "euuh", "eeuh", "bah", "ben", "beh", "pff", "mh", "hm"],
+  tics: TICS,
   emphaticWords: ["très", "bien", "trop", "vraiment", "super", "beaucoup", "non", "oui", "jamais", "toujours"],
 };
 
 export const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9']/g, "");
 
+function ticAt(n: string[], i: number, tics: string[]): number {
+  let best = 0;
+  for (const t of tics) { const p = t.split(" ").map(norm); if (p.length > best && p.every((x, k) => n[i + k] === x)) best = p.length; }
+  return best;
+}
 const RETAKE = [["je", "reprends"], ["je", "reprend"], ["on", "reprend"], ["je", "recommence"], ["on", "recommence"], ["je", "la", "refais"], ["on", "la", "refait"], ["coupez"], ["coupe"]];
 /** Longueur de la commande de reprise qui commence au mot i (0 si aucune). */
 function retakeAt(n: string[], i: number): number {
@@ -65,6 +74,15 @@ export function analyze(words: Word[], opt: Partial<AnalysisOptions> = {}): Sugg
     if (used.has(i)) continue;
     // 2. Hésitations
     if (fill.has(n[i])) { push("hesitation", i, i, 0.9 * Math.min(1, conf(i) + 0.2)); continue; }
+    // 2 bis. Tics de langage (« du coup », « en fait », « tu vois », « genre »…) : seulement s'ils sont isolés (pause ou virgule)
+    const tl = ticAt(n, i, o.tics);
+    if (tl) {
+      const e = i + tl - 1, before = i === 0 || words[i].start - words[i - 1].end >= 0.15 || /[,.!?…;:]$/.test(words[i - 1].text);
+      const after = e + 1 >= words.length || words[e + 1].start - words[e].end >= 0.15 || /[,.!?…;:]$/.test(words[e].text);
+      const endOnly = tl === 1 && (n[i] === "quoi" || n[i] === "hein");
+      if ((endOnly && after && i > 0) || (!endOnly && before && after)) { push("filler_word", i, e, 0.72); i = e; continue; }
+      if (!endOnly && (before || after)) { push("filler_word", i, e, 0.4); i = e; continue; } // proposé, pas retiré d'office
+    }
     // 3. Mots répétés
     if (i + 1 < words.length && n[i] && n[i] === n[i + 1] && words[i + 1].start - words[i].end <= o.maxRepeatGap) {
       let c = 0.85; if (emph.has(n[i])) c = 0.4; if (n[i].length <= 2) c += 0.05;
@@ -102,12 +120,37 @@ export function voiceFrames(pcm: Float32Array, rate: number) {
   return { on, dt: fr / rate };
 }
 
+/**
+ * Voyelles tenues (« euuuh », « mmm ») : trames voisées dont le niveau et le timbre ne bougent presque pas pendant ≥ minDur.
+ * La parole normale change de son toutes les 80–150 ms ; un « euh » reste stable. Renvoie les plages trouvées (s).
+ */
+export function steadyRuns(pcm: Float32Array, rate: number, minDur = 0.25): { start: number; end: number; stab: number }[] {
+  const fr = Math.max(1, Math.round(rate * 0.02)), n = Math.floor(pcm.length / fr);
+  const db = new Float32Array(n), hf = new Float32Array(n), zc = new Float32Array(n);
+  for (let k = 0; k < n; k++) { let e = 0, d = 0, z = 0, p = pcm[k * fr];
+    for (let i = k * fr; i < (k + 1) * fr; i++) { const x = pcm[i]; e += x * x; const q = x - p; d += q * q; if ((x >= 0) !== (p >= 0)) z++; p = x; }
+    db[k] = 10 * Math.log10(e / fr + 1e-12); hf[k] = Math.sqrt(d / (e + 1e-12)); zc[k] = z / fr; }
+  const { on } = voiceFrames(pcm, rate), W = 2, steady = new Uint8Array(n);
+  for (let k = W; k < n - W; k++) {
+    let ok = 1, mD = 0, mH = 0, mZ = 0; for (let j = -W; j <= W; j++) { if (!on[k + j] || hf[k + j] > 0.7 || zc[k + j] > 0.12) { ok = 0; break; } mD += db[k + j]; mH += hf[k + j]; mZ += zc[k + j]; }
+    if (!ok) continue; mD /= 2 * W + 1; mH /= 2 * W + 1; mZ /= 2 * W + 1;
+    let vD = 0, vH = 0, vZ = 0; for (let j = -W; j <= W; j++) { vD += (db[k + j] - mD) ** 2; vH += (hf[k + j] - mH) ** 2; vZ += (zc[k + j] - mZ) ** 2; }
+    if (Math.sqrt(vD / (2 * W + 1)) < 1.6 && Math.sqrt(vH / (2 * W + 1)) < 0.045 && Math.sqrt(vZ / (2 * W + 1)) < 0.012) steady[k] = 1;
+  }
+  const out: { start: number; end: number; stab: number }[] = []; const dt = fr / rate;
+  for (let k = 0; k < n; ) { if (!steady[k]) { k++; continue; } let e = k; while (e < n && steady[e]) e++;
+    const s0 = (k - W) * dt, s1 = (e + W) * dt; if (s1 - s0 >= minDur) out.push({ start: s0, end: s1, stab: (e - k) / Math.max(1, e - k + 2 * W) }); k = e; }
+  return out;
+}
+
 export function analyzeAudio(words: Word[], pcm: Float32Array, rate: number, taken: Suggestion[] = []): Suggestion[] {
   if (!words.length || !pcm.length) return [];
   const { on, dt } = voiceFrames(pcm, rate), out: Suggestion[] = [];
   const busy = (a: number, b: number) => taken.some((s) => s.range.start < b && s.range.end > a);
   const voicedIn = (a: number, b: number) => { let v = 0; for (let k = Math.max(0, Math.floor(a / dt)); k < Math.min(on.length, Math.ceil(b / dt)); k++) v += on[k]; return v * dt; };
 
+  const runs = steadyRuns(pcm, rate);
+  const isEuh = (a: number, b: number) => runs.some((r) => Math.min(b, r.end) - Math.max(a, r.start) >= 0.6 * (b - a));
   // 1. Voix entre deux mots, sans mot transcrit (bégaiement, « euh » effacé, syllabe répétée)
   for (let i = -1; i < words.length; i++) {
     const a = i >= 0 ? words[i].end + 0.06 : 0, b = i + 1 < words.length ? words[i + 1].start - 0.06 : pcm.length / rate;
@@ -122,9 +165,10 @@ export function analyzeAudio(words: Word[], pcm: Float32Array, rate: number, tak
     const st = best[0] * dt, en = best[1] * dt, d = en - st;
     if (d < 0.12 || d > 2.5 || busy(st, en)) continue;
     const next = words[i + 1], lo = i >= 0 ? words[i].end : 0, hi = next ? next.start : pcm.length / rate;
-    out.push({ id: `untranscribed-${i + 1}`, type: "untranscribed", firstWord: Math.max(0, i + 1 < words.length ? i + 1 : i), lastWord: Math.max(0, i + 1 < words.length ? i + 1 : i),
-      range: { start: Math.max(lo, st - 0.03), end: Math.min(hi, en + 0.03) }, confidence: Math.min(0.85, 0.55 + d * 0.4),
-      excerpt: `[son non transcrit ${d.toFixed(1).replace(".", ",")} s]${next ? ` avant « ${next.text} »` : ""}` });
+    const eu = isEuh(st, en);
+    out.push({ id: `untranscribed-${i + 1}`, type: eu ? "hesitation" : "untranscribed", firstWord: Math.max(0, i + 1 < words.length ? i + 1 : i), lastWord: Math.max(0, i + 1 < words.length ? i + 1 : i),
+      range: { start: Math.max(lo, st - 0.03), end: Math.min(hi, en + 0.03) }, confidence: eu ? 0.85 : Math.min(0.85, 0.55 + d * 0.4),
+      excerpt: eu ? `[« euh » ${d.toFixed(1).replace(".", ",")} s]${next ? ` avant « ${next.text} »` : ""}` : `[son non transcrit ${d.toFixed(1).replace(".", ",")} s]${next ? ` avant « ${next.text} »` : ""}` });
   }
   // 2. Mot anormalement long avec une coupure interne près du début : « p… présenter », « je… je » fusionnés en un mot
   for (let i = 0; i < words.length; i++) {
@@ -138,6 +182,24 @@ export function analyzeAudio(words: Word[], pcm: Float32Array, rate: number, tak
     if (cut < 0) continue;
     out.push({ id: `stutter-in-${i}`, type: "stutter", firstWord: i, lastWord: i, range: { start: w.start, end: cut * dt - 0.01 },
       confidence: 0.6, excerpt: `« ${w.text} » : début répété` });
+  }
+  // 3. « Euh » que Whisper a effacé : voyelle tenue dans un blanc, ou collée au début / à la fin d'un mot anormalement long
+  const expected = (w: Word) => 0.065 * (w.text.replace(/[^\p{L}\p{N}]/gu, "").length || 1) + 0.18;
+  const taken2 = (a: number, b: number) => busy(a, b) || out.some((s) => s.range.start < b && s.range.end > a);
+  for (const r of runs) {
+    const ov = words.filter((w) => w.start < r.end && w.end > r.start);
+    let range: Range | null = null, conf = 0, why = "";
+    if (!ov.length) { range = { start: r.start, end: r.end }; conf = 0.8; why = "« euh » entre deux mots"; }
+    else if (ov.length === 1) {
+      const w = ov[0], len = w.end - w.start, ex = expected(w);
+      if (len > ex + 0.15) {
+        if (r.start <= w.start + 0.08 && w.end - r.end >= 0.1) { range = { start: w.start, end: Math.min(r.end, w.end - 0.1) }; conf = 0.65; why = `« euh » avant « ${w.text} »`; }
+        else if (r.end >= w.end - 0.08 && r.start - w.start >= 0.08) { range = { start: Math.max(r.start + 0.1, w.start + Math.min(ex, len * 0.6)), end: r.end }; conf = 0.65; why = `« euh » après « ${w.text} »`; }
+      }
+    }
+    if (!range || range.end - range.start < 0.15 || taken2(range.start, range.end)) continue;
+    out.push({ id: `filled-${Math.round(range.start * 100)}`, type: "hesitation", firstWord: Math.max(0, words.findIndex((w) => w.end >= range!.start)), lastWord: Math.max(0, words.findIndex((w) => w.end >= range!.start)),
+      range, confidence: conf, excerpt: `[${why}, ${(range.end - range.start).toFixed(1).replace(".", ",")} s]` });
   }
   return out;
 }

@@ -2,6 +2,7 @@
  *  suggestions (répétitions, hésitations, silences…), annuler/rétablir, export. Tout reste sur l'appareil. */
 import { EditSession, wordsToRange, EPS, type Range, type Word } from "../core/timeline.ts";
 import { bestTakes, type TakeResult } from "../core/takes.ts";
+import { clipsOf, snapSplit, hitAt, trimEdge, wavePeaks } from "../core/derush.ts";
 import { compose, drawTitle, activeAt, type Overlay, type OverlayMode, type Title } from "../core/overlay.ts";
 
 /** Fichiers insérés (images, extraits) : gardés sur le téléphone (IndexedDB), retrouvés à la réouverture du projet. */
@@ -9,14 +10,14 @@ const mediaDb = () => new Promise<IDBDatabase>((res, rej) => { const r = indexed
 async function mediaPut(id: string, b: Blob) { const db = await mediaDb(); await new Promise((res, rej) => { const t = db.transaction("files", "readwrite"); t.objectStore("files").put(b, id); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
 async function mediaGet(id: string): Promise<Blob | null> { const db = await mediaDb(); return new Promise((res) => { const q = db.transaction("files").objectStore("files").get(id); q.onsuccess = () => res(q.result ?? null); q.onerror = () => res(null); }); }
 import { takeReport } from "../core/coach.ts";
-import { analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
+import { TICS, analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
 import { peaks as computePeaks, loudnessGain, speechBounds } from "../core/audio.ts";
 import { buildCaptions, drawCaption, lineAt, CAPTION_DEFAULT, PRESETS, type CapLine, type CaptionStyle, type CaptionPreset } from "../core/captions.ts";
 import { probe, extractAudio, exportEdited, webCodecsAvailable, extractClip } from "../core/media.ts";
 import { StudioVoice, loadDenoiser } from "../core/voice.ts";
 import { exportRealtime } from "../core/export.ts";
 
-const LABEL: Record<IssueType, string> = { retake: "Reprise (« je reprends »)", repetition: "Répétition", stutter: "Bégaiement", false_start: "Faux départ", hesitation: "Hésitation", long_silence: "Silence long", untranscribed: "Bégaiement / son non transcrit" };
+const LABEL: Record<IssueType, string> = { retake: "Reprise (« je reprends »)", filler_word: "Tic de langage", repetition: "Répétition", stutter: "Bégaiement", false_start: "Faux départ", hesitation: "Hésitation", long_silence: "Silence long", untranscribed: "Bégaiement / son non transcrit" };
 const SAFE = 0.7;
 const fmt = (t: number) => { t = Math.max(0, t); const m = Math.floor(t / 60), s = Math.floor(t % 60); return `${m}:${String(s).padStart(2, "0")}`; };
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -37,7 +38,9 @@ const CSS = `
 .qe video{position:absolute;inset:0;width:100%;height:100%;background:#000;object-fit:contain}.qe video.spare{visibility:hidden}
 .qe .vw canvas.cc{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;border-radius:0;background:none}
 .qe .tl{padding:12px 16px 0}
-.qe canvas.wave{width:100%;height:56px;display:block;border-radius:10px;background:#1c1c1e;touch-action:none}
+.qe canvas.wave{width:100%;height:96px;display:block;border-radius:14px;background:#141416;touch-action:none}
+.qe .dr{display:flex;align-items:center;gap:6px;padding:8px 0 0;overflow-x:auto;scrollbar-width:none}.qe .dr::-webkit-scrollbar{display:none}
+.qe .dr .ib{flex:0 0 auto}.qe .dr .sp{flex:1}.qe .dr [data-a=del]:not(:disabled){color:#ff6961}
 .qe .transport{display:flex;align-items:center;gap:10px;padding:10px 16px 0}
 .qe .transport [data-r=time]{font-variant-numeric:tabular-nums;font-size:15px;font-weight:600}
 .qe .sp{flex:1}
@@ -91,7 +94,7 @@ const CSS = `
 .lib ul{margin:0 12px}.lib li:first-child{border-radius:20px 20px 0 0}.lib li:last-child{border-radius:0 0 20px 20px}.lib li:only-child{border-radius:20px}
 `;
 
-interface Saved { enWords?: Word[] | null; capLang?: "fr" | "en"; overlays?: Overlay[]; titles?: Title[]; v: 1; duration: number; words: Word[] | null; cuts: Range[]; ignored: string[]; peaks?: number[]; style?: CaptionStyle; norm?: boolean; q720?: boolean; voice?: boolean; zooms?: boolean }
+interface Saved { splits?: number[]; enWords?: Word[] | null; capLang?: "fr" | "en"; overlays?: Overlay[]; titles?: Title[]; v: 1; duration: number; words: Word[] | null; cuts: Range[]; ignored: string[]; peaks?: number[]; style?: CaptionStyle; norm?: boolean; q720?: boolean; voice?: boolean; zooms?: boolean }
 
 export interface EditorOptions {
   file: Blob; key: string; name?: string; onClose?: () => void; toast?: (m: string, ms?: number) => void;
@@ -109,6 +112,9 @@ interface Template { id: string; name: string; lang?: "fr" | "en"; style: Captio
 const loadTpls = (): Template[] => { try { return JSON.parse(localStorage.getItem("gs.tpl") || "[]"); } catch { return []; } };
 const saveTpls = (l: Template[]) => { try { localStorage.setItem("gs.tpl", JSON.stringify(l)); } catch { /* */ } };
 const autoTplId = () => { try { return localStorage.getItem("gs.tplAuto") || ""; } catch { return ""; } };
+/** Tics de langage de l'utilisateur (modifiables dans Suggestions). */
+const myTics = (): string[] => { try { const v = JSON.parse(localStorage.getItem("gs.tics") || "null"); return Array.isArray(v) ? v : TICS; } catch { return TICS; } };
+const setTics = (l: string[]) => { try { localStorage.setItem("gs.tics", JSON.stringify(l)); } catch { /* */ } };
 const autoPref = () => { try { return localStorage.getItem("gs.autoClean") !== "0"; } catch { return true; } };
 
 export async function openEditor(o: EditorOptions) {
@@ -118,7 +124,11 @@ export async function openEditor(o: EditorOptions) {
   root.innerHTML = `
     <header><button data-a="close">Fermer</button><h2>Montage</h2><button data-a="export">Exporter</button></header>
     <div class="vw"><video playsinline preload="auto"></video><video class="spare" playsinline preload="auto" muted></video><canvas class="cc" aria-hidden="true"></canvas></div>
-    <div class="tl"><canvas class="wave" aria-label="Timeline : touchez pour vous déplacer"></canvas></div>
+    <div class="tl"><canvas class="wave" aria-label="Timeline : glissez pour vous déplacer, pincez pour zoomer, touchez un clip pour le sélectionner"></canvas>
+      <div class="dr"><button class="ib icon" data-a="zout" aria-label="Dézoomer">−</button><button class="ib icon" data-a="zin" aria-label="Zoomer">＋</button>
+        <button class="ib" data-a="split" title="Scinder le clip à la tête de lecture (calé entre deux mots)">✂ Scinder</button>
+        <button class="ib" data-a="del" disabled>🗑 Supprimer</button><button class="ib" data-a="rest" hidden>↺ Restaurer</button>
+        <span class="sp"></span><button class="ib" data-a="fit" title="Voir toute la vidéo">⤢ Tout</button></div></div>
     <div class="transport"><button class="ib round go" data-a="play" aria-label="Lecture">▶</button><span data-r="time">0:00</span><span class="sp"></span>
       <button class="ib icon" data-a="undo" aria-label="Annuler">↶</button><button class="ib icon" data-a="redo" aria-label="Rétablir">↷</button></div>
     <div class="tools">
@@ -128,7 +138,6 @@ export async function openEditor(o: EditorOptions) {
       <button class="ib" data-a="pub" title="Titres, description, hashtags et accroche">✍️ Publication</button>
       <button class="ib" data-a="voiceAB" title="Écouter votre voix avant / après le traitement studio">🎙 Voix studio</button>
       <button class="ib" data-a="trim" title="Couper le silence avant la première et après la dernière parole">✂ Bords muets</button>
-      <button class="ib" data-a="in" title="Marquer le début d'une coupe à la tête de lecture">⟦ Début</button><button class="ib" data-a="out" disabled>Couper ⟧</button>
       <label>Sauter les coupes <input type="checkbox" data-a="pv" checked></label></div>
     <div class="row" data-r="status"></div>
     <div class="tabs" role="tablist"><button role="tab" data-tab="tx" aria-selected="true">Texte</button><button role="tab" data-tab="sg" aria-selected="false">Suggestions</button><button role="tab" data-tab="cc" aria-selected="false">Sous-titres</button><button role="tab" data-tab="dress" aria-selected="false">Habillage</button></div>
@@ -148,15 +157,16 @@ export async function openEditor(o: EditorOptions) {
   try { duration = (await probe(o.file)).duration || duration; } catch { /* repli : métadonnées du lecteur */ }
   if (!duration || !isFinite(duration)) { await new Promise((r) => (video.onloadedmetadata = r)); duration = isFinite(video.duration) ? video.duration : 0; }
   const session = new EditSession(duration, saved?.cuts ?? []);
-  let words: Word[] | null = saved?.words ?? null, sugs: Suggestion[] = words ? analyze(words) : [];
+  let words: Word[] | null = saved?.words ?? null, sugs: Suggestion[] = words ? analyze(words, { tics: myTics() }) : [];
   /** Suggestions du texte + du son (bégaiements et hésitations que Whisper n'a pas écrits). */
-  const suggest = (w: Word[]) => { const t = analyze(w); return pcm ? [...t, ...analyzeAudio(w, pcm, 16000, t)].sort((a, b) => a.range.start - b.range.start) : t; };
+  const suggest = (w: Word[]) => { const t = analyze(w, { tics: myTics() }); return pcm ? [...t, ...analyzeAudio(w, pcm, 16000, t)].sort((a, b) => a.range.start - b.range.start) : t; };
   const ignored = new Set(saved?.ignored ?? []);
   let pk: Float32Array | null = saved?.peaks ? Float32Array.from(saved.peaks, (x) => x / 255) : null;
   let pcm: Float32Array | null = null, audioErr = "";
   let style: CaptionStyle = { ...CAPTION_DEFAULT, ...(saved?.style ?? {}) }, norm = saved?.norm ?? true, q720 = saved?.q720 ?? false, voice = saved?.voice ?? true, zooms = saved?.zooms ?? false, lines: CapLine[] = [];
   (root.querySelector("[data-a=zooms]") as HTMLInputElement).checked = zooms;
   let overlays: Overlay[] = saved?.overlays ?? [], titles: Title[] = saved?.titles ?? [];
+  let splits: number[] = saved?.splits ?? [];
   let enWords: Word[] | null = saved?.enWords ?? null, capLang: "fr" | "en" = saved?.capLang ?? "fr";
   function applyTpl(tp: Template) {
     style = { ...CAPTION_DEFAULT, ...tp.style }; capLang = tp.lang ?? "fr"; zooms = tp.zooms; voice = tp.voice; norm = tp.norm; q720 = tp.q720;
@@ -178,7 +188,7 @@ export async function openEditor(o: EditorOptions) {
   const ctl = new AbortController();
 
   const save = () => {
-    const s: Saved = { v: 1, enWords, capLang, duration, words, cuts: session.cuts, ignored: [...ignored], style, norm, q720, voice, zooms, overlays, titles, peaks: pk ? Array.from(pk, (x) => Math.round(x * 255)) : undefined };
+    const s: Saved = { v: 1, splits, enWords, capLang, duration, words, cuts: session.cuts, ignored: [...ignored], style, norm, q720, voice, zooms, overlays, titles, peaks: pk ? Array.from(pk, (x) => Math.round(x * 255)) : undefined };
     try { localStorage.setItem(storeKey, JSON.stringify(s)); } catch { /* quota localStorage : on garde en mémoire */ }
   };
   const covered = (r: Range) => session.cuts.some((c) => c.start <= r.start + 0.02 && c.end >= r.end - 0.02);
@@ -248,13 +258,21 @@ export async function openEditor(o: EditorOptions) {
       <div><b>Bilan de la prise</b><p style="margin:2px 0 0">${r.wpm ? r.wpm + " mots/min · " : ""}${r.tics} tic(s) · ${r.silences} silence(s)${r.removed > 0.5 ? ` · −${Math.round(r.removed)} s` : ""}${cmp}</p></div></div>
       <ul style="margin:8px 0 0;padding-left:18px">${r.tips.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>`;
   }
+  /** Relance l'analyse avec la nouvelle liste de tics, en gardant le panneau ouvert. */
+  function retic() { if (words) sugs = suggest(words); body.innerHTML = ""; refresh(); body.querySelector<HTMLDetailsElement>("[data-tics]")?.setAttribute("open", ""); }
+  function ticsCard() {
+    const l = myTics();
+    return `<details class="card" data-tics style="margin-bottom:10px"><summary><b>Mes tics de langage</b> (${l.length})</summary>
+      <p>Retirés quand ils sont isolés par une pause (« du coup, … »). Touchez-en un pour l’enlever de la liste.</p>
+      <div class="chips">${l.map((t) => `<button class="ib" data-a="ticDel" data-v="${esc(t)}">${esc(t)} ✕</button>`).join("")}<button class="ib go" data-a="ticAdd">＋ Ajouter</button></div></details>`;
+  }
   function renderSugs() {
     if (!words) { body.innerHTML = `<div class="card"><p>Les suggestions apparaissent après la transcription (onglet Texte).</p></div>`; return; }
-    if (!sugs.length) { body.innerHTML = coachCard() + `<div class="card"><p>Aucune répétition, hésitation ni silence long détecté. 👌</p>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}</div>`; return; }
+    if (!sugs.length) { body.innerHTML = coachCard() + ticsCard() + `<div class="card"><p>Aucune répétition, hésitation ni silence long détecté. 👌</p>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}</div>`; return; }
     const open = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range));
     const all = open.filter((s) => s.confidence >= AUTO_MIN).length, sil = open.filter((s) => s.type === "long_silence").length;
     const take = takeInfo ? `<div class="card" style="margin-bottom:10px"><b>Meilleure prise</b><p>${esc(takeSummary())}</p>${takeInfo.missing.length ? `<p>Non dit : ${takeInfo.missing.map((m) => "« " + esc(m) + " »").join(", ")}</p>` : ""}</div>` : "";
-    body.innerHTML = coachCard() + take + `<div class="row" style="padding:0 0 8px"><button class="ib go" data-a="clean" ${all ? "" : "disabled"}>✨ Tout supprimer (${all})</button>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}
+    body.innerHTML = coachCard() + take + ticsCard() + `<div class="row" style="padding:0 0 8px"><button class="ib go" data-a="clean" ${all ? "" : "disabled"}>✨ Tout supprimer (${all})</button>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}
       <button class="ib" data-a="sil" ${sil ? "" : "disabled"}>Couper les silences (${sil})</button></div>` +
       sugs.map((s) => { const on = covered(s.range), ign = ignored.has(s.id);
         return `<div class="sg ${on ? "on" : ""} ${ign ? "ign" : ""}" data-s="${esc(s.id)}"><div class="t"><b>${LABEL[s.type]} · ${Math.round(s.confidence * 100)} %${on ? " · coupé" : ""}</b>
@@ -362,26 +380,109 @@ export async function openEditor(o: EditorOptions) {
     (selBar.querySelector("[data-a=fixSel]") as HTMLElement).hidden = n !== 1;
   }
 
-  /* ---------- Timeline ---------- */
+  /* ---------- Timeline de dérush ----------
+     Vue d'ensemble (toute la vidéo) ou zoomée (tête de lecture fixe au centre, on fait défiler la vidéo dessous, comme CapCut).
+     Clips = parties gardées (découpées aux scissions) ; coupes en rouge ; mots sous la forme d'onde ; poignées pour rogner. */
+  let pps = 0, tsel: { kind: "clip" | "cut"; start: number; end: number } | null = null, trimPrev: Range[] | null = null;
+  const fitPps = () => cv.clientWidth / (duration || 1), zoomed = () => pps > fitPps() * 1.05;
+  const view = () => { const W = cv.clientWidth, p = zoomed() ? pps : fitPps(); return { p, t0: zoomed() ? video.currentTime - W / 2 / p : 0 }; };
+  const timeAt = (x: number) => { const v = view(); return Math.max(0, Math.min(duration, v.t0 + x / v.p)); };
+  const curCuts = () => trimPrev ?? session.cuts;
+  function selClip() { if (tsel?.kind !== "clip") return null; const m = (tsel.start + tsel.end) / 2; return clipsOf(duration, curCuts(), splits).find((c) => m >= c.start && m < c.end) ?? null; }
+  function updateDr() {
+    const c = tsel?.kind === "clip", k = tsel?.kind === "cut";
+    (q("[data-a=del]") as HTMLButtonElement).disabled = !c; (q("[data-a=rest]") as HTMLElement).hidden = !k; (q("[data-a=del]") as HTMLElement).hidden = k;
+  }
   function draw() {
-    const dpr = devicePixelRatio || 1, W = Math.round(cv.clientWidth * dpr), H = Math.round(cv.clientHeight * dpr);
+    const dpr = devicePixelRatio || 1, Wc = cv.clientWidth, Hc = cv.clientHeight, W = Math.round(Wc * dpr), H = Math.round(Hc * dpr);
     if (!W || !H) return;
     if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
-    const g = cv.getContext("2d")!, X = (t: number) => (t / (duration || 1)) * W;
+    if (!pps) pps = fitPps();
+    const g = cv.getContext("2d")!, { p, t0 } = view(), t1 = t0 + Wc / p, X = (t: number) => (t - t0) * p * dpr, cuts = curCuts(), zm = zoomed();
     g.clearRect(0, 0, W, H);
-    if (pk) { g.fillStyle = "#4f6b5c"; const bw = W / pk.length;
-      for (let i = 0; i < pk.length; i++) { const h = Math.max(1, pk[i] * (H - 8)); g.fillRect(i * bw, (H - h) / 2, Math.max(1, bw - 0.5), h); } }
-    else { g.fillStyle = "#24332b"; g.fillRect(0, H / 2 - 1, W, 2); }
-    g.fillStyle = "rgba(255,80,80,.45)"; for (const c of session.cuts) g.fillRect(X(c.start), 0, Math.max(1, X(c.end) - X(c.start)), H);
-    g.fillStyle = "rgba(100,210,255,.9)"; for (const o of overlays) g.fillRect(X(o.start), 0, Math.max(2, X(o.end) - X(o.start)), 5 * dpr);
-    g.fillStyle = "rgba(191,90,242,.9)"; for (const ti of titles) g.fillRect(X(ti.start), 6 * dpr, Math.max(2, X(ti.end) - X(ti.start)), 4 * dpr);
-    g.fillStyle = "#e8c547"; for (const s of sugs) if (!ignored.has(s.id) && !covered(s.range)) g.fillRect(X(s.range.start), H - 4 * dpr, Math.max(2, X(s.range.end) - X(s.range.start)), 4 * dpr);
-    if (inPt != null) { g.fillStyle = "#34e08b"; g.fillRect(X(inPt) - dpr, 0, 2 * dpr, H); }
-    g.fillStyle = "#fff"; g.fillRect(X(video.currentTime) - dpr, 0, 2 * dpr, H);
+    const yT = (zm ? 12 : 6) * dpr, yB = (words && p >= 40 ? Hc - 22 : Hc - 6) * dpr, hh = yB - yT;
+    // vue d'ensemble miniature (en mode zoom) : coupes et fenêtre visible
+    if (zm) { g.fillStyle = "#2c2c2e"; g.fillRect(0, 2 * dpr, W, 4 * dpr); g.fillStyle = "rgba(255,69,58,.8)"; for (const c of cuts) g.fillRect((c.start / duration) * W, 2 * dpr, Math.max(1, ((c.end - c.start) / duration) * W), 4 * dpr);
+      g.fillStyle = "rgba(255,255,255,.85)"; g.fillRect((Math.max(0, t0) / duration) * W, 1 * dpr, Math.max(3, ((t1 - t0) / duration) * W), 6 * dpr); }
+    // forme d'onde (fine si le son est décodé)
+    const cols = Math.max(1, Math.floor(W / (2 * dpr))), ta = Math.max(0, t0), tb = Math.min(duration, t1);
+    let wav: Float32Array | null = null, wa = ta, wb = tb;
+    if (pcm && tb > ta) { wav = wavePeaks(pcm, 16000, ta, tb, Math.max(1, Math.round(((tb - ta) * p) / 2))); }
+    let wmax = 0.02; if (wav) for (const v of wav) wmax = Math.max(wmax, v);
+    const waveIn = (a: number, b: number, color: string) => {
+      g.fillStyle = color;
+      if (wav) { const n = wav.length, step = (wb - wa) / n; for (let i = Math.max(0, Math.floor((a - wa) / step)); i < Math.min(n, Math.ceil((b - wa) / step)); i++) {
+        const h = Math.max(1, (wav[i] / wmax) * (hh - 6 * dpr)); g.fillRect(X(wa + i * step), yT + (hh - h) / 2, Math.max(1, step * p * dpr - dpr), h); } }
+      else if (pk) { const n = pk.length; for (let i = Math.max(0, Math.floor((a / duration) * n)); i < Math.min(n, Math.ceil((b / duration) * n)); i++) {
+        const h = Math.max(1, pk[i] * (hh - 6 * dpr)); g.fillRect(X((i / n) * duration), yT + (hh - h) / 2, Math.max(1, (duration / n) * p * dpr - dpr), h); } }
+    };
+    void cols;
+    const rr = (x: number, y: number, w: number, h: number, r: number) => { g.beginPath(); (g as any).roundRect ? (g as any).roundRect(x, y, w, h, r) : g.rect(x, y, w, h); };
+    // coupes : fond rouge discret, son grisé
+    for (const c of cuts) { if (c.end < t0 || c.start > t1) continue; g.fillStyle = "rgba(255,69,58,.16)"; g.fillRect(X(c.start), yT, X(c.end) - X(c.start), hh); waveIn(c.start, c.end, "rgba(255,255,255,.16)");
+      g.fillStyle = "rgba(255,69,58,.9)"; g.fillRect(X(c.start), yT, X(c.end) - X(c.start), 2 * dpr); }
+    // clips gardés
+    const cl = clipsOf(duration, cuts, splits), sc = tsel?.kind === "clip" ? selClip() : null;
+    for (const c of cl) { if (c.end < t0 || c.start > t1) continue; const x = X(c.start) + dpr, w = Math.max(2, X(c.end) - X(c.start) - 2 * dpr);
+      rr(x, yT, w, hh, 7 * dpr); g.fillStyle = sc && c.start === sc.start ? "#24453a" : "#1f2f28"; g.fill(); g.save(); rr(x, yT, w, hh, 7 * dpr); g.clip(); waveIn(c.start, c.end, "#6fd39c"); g.restore(); }
+    // repères : extraits (bleu), bandeaux (violet), suggestions (jaune)
+    g.fillStyle = "rgba(100,210,255,.95)"; for (const o of overlays) g.fillRect(X(o.start), yT + 2 * dpr, Math.max(2, X(o.end) - X(o.start)), 3 * dpr);
+    g.fillStyle = "rgba(191,90,242,.95)"; for (const ti of titles) g.fillRect(X(ti.start), yT + 6 * dpr, Math.max(2, X(ti.end) - X(ti.start)), 3 * dpr);
+    g.fillStyle = "#ffd60a"; for (const s of sugs) if (!ignored.has(s.id) && !covered(s.range)) g.fillRect(X(s.range.start), yB - 4 * dpr, Math.max(2, X(s.range.end) - X(s.range.start)), 3 * dpr);
+    // sélection : cadre blanc + poignées
+    if (sc) { const x = X(sc.start), w = X(sc.end) - x; g.lineWidth = 2 * dpr; g.strokeStyle = "#fff"; rr(x + dpr, yT, w - 2 * dpr, hh, 7 * dpr); g.stroke();
+      g.fillStyle = "#fff"; for (const hx of [x, x + w - 9 * dpr]) { rr(hx + dpr, yT, 8 * dpr, hh, 4 * dpr); g.fill(); }
+      g.fillStyle = "#1f2f28"; for (const hx of [x, x + w - 9 * dpr]) g.fillRect(hx + 4 * dpr, yT + hh / 2 - 8 * dpr, 2 * dpr, 16 * dpr); }
+    else if (tsel?.kind === "cut") { const x = X(tsel.start), w = X(tsel.end) - x; g.lineWidth = 2 * dpr; g.strokeStyle = "#ff6961"; g.setLineDash([5 * dpr, 4 * dpr]); g.strokeRect(x, yT, w, hh); g.setLineDash([]); }
+    // mots
+    if (words && p >= 40) { g.font = `${11 * dpr}px system-ui,sans-serif`; g.textAlign = "center"; g.textBaseline = "middle"; let lastR = -1e9;
+      for (const w of words) { if (w.end < t0 || w.start > t1) continue; const cx = X((w.start + w.end) / 2), tw = g.measureText(w.text).width; if (cx - tw / 2 < lastR + 4 * dpr) continue; lastR = cx + tw / 2;
+        const m = (w.start + w.end) / 2, off = cuts.some((c) => m >= c.start && m < c.end); g.fillStyle = off ? "rgba(255,105,97,.6)" : "rgba(235,235,245,.8)"; g.fillText(w.text, cx, yB + 11 * dpr);
+        if (off) g.fillRect(cx - tw / 2, yB + 11 * dpr, tw, dpr); } }
+    // tête de lecture
+    const ph = X(video.currentTime); g.fillStyle = "#fff"; g.fillRect(ph - dpr, 0, 2 * dpr, H); g.beginPath(); g.moveTo(ph - 6 * dpr, 0); g.lineTo(ph + 6 * dpr, 0); g.lineTo(ph, 7 * dpr); g.fill();
+    updateDr();
   }
-  const seekX = (e: PointerEvent) => { const r = cv.getBoundingClientRect(); seek(((e.clientX - r.left) / r.width) * duration); };
-  cv.onpointerdown = (e) => { cv.setPointerCapture(e.pointerId); seekX(e); cv.onpointermove = seekX; };
-  cv.onpointerup = cv.onpointercancel = () => (cv.onpointermove = null);
+  /* gestes : glisser = défiler (ou rogner sur une poignée), pincer = zoomer, toucher = sélectionner */
+  const ptrs = new Map<number, number>(); let gst: { x0: number; cur0: number; moved: boolean; mode: "pan" | "trim" | "pinch"; side?: "start" | "end"; clip?: Range; d0?: number; p0?: number; was?: boolean } | null = null;
+  const cx = (e: PointerEvent) => e.clientX - cv.getBoundingClientRect().left;
+  cv.onpointerdown = (e) => {
+    cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, cx(e));
+    if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; gst = { x0: 0, cur0: video.currentTime, moved: true, mode: "pinch", d0: Math.abs(a - b) || 1, p0: zoomed() ? pps : fitPps() }; return; }
+    const x = cx(e), sc = selClip(); let mode: "pan" | "trim" = "pan", side: "start" | "end" | undefined;
+    if (sc) { const v = view(), xs = (sc.start - v.t0) * v.p, xe = (sc.end - v.t0) * v.p; if (Math.abs(x - xs) < 16) { mode = "trim"; side = "start"; } else if (Math.abs(x - xe) < 16) { mode = "trim"; side = "end"; } }
+    gst = { x0: x, cur0: video.currentTime, moved: false, mode, side, clip: sc ?? undefined, was: !video.paused };
+  };
+  cv.onpointermove = (e) => {
+    if (!gst || !ptrs.has(e.pointerId)) return; ptrs.set(e.pointerId, cx(e));
+    if (gst.mode === "pinch") { if (ptrs.size < 2) return; const [a, b] = [...ptrs.values()]; pps = Math.max(fitPps(), Math.min(800, gst.p0! * (Math.abs(a - b) || 1) / gst.d0!)); return; }
+    const x = cx(e); if (!gst.moved && Math.abs(x - gst.x0) < 6) return; gst.moved = true;
+    if (gst.mode === "trim") { let t = timeAt(x); t = snapSplit(t, words, 0.08); trimPrev = trimEdge(duration, session.cuts, gst.clip!, gst.side!, t); if (!video.paused) video.pause(); seek(t); return; }
+    if (!video.paused) video.pause();
+    if (zoomed()) seek(gst.cur0 - (x - gst.x0) / pps); else seek(timeAt(x));
+  };
+  cv.onpointerup = cv.onpointercancel = (e) => {
+    ptrs.delete(e.pointerId); if (!gst) return;
+    if (gst.mode === "pinch") { if (ptrs.size === 0) gst = null; return; }
+    if (gst.mode === "trim" && trimPrev) { const m = (gst.clip!.start + gst.clip!.end) / 2; session.replace(trimPrev); trimPrev = null; const c = clipsOf(duration, session.cuts, splits).find((k) => m >= k.start && m < k.end) ?? clipsOf(duration, session.cuts, splits).find((k) => k.end > gst!.clip!.start && k.start < gst!.clip!.end); tsel = c ? { kind: "clip", start: c.start, end: c.end } : null; commit(); }
+    else if (!gst.moved) { const t = timeAt(gst.x0), h = hitAt(t, clipsOf(duration, session.cuts, splits), session.cuts);
+      if (!zoomed()) seek(t);
+      tsel = !h ? null : h.kind === "clip" ? (tsel?.kind === "clip" && tsel.start === h.clip.start && zoomed() ? null : { kind: "clip", start: h.clip.start, end: h.clip.end }) : { kind: "cut", start: h.cut.start, end: h.cut.end }; }
+    gst = null;
+  };
+  /** Actions de la barre de dérush. */
+  function derush(a: string) {
+    switch (a) {
+      case "zin": pps = Math.min(800, (zoomed() ? pps : fitPps()) * 1.8); break;
+      case "zout": pps = Math.max(fitPps(), pps / 1.8); break;
+      case "fit": pps = fitPps(); break;
+      case "split": { const t = snapSplit(video.currentTime, words); const h = hitAt(t, clipsOf(duration, session.cuts, splits), session.cuts);
+        if (h?.kind !== "clip" || t - h.clip.start < 0.05 || h.clip.end - t < 0.05) { toast("Placez la tête de lecture dans un clip gardé.", 2000); break; }
+        splits = [...splits.filter((x) => Math.abs(x - t) > 0.02), t]; tsel = { kind: "clip", start: t, end: h.clip.end }; save(); toast("Clip scindé. Touchez un morceau pour le supprimer.", 2200); break; }
+      case "del": { const c = selClip(); if (!c) break; session.addCut({ start: c.start, end: c.end }); tsel = null; commit(); toast(`Clip supprimé (${fmt(c.end - c.start)}).`, 1800); break; }
+      case "rest": if (tsel?.kind === "cut") { session.restore({ start: tsel.start, end: tsel.end }); tsel = null; commit(); } break;
+    }
+  }
 
   /* ---------- Lecture : saute les parties coupées ---------- */
   /** Cale le lecteur de réserve sur `at` (en pause, image décodée) avant d'en avoir besoin. */
@@ -676,9 +777,7 @@ export async function openEditor(o: EditorOptions) {
       case "redo": if (session.redo()) commit(); break;
       case "export": doExport(); break;
       case "play": if (video.paused) { stopAt = null; follow = true; if (video.currentTime >= duration - 0.05) video.currentTime = 0; video.play().catch(() => {}); } else video.pause(); break;
-      case "in": inPt = video.currentTime; (q("[data-a=out]") as HTMLButtonElement).disabled = false; toast("Début marqué. Avancez puis « Couper ⟧ ».", 2500); break;
-      case "out": if (inPt != null) { const a2 = Math.min(inPt, video.currentTime), b2 = Math.max(inPt, video.currentTime);
-        if (b2 - a2 > 0.05) { session.addCut({ start: a2, end: b2 }); commit(); } inPt = null; (q("[data-a=out]") as HTMLButtonElement).disabled = true; } break;
+      case "zin": case "zout": case "fit": case "split": case "del": case "rest": derush(a); break;
       case "transcribe": transcribe(); break;
       case "preset": style = { ...style, preset: t.closest<HTMLElement>("[data-v]")!.dataset.v as CaptionPreset }; save();
         root.querySelectorAll<HTMLElement>("[data-a=preset]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === style.preset))); break;
@@ -690,6 +789,8 @@ export async function openEditor(o: EditorOptions) {
       case "zooms": zooms = (t as HTMLInputElement).checked; save(); break;
       case "lang": capLang = t.closest<HTMLElement>("[data-v]")!.dataset.v as "fr" | "en"; save(); body.innerHTML = ""; refresh(); if (capLang === "en" && !enWords) translateEN(); break;
       case "retr": enWords = null; save(); body.innerHTML = ""; refresh(); translateEN(); break;
+      case "ticAdd": { const v = prompt("Votre tic (ex. « tu vois », « en mode ») :")?.trim().toLowerCase(); if (!v) break; setTics([...new Set([...myTics(), v])]); retic(); break; }
+      case "ticDel": { const v = t.closest<HTMLElement>("[data-v]")!.dataset.v!; setTics(myTics().filter((x) => x !== v)); retic(); break; }
       case "tplSave": { const name = prompt("Nom du modèle (ex. « Mon émission ») :", "Mon émission")?.trim(); if (!name) break;
         const intro = titles.find((x) => x.start < 1.5); const l = loadTpls().filter((x) => x.name !== name);
         const tp: Template = { id: "t" + Date.now().toString(36), name, lang: capLang, style, zooms, voice, norm, q720, intro: intro ? { text: intro.text, sub: intro.sub } : undefined };

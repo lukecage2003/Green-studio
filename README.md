@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.8)
+# Green Studio 3.1 — état réel (beta.9)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,11 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.9
+- **Timeline de dérush** (montage) : vue d'ensemble ou zoom (pincer, ＋/−, ⤢ Tout) avec tête de lecture fixe au centre ; glisser pour défiler ; forme d'onde fine et mots sous l'onde ; ✂ Scinder (calé automatiquement entre deux mots) ; toucher un clip → 🗑 Supprimer, toucher une coupe → ↺ Restaurer ; poignées pour rogner / rallonger un clip ; tout est annulable. Testé : `tests/browser/derush.e2e.cjs` + tests unitaires (clips, scission, rognage sans toucher aux voisins).
+- **Mots parasites** : nouvelle détection acoustique des « euh » que Whisper efface (voyelle tenue ≥ 0,25 s) dans les blancs et collés au début ou à la fin d'un mot anormalement long ; tics de langage en plusieurs mots (« du coup », « en fait », « tu vois », « genre », « quoi » en fin de phrase…) retirés quand ils sont isolés par une pause ou une virgule, simplement proposés sinon ; liste personnelle modifiable (Suggestions › Mes tics de langage). Calibré sur de vraies prises (0 à 12 détections/min, spectrogrammes vérifiés) ; tests unitaires (dont absence de fausses alertes sur une parole normale).
+- **Décors** : appui long → mode édition façon iPhone (tremblement, ✕ pour supprimer avec « Annuler » 5 s, glisser pour réordonner, OK) ; ordre et suppressions conservés ; les décors de base peuvent aussi être retirés. Testé : `tests/browser/decor.e2e.cjs`.
 
 ## 3.1.0-beta.8
 - **Plateau 3D** (Réglages › Plateau 3D, 0 = coupé) : le décor glisse à l'opposé de la tête et grossit un peu quand on s'approche, comme une caméra qui suit. Amorti en ~0,25 s quel que soit le débit d'images, jamais de bord visible. Web et natif. Testé : `tests/browser/stage.e2e.cjs` (sens, amplitude ~3 %, bornes, désactivation).

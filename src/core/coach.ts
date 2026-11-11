@@ -59,7 +59,7 @@ export function takeReport(words: Word[], sugs: Suggestion[], duration: number, 
   let talk = 0; for (let i = 0; i < kept.length; i++) { talk += kept[i].end - kept[i].start; if (i + 1 < kept.length) talk += Math.min(0.7, Math.max(0, kept[i + 1].start - kept[i].end)); }
   const wpm = talk > 3 ? Math.round(kept.length / (talk / 60)) : 0;
   const by = (t: string[]) => sugs.filter((s) => t.includes(s.type)).length;
-  const tics = by(["hesitation", "repetition", "stutter", "untranscribed", "false_start"]), silences = by(["long_silence"]), retakes = by(["retake"]);
+  const tics = by(["hesitation", "filler_word", "repetition", "stutter", "untranscribed", "false_start"]), silences = by(["long_silence"]), retakes = by(["retake"]);
   const mins = Math.max(0.25, duration / 60), ticsPerMin = Math.round((tics / mins) * 10) / 10;
   let score = 100 - Math.min(45, ticsPerMin * 6) - Math.min(15, (silences / mins) * 3);
   if (wpm) score -= wpm > 190 ? Math.min(20, (wpm - 190) / 2) : wpm < 120 ? Math.min(20, (120 - wpm) / 2) : 0;

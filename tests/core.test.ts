@@ -149,7 +149,9 @@ test("prompteur : détection de parole à seuil adaptatif", async () => {
 test("son non transcrit et bégaiement dans un mot (ce que Whisper efface)", async () => {
   const { analyzeAudio } = await import("../src/core/speech-analysis.ts");
   const rate = 8000, pcm = new Float32Array(rate * 6);
-  const voice = (a: number, b: number) => { for (let i = Math.round(a * rate); i < Math.round(b * rate); i++) pcm[i] = 0.3 * Math.sin(i / 2.7); };
+  // parole simulée : syllabes (~7/s) et timbre qui change, comme une vraie voix (une sinusoïde pure serait une voyelle tenue)
+  const voice = (a: number, b: number) => { let ph = 0; for (let i = Math.round(a * rate); i < Math.round(b * rate); i++) { const t = i / rate, f = 140 + 60 * Math.sin(t * 23) + 300 * ((Math.floor(t * 7) % 3) / 2);
+    ph += (2 * Math.PI * f) / rate; pcm[i] = (0.18 + 0.12 * Math.abs(Math.sin(t * Math.PI * 7))) * (Math.sin(ph) + 0.4 * Math.sin(3 * ph + t * 40)); } };
   for (let i = 0; i < pcm.length; i++) pcm[i] = (Math.random() - 0.5) * 0.002; // bruit de fond
   voice(0.2, 0.6); voice(1.0, 1.25); voice(1.6, 2.0);      // « Bonjour » [je non transcrit] « je »
   voice(2.4, 2.55); voice(2.75, 3.4);                      // « p… présenter » transcrit comme un seul mot 2,4–3,4
@@ -241,4 +243,55 @@ test("rédaction : réponse de Gemini Nano lue, version locale utile sans IA", a
   assert.ok(!l.hashtags.some((h) => ["#aujourd", "#salut", "#tous"].includes(h)));
   assert.match(l.hook, /Pourquoi|incroyable/); assert.ok(l.titles[0].startsWith("Spider-Man"));
   assert.ok(buildPrompt(tx).includes("TITRE1:") && buildPrompt("x".repeat(9000)).length < 3200);
+});
+
+test("dérush : clips, scission entre deux mots, rognage des bords sans toucher aux voisins", async () => {
+  const { clipsOf, snapSplit, hitAt, trimEdge, wavePeaks } = await import("../src/core/derush.ts");
+  const cuts = [{ start: 4, end: 5 }];
+  const cl = clipsOf(10, cuts, [2, 4.5, 7]);
+  assert.deepEqual(cl.map((c) => [c.start, c.end]), [[0, 2], [2, 4], [5, 7], [7, 10]], "scission dans une coupe ignorée");
+  const words = [{ text: "a", start: 1, end: 1.4 }, { text: "b", start: 1.6, end: 2.2 }];
+  assert.ok(Math.abs(snapSplit(1.65, words) - 1.5) < 1e-9, "calé dans le blanc avant le mot");
+  assert.ok(Math.abs(snapSplit(2.15, words) - 2.22) < 1e-9, "après le dernier mot");
+  assert.equal(snapSplit(3, words), 3);
+  assert.equal(hitAt(4.5, cl, cuts)?.kind, "cut"); assert.equal((hitAt(6, cl, cuts) as any).clip.start, 5);
+  // rogner le début du clip [5,7] : coupe étendue jusqu'à 5,8
+  assert.deepEqual(trimEdge(10, cuts, { start: 5, end: 7 }, "start", 5.8), [{ start: 4, end: 5.8 }]);
+  // rallonger vers la gauche : on récupère une partie coupée, sans dépasser le clip voisin
+  assert.deepEqual(trimEdge(10, cuts, { start: 5, end: 7 }, "start", 4.4), [{ start: 4, end: 4.4 }]);
+  assert.deepEqual(trimEdge(10, cuts, { start: 5, end: 7 }, "start", 1), [], "tout récupéré, pas plus");
+  // fin du clip [2,4] tirée vers la droite : la coupe recule ; vers la gauche : nouvelle coupe
+  assert.deepEqual(trimEdge(10, cuts, { start: 2, end: 4 }, "end", 4.3), [{ start: 4.3, end: 5 }]);
+  assert.deepEqual(trimEdge(10, cuts, { start: 2, end: 4 }, "end", 3.5), [{ start: 3.5, end: 5 }]);
+  assert.deepEqual(cuts, [{ start: 4, end: 5 }], "les coupes d'origine ne sont pas modifiées");
+  const pcm = new Float32Array(16000); pcm[12000] = 0.8; const wp = wavePeaks(pcm, 16000, 0, 1, 4);
+  assert.equal(wp.length, 4); assert.ok(wp[3] > 0 || wp[2] >= 0);
+});
+
+test("« euh » effacé par Whisper : voyelle tenue entre deux mots ou collée à un mot ; tics de langage isolés", async () => {
+  const { analyzeAudio, analyze, steadyRuns } = await import("../src/core/speech-analysis.ts");
+  const rate = 16000, pcm = new Float32Array(rate * 8);
+  for (let i = 0; i < pcm.length; i++) pcm[i] = (Math.random() - 0.5) * 0.002;
+  const speech = (a: number, b: number) => { let ph = 0; for (let i = Math.round(a * rate); i < Math.round(b * rate); i++) { const t = i / rate, f = 140 + 60 * Math.sin(t * 23) + 300 * ((Math.floor(t * 7) % 3) / 2);
+    ph += (2 * Math.PI * f) / rate; pcm[i] = (0.18 + 0.12 * Math.abs(Math.sin(t * Math.PI * 7))) * (Math.sin(ph) + 0.4 * Math.sin(3 * ph + t * 40)); } };
+  const euh = (a: number, b: number) => { let ph = 0; for (let i = Math.round(a * rate); i < Math.round(b * rate); i++) { ph += (2 * Math.PI * 120) / rate; pcm[i] = 0.2 * (Math.sin(ph) + 0.5 * Math.sin(4 * ph) + 0.3 * Math.sin(12 * ph)); } };
+  speech(0.3, 0.8); euh(1.0, 1.5); speech(1.7, 2.1);     // « Bonjour » [euh dans le blanc] « alors »
+  euh(3.0, 3.45); speech(3.45, 3.8);                      // [euh collé] « voilà » : Whisper donne voilà 3,0–3,8
+  speech(4.5, 4.8); euh(4.8, 5.4);                        // « et » [euh collé] : Whisper donne et 4,5–5,4
+  speech(6.0, 6.6);
+  const W2 = (text: string, start: number, end: number) => ({ text, start, end });
+  const words = [W2("Bonjour", 0.3, 0.8), W2("alors", 1.7, 2.1), W2("voilà", 3.0, 3.8), W2("et", 4.5, 5.4), W2("demain", 6.0, 6.6)];
+  assert.ok(steadyRuns(pcm, rate).length >= 3, "trois voyelles tenues");
+  const h = analyzeAudio(words, pcm, rate).filter((x) => x.type === "hesitation");
+  const near = (a: number, b: number) => h.find((x) => Math.abs(x.range.start - a) < 0.15 && Math.abs(x.range.end - b) < 0.15);
+  assert.ok(near(1.0, 1.5), "euh dans le blanc : " + JSON.stringify(h.map((x) => x.range)));
+  assert.ok(near(3.0, 3.45) || near(3.0, 3.7), "euh avant « voilà », le mot gardé : " + JSON.stringify(h.map((x) => x.range)));
+  const after = h.find((x) => x.range.start > 4.55 && x.range.start < 5.0 && x.range.end > 5.2); assert.ok(after, "euh après « et », le début du mot gardé");
+  assert.ok(!h.some((x) => x.range.start < 0.8 && x.range.end > 0.3), "« Bonjour » intact");
+  // tics de langage
+  const mk = (spec: [string, number][]) => { let t = 0; return spec.map(([text, gap]) => { t += gap; const w = { text, start: t, end: t + 0.25 }; t += 0.25; return w; }); };
+  const tw = mk([["Alors,", 0], ["du", 0.3], ["coup,", 0.05], ["on", 0.4], ["part", 0.05], ["demain", 0.05], ["quoi.", 0.05], ["C'est", 0.6], ["genre", 0.05], ["incroyable", 0.05]]);
+  const f = analyze(tw).filter((x) => x.type === "filler_word");
+  const strong = f.filter((x) => x.confidence >= 0.5).map((x) => x.excerpt), weak = f.filter((x) => x.confidence < 0.5).map((x) => x.excerpt);
+  assert.deepEqual(strong, ["du coup,", "quoi."], "isolés : retirés"); assert.deepEqual(weak, [], "« genre » collé dans la phrase : laissé tranquille");
 });
