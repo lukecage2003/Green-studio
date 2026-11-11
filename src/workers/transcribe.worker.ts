@@ -3,6 +3,7 @@
 import { pipeline, env } from "@huggingface/transformers";
 import { splitAtSilences } from "../core/audio.ts";
 import { spreadSegment } from "../core/captions.ts";
+import { verbatimPrompt, verbatimFailed } from "../core/verbatim.ts";
 env.allowLocalModels = false; env.useBrowserCache = true;
 
 export const MODELS = {
@@ -11,12 +12,20 @@ export const MODELS = {
   tiny: "onnx-community/whisper-tiny_timestamped",
 } as const;
 type ModelKey = keyof typeof MODELS | "auto";
-let asr: any = null, loaded = "";
+let asr: any = null, loaded = "", vp: ReturnType<typeof verbatimPrompt> | null = null;
 const resolved: Record<string, string> = {}; // modèle demandé → modèle réellement chargé (après un repli : on ne retente pas à chaque fois)
 const post = (m: unknown) => (self as any).postMessage(m);
 
+/** Fin de la dernière parole dans un extrait (trames de 20 ms au-dessus de 10 % du niveau de crête). */
+function lastVoice(x: Float32Array): number {
+  const fr = 320, n = Math.floor(x.length / fr), r = new Float32Array(n); let pk = 0;
+  for (let k = 0; k < n; k++) { let a = 0; for (let i = k * fr; i < (k + 1) * fr; i++) a += x[i] * x[i]; r[k] = Math.sqrt(a / fr); if (r[k] > pk) pk = r[k]; }
+  for (let k = n - 1; k >= 0; k--) if (r[k] > Math.max(0.01, pk * 0.1)) return ((k + 1) * fr) / 16000;
+  return 0;
+}
+
 self.onmessage = async (e: MessageEvent) => {
-  const { type, audio, language = "fr", model = "auto", translate = false } = e.data as { type: "run"; audio: Float32Array; language?: string; model?: ModelKey; translate?: boolean };
+  const { type, audio, language = "fr", model = "auto", translate = false, verbatim = true } = e.data as { type: "run"; audio: Float32Array; language?: string; model?: ModelKey; translate?: boolean; verbatim?: boolean };
   if (type !== "run") return;
   try {
     const adapter = (navigator as any).gpu ? await (navigator as any).gpu.requestAdapter().catch(() => null) : null, webgpu = !!adapter;
@@ -40,6 +49,7 @@ self.onmessage = async (e: MessageEvent) => {
         if (!asr) throw err;
       }
       loaded = used; resolved[id] = used;
+      try { vp = verbatimPrompt(asr, language); } catch { vp = null; } // mot pour mot (amorce) si le modèle le permet
       post({ type: "loaded", device: webgpu ? "webgpu" : "wasm", model: loaded.replace(/^.*whisper-|_timestamped$/g, "") });
     }
     const total = audio.length / 16000, t0 = performance.now();
@@ -54,7 +64,15 @@ self.onmessage = async (e: MessageEvent) => {
         for (const c of segs) { const s0 = (c.timestamp[0] ?? 0) + base, s1 = (c.timestamp[1] ?? (c.timestamp[0] ?? 0) + 2) + base; words.push(...spreadSegment(String(c.text), s0, Math.min(s1, base + part.length / 16000))); }
         const done = Math.min(total, base + part.length / 16000); post({ type: "progress", p: done / total, eta: ((performance.now() - t0) / done) * (total - done) / 1000 }); continue;
       }
-      const out = await asr(part, { language, task: "transcribe", return_timestamps: "word" });
+      const opts = { language, task: "transcribe", return_timestamps: "word" };
+      let out: any = null;
+      if (verbatim && vp) { // mot pour mot : « euh », répétitions et faux départs écrits ; repli sans amorce si décrochage
+        try { out = await vp.run(part, opts);
+          const ws = (out.chunks ?? []).filter((c: any) => String(c.text).trim()).map((c: any) => ({ text: String(c.text), start: c.timestamp[0] ?? 0, end: c.timestamp[1] ?? c.timestamp[0] ?? 0 }));
+          if (verbatimFailed(ws, vp.promptWords, lastVoice(part))) out = null;
+        } catch { out = null; }
+      }
+      if (!out) out = await asr(part, opts);
       for (const c of out.chunks ?? []) {
         const text = String(c.text).trim(); if (!text) continue;
         const s = (c.timestamp[0] ?? 0) + base, en = (c.timestamp[1] ?? c.timestamp[0] + 0.3) + base;

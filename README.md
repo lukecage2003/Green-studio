@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.11)
+# Green Studio 3.1 — état réel (beta.12)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,12 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.12
+- **Transcription mot pour mot** (par défaut, option « Mot pour mot » dans l'onglet Texte) : Whisper est amorcé avec un court texte plein d'hésitations, ce qui l'incite à ÉCRIRE les « euh », répétitions et faux départs au lieu de les effacer. transformers.js ne gérant pas l'amorce pour l'horodatage par mot, elle est retirée des séquences et de l'attention croisée avant l'alignement (`src/core/verbatim.ts`) ; si un passage décroche (écho de l'amorce, texte qui s'arrête avant la fin de la parole), il est retranscrit sans amorce.
+- **Vérifié avec la vraie transcription de l'app** (worker transformers.js + Whisper ONNX, dans Chromium) sur une vraie prise : `tests/browser/asr-real.e2e.cjs` (modèles servis en local : `ASR_MODELS=… ASR_VIDEO=… npm run test:asr`). Mot pour mot : « je le tourne, bon, je n'ai pas trop de lumière, donc, excuse-moi, mais là, voilà, ici » (classique : « je ne le tourne pas trop du mien, mais là vous voyez ici ») ; « Tout supprimer » : 13 coupes / −4 s au lieu de 9 / −3 s.
+- Bancs d'essai : `scripts/asr-bench.ts` (transcription, même code que l'app, en Node) et `scripts/clean-bench.ts` (nettoyage → audio monté).
+- Recalage des coupes borné par les mots gardés voisins (« bon, je n'ai » ne perd plus le « je »). « … » noté par Whisper = hésitation coupée. Phrase abandonnée suivie d'un tic (« Et si l'étoile, bon, … ») proposée.
 
 ## 3.1.0-beta.11
 - **Montage au plus près, vérifié sur de vraies prises.** Banc d'essai : transcription Whisper small (mêmes poids que l'app, via faster-whisper) de deux vraies prises, détection, application des coupes, puis retranscription mot pour mot de l'audio monté.

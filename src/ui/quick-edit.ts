@@ -10,7 +10,7 @@ const mediaDb = () => new Promise<IDBDatabase>((res, rej) => { const r = indexed
 async function mediaPut(id: string, b: Blob) { const db = await mediaDb(); await new Promise((res, rej) => { const t = db.transaction("files", "readwrite"); t.objectStore("files").put(b, id); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
 async function mediaGet(id: string): Promise<Blob | null> { const db = await mediaDb(); return new Promise((res) => { const q = db.transaction("files").objectStore("files").get(id); q.onsuccess = () => res(q.result ?? null); q.onerror = () => res(null); }); }
 import { takeReport } from "../core/coach.ts";
-import { TICS, RHYTHM, type Rhythm, type SnapMode, snapToQuiet, cleanTranscript, analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
+import { TICS, RHYTHM, type Rhythm, type SnapMode, snapToQuiet, withBounds, cleanTranscript, analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
 import { peaks as computePeaks, loudnessGain, speechBounds } from "../core/audio.ts";
 import { buildCaptions, drawCaption, lineAt, CAPTION_DEFAULT, PRESETS, type CapLine, type CaptionStyle, type CaptionPreset } from "../core/captions.ts";
 import { probe, extractAudio, exportEdited, webCodecsAvailable, extractClip } from "../core/media.ts";
@@ -118,6 +118,7 @@ const autoTplId = () => { try { return localStorage.getItem("gs.tplAuto") || "";
 const myTics = (): string[] => { try { const v = JSON.parse(localStorage.getItem("gs.tics") || "null"); return Array.isArray(v) ? v : TICS; } catch { return TICS; } };
 const setTics = (l: string[]) => { try { localStorage.setItem("gs.tics", JSON.stringify(l)); } catch { /* */ } };
 const myRhythm = (): Rhythm => { try { const v = localStorage.getItem("gs.rhythm") as Rhythm; return v && v in RHYTHM ? v : "punchy"; } catch { return "punchy"; } }; // Dynamique par défaut : le plus rythmé
+const verbPref = () => { try { return localStorage.getItem("gs.verbatim") !== "0"; } catch { return true; } };
 const autoPref = () => { try { return localStorage.getItem("gs.autoClean") !== "0"; } catch { return true; } };
 
 export async function openEditor(o: EditorOptions) {
@@ -226,6 +227,7 @@ export async function openEditor(o: EditorOptions) {
         ${audioErr ? `<p class="error">${esc(audioErr)}</p>` : ""}
         <label class="row" style="padding:0">Qualité <select data-a="model"><option value="auto">Auto (la plus précise possible)</option><option value="small">Très précise (~250 Mo)</option><option value="base">Précise (~80 Mo)</option><option value="tiny">Rapide (~40 Mo)</option></select></label>
         <label class="row" style="padding:0;justify-content:space-between">Supprimer automatiquement les défauts<input type="checkbox" data-a="autoPref" ${autoPref() ? "checked" : ""}></label>
+        <label class="row" style="padding:0;justify-content:space-between">Mot pour mot (écrit les « euh », répétitions et faux départs)<input type="checkbox" data-a="verbPref" ${verbPref() ? "checked" : ""}></label>
         <button class="ib go" data-a="transcribe" ${can ? "" : "disabled"}>Transcrire</button>
         <div class="bar" hidden><i></i></div><p data-r="tp"></p>
         <p>Sans transcription, vous pouvez couper avec ⟦ Début / Couper ⟧ sur la timeline.</p></div>`;
@@ -568,7 +570,7 @@ export async function openEditor(o: EditorOptions) {
           : "Échec de la transcription : " + d.message);
       }
     };
-    const copy = pcm.slice(); worker.postMessage({ type: "run", audio: copy, language: "fr", model }, [copy.buffer]);
+    const copy = pcm.slice(); worker.postMessage({ type: "run", audio: copy, language: "fr", model, verbatim: verbPref() }, [copy.buffer]);
   }
 
   /** Sous-titres anglais : Whisper traduit directement l'audio (sur l'appareil), phrase par phrase. */
@@ -622,7 +624,7 @@ export async function openEditor(o: EditorOptions) {
   async function cleanAll() {
     await audioP; if (words) sugs = suggest(words);
     let r: Range[] = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range) && s.confidence >= AUTO_MIN).map((s) => ({ ...s.range, mode: snapMode(s) }));
-    if (pcm) r = snapToQuiet(r, pcm, 16000); // bords de coupe sur le silence le plus proche (au centième de seconde)
+    if (pcm) r = snapToQuiet(withBounds(r, words), pcm, 16000); // bords de coupe sur le silence le plus proche (au centième de seconde)
     r.push(...takeCuts()); // reprises et hors-script retirés si la prise suit le script
     r.push(...((await edgeCuts()) ?? []));
     if (!r.length) { refresh(); return toast("Aucun défaut à supprimer. 👌", 3000); }
@@ -849,6 +851,7 @@ export async function openEditor(o: EditorOptions) {
       case "safe": { const r = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range) && s.confidence >= SAFE).map((s) => s.range); if (r.length) { session.addCuts(r); commit(); toast(`${r.length} coupe(s) appliquée(s). ↶ pour annuler.`, 3000); } break; }
       case "clean": cleanAll(); break;
       case "take": bestTake(); break;
+      case "verbPref": { const c = (t as HTMLInputElement).checked; try { localStorage.setItem("gs.verbatim", c ? "1" : "0"); } catch { /* */ } break; }
       case "autoPref": { const c = (t as HTMLInputElement).checked; try { localStorage.setItem("gs.autoClean", c ? "1" : "0"); } catch { /* */ } break; }
       case "sil": { const r = sugs.filter((s) => s.type === "long_silence" && !ignored.has(s.id) && !covered(s.range)).map((s) => s.range); if (r.length) { session.addCuts(r); commit(); } break; }
     }

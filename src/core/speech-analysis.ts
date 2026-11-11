@@ -86,7 +86,16 @@ export function cleanTranscript(words: Word[]): Word[] {
  */
 /** out : hésitation isolée (s'étend vers le silence) ; pre : coupe qui finit juste avant un mot gardé (sa fin ne s'en approche jamais). */
 export type SnapMode = "both" | "out" | "pre";
-export function snapToQuiet(ranges: (Range & { mode?: SnapMode })[], pcm: Float32Array, rate: number, win = 0.08): Range[] {
+/** Bornes de chaque coupe : fin du mot gardé juste avant, début du mot gardé juste après (un recalage ne les dépasse jamais). */
+export function withBounds<T extends Range>(ranges: T[], words: Word[] | null): (T & { lo?: number; hi?: number })[] {
+  if (!words?.length) return ranges;
+  const all = ranges.map((r) => ({ ...r })), cut = (w: Word) => { const m = (w.start + w.end) / 2; return all.some((r) => m >= r.start && m < r.end); };
+  const keptW = words.filter((w) => !cut(w));
+  return all.map((r) => { let lo: number | undefined, hi: number | undefined;
+    for (const w of keptW) { const m = (w.start + w.end) / 2; if (m < r.start) lo = w.end; else if (m > r.end && hi === undefined) hi = w.start; }
+    return { ...r, lo, hi }; });
+}
+export function snapToQuiet(ranges: (Range & { mode?: SnapMode; lo?: number; hi?: number })[], pcm: Float32Array, rate: number, win = 0.08): Range[] {
   const fr = Math.max(1, Math.round(rate * 0.01)), n = Math.floor(pcm.length / fr), e = new Float32Array(n);
   for (let k = 0; k < n; k++) { let a = 0; for (let i = k * fr; i < (k + 1) * fr; i++) a += pcm[i] * pcm[i]; e[k] = a; }
   const quiet = (t: number, lo: number, hi: number, before = win, after = win) => {
@@ -96,8 +105,9 @@ export function snapToQuiet(ranges: (Range & { mode?: SnapMode })[], pcm: Float3
     return best * 0.01 + 0.005;
   };
   return ranges.map((r) => {
-    const s = r.mode === "out" ? quiet(r.start, 0, r.end - 0.03, win * 1.5, 0.01) : quiet(r.start, 0, r.end - 0.03);
-    const en = r.mode === "out" ? quiet(r.end, s + 0.03, Infinity, 0.01, win * 1.5) : r.mode === "pre" ? Math.min(r.end, quiet(r.end, s + 0.03, Infinity, win, 0)) : quiet(r.end, s + 0.03, Infinity);
+    const lo = Math.min(r.start, r.lo ?? 0), hi = Math.max(r.end, r.hi ?? Infinity);
+    const s = r.mode === "out" ? quiet(r.start, lo, r.end - 0.03, win * 1.5, 0.01) : quiet(r.start, lo, r.end - 0.03);
+    const en = r.mode === "out" ? quiet(r.end, s + 0.03, hi, 0.01, win * 1.5) : r.mode === "pre" ? Math.min(r.end, quiet(r.end, s + 0.03, hi, win, 0)) : quiet(r.end, s + 0.03, hi);
     return en - s >= 0.03 ? { start: s, end: en } : { start: r.start, end: r.end };
   });
 }
@@ -147,7 +157,8 @@ export function analyze(words: Word[], opt: Partial<AnalysisOptions> = {}): Sugg
   }
   for (let i = 0; i < words.length; i++) {
     if (used.has(i)) continue;
-    // 2. Hésitations
+    // 2. Hésitations (« … » = hésitation que Whisper note sans la nommer)
+    if (/^[.…]+,?$/.test(words[i].text.trim())) { push("hesitation", i, i, 0.8); continue; }
     if (fill.has(n[i])) { push("hesitation", i, i, 0.9 * Math.min(1, conf(i) + 0.2)); continue; }
     // 2 bis. Tics de langage (« du coup », « en fait », « tu vois », « genre »…) : seulement s'ils sont isolés (pause ou virgule)
     const tl = ticAt(n, i, o.tics);
@@ -167,6 +178,18 @@ export function analyze(words: Word[], opt: Partial<AnalysisOptions> = {}): Sugg
     const nx = n[i + 1];
     if (nx && n[i].length >= 1 && n[i].length <= 3 && n[i].length < nx.length && nx.startsWith(n[i]) && words[i + 1].start - words[i].end <= o.maxRepeatGap)
       push("stutter", i, i, 0.65 * (0.6 + 0.4 * conf(i)));
+  }
+  // 4 bis. Phrase abandonnée : court fragment (≤ 4 mots) après une pause ou une fin de phrase, suivi d'un tic (« bon », « euh »…)
+  //        puis d'une reprise. Proposé seulement : « Et là, bon, on y va » est une phrase normale.
+  for (let i = 0; i < words.length; i++) {
+    const startOk = i === 0 || /[.!?…]$/.test(words[i - 1].text) || words[i].start - words[i - 1].end >= 0.3;
+    if (!startOk || used.has(i)) continue;
+    for (let L = 1; L <= 4 && i + L < words.length; L++) {
+      const j = i + L, tl = ticAt(n, j, ["bon", "euh", "enfin", "non", "pardon", "attends"]) || (fill.has(n[j]) ? 1 : 0);
+      if (!tl || /[.!?…]$/.test(words[j - 1].text)) continue;
+      if (j + tl >= words.length || [...Array(L).keys()].some((k) => used.has(i + k))) break;
+      push("false_start", i, j - 1, 0.42); break; // le tic lui-même est traité à part
+    }
   }
   // 5. Silences longs : plage = le silence en excès (on garde une pause naturelle de 0,4 s)
   for (let i = 0; i + 1 < words.length; i++) {
@@ -256,7 +279,7 @@ export function analyzeAudio(words: Word[], pcm: Float32Array, rate: number, tak
     if (len < ex + 0.3 || busy(w.start, w.end)) continue;
     if (runs.some((r) => r.end >= w.end - 0.1 && r.start < w.end - 0.15)) continue; // « et… euh » : le surplus est APRÈS le mot (règle 3)
     // dernière plage sans voix (≥ 60 ms) laissant au moins ~la moitié de la durée normale du mot après elle
-    const kA = Math.floor((w.start + 0.06) / dt), kB = Math.min(on.length, Math.floor((w.end - Math.max(0.12, ex * 0.5)) / dt));
+    const kA = Math.floor((w.start + 0.06) / dt), kB = Math.min(on.length, Math.floor((w.end - Math.max(0.15, ex + 0.05)) / dt)); // le vrai mot garde au moins sa durée normale
     let gapEnd = -1, run = 0;
     for (let k = kA; k < kB; k++) { if (!on[k]) run++; else { if (run * dt >= 0.06) gapEnd = k; run = 0; } }
     if (run * dt >= 0.06) gapEnd = kB;

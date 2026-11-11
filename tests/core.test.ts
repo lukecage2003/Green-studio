@@ -350,3 +350,11 @@ test("parole avalée par Whisper (mot étiré) : on coupe jusqu'au vrai mot, san
   const [pre] = snapToQuiet([{ start: 1.0, end: 1.55, mode: "pre" }], pcm, rate); assert.ok(pre.end <= 1.55 + 1e-9 && pre.end > 1.4, JSON.stringify(pre));
   const [out] = snapToQuiet([{ start: 1.05, end: 1.35, mode: "out" }], pcm, rate); assert.ok(out.start <= 1.05 && out.end >= 1.35 && out.end <= 1.6, JSON.stringify(out));
 });
+
+test("recalage borné : une coupe ne mange jamais le mot gardé voisin (« bon, je n'ai » → « je » intact)", async () => {
+  const { withBounds, snapToQuiet } = await import("../src/core/speech-analysis.ts");
+  const rate = 16000, pcm = new Float32Array(rate * 2); // tout est silencieux : sans bornes, le recalage irait jusqu'au bout de la fenêtre
+  const words = [{ text: "bon,", start: 0.5, end: 0.7 }, { text: "je", start: 0.72, end: 0.8 }, { text: "n'ai", start: 0.8, end: 1.0 }];
+  const [r] = snapToQuiet(withBounds([{ start: 0.5, end: 0.7, mode: "out" as const }], words), pcm, rate);
+  assert.ok(r.end <= 0.72 + 1e-9, JSON.stringify(r));
+});
