@@ -191,3 +191,54 @@ test("sous-titres traduits : un segment est réparti sur ses mots, dans l'ordre 
   assert.equal(buildCaptions(w, [{ start: 3.5, end: 5 }]).flatMap((l) => l.words).length, 2, "les mots coupés disparaissent aussi en anglais");
   assert.deepEqual(spreadSegment("  ", 0, 1), []);
 });
+
+test("commande vocale « je reprends » : la tentative ratée et la commande sont retirées, pas une phrase normale", () => {
+  const mk = (spec: [string, number][]) => { let t = 0; return spec.map(([text, gap]) => { t += gap; const w = { text, start: t, end: t + 0.25 }; t += 0.25; return w; }); };
+  // « Bonjour à tous. » pause « Aujourd'hui on parle du » « je reprends » pause « Aujourd'hui on parle du nouveau film »
+  const w = mk([["Bonjour", 0], ["à", 0.05], ["tous.", 0.05], ["Aujourd'hui", 0.8], ["on", 0.05], ["parle", 0.05], ["du", 0.05], ["je", 0.3], ["reprends", 0.05],
+    ["Aujourd'hui", 0.9], ["on", 0.05], ["parle", 0.05], ["du", 0.05], ["nouveau", 0.05], ["film.", 0.05]]);
+  const r = analyze(w).filter((s) => s.type === "retake");
+  assert.equal(r.length, 1); assert.equal(r[0].firstWord, 3); assert.equal(r[0].lastWord, 8);
+  assert.ok(r[0].range.start === w[3].start && r[0].range.end < w[9].start && r[0].range.end > w[8].end, "coupe jusqu'avant la reprise, en gardant une courte pause");
+  assert.ok(r[0].confidence > 0.9);
+  // phrase normale, sans pause après : rien
+  const n = mk([["Je", 0], ["reprends", 0.05], ["ma", 0.05], ["voiture", 0.05], ["demain.", 0.05]]);
+  assert.equal(analyze(n).filter((s) => s.type === "retake").length, 0);
+  // « coupez » en fin de prise : tout ce qui précède depuis la dernière pause
+  const c = mk([["Merci", 0], ["d'avoir", 0.05], ["regardé.", 0.05], ["Abonnez", 0.9], ["euh", 0.05], ["coupez", 0.4]]);
+  const rc = analyze(c).filter((s) => s.type === "retake"); assert.equal(rc.length, 1); assert.equal(rc[0].firstWord, 3); assert.equal(rc[0].lastWord, 5);
+});
+
+test("coach : check studio (contre-jour, bruit, cadrage) et bilan de prise", async () => {
+  const { studioCheck, noiseFloorDb, takeReport } = await import("../src/core/coach.ts");
+  const ids = (m: any) => studioCheck(m).filter((x) => !x.ok).map((x) => x.id);
+  const good = { x: 0.5, y: 0.12, s: 0.3 };
+  assert.deepEqual(ids({ subj: 0.5, bg: 0.45, head: good, floorDb: -60 }), []);
+  assert.deepEqual(ids({ subj: 0.3, bg: 0.8, head: good, floorDb: -60 }), ["backlight"]);
+  assert.deepEqual(ids({ subj: 0.5, bg: 0.5, head: good, floorDb: -32 }), ["noise"]);
+  assert.deepEqual(ids({ subj: 0.5, bg: 0.5, head: { x: 0.8, y: 0.0, s: 0.08 }, floorDb: null }), ["top", "center", "far"]);
+  assert.deepEqual(ids({ subj: null, bg: null, head: null, floorDb: null }), ["nobody"]);
+  assert.ok(Math.abs(noiseFloorDb(Array.from({ length: 50 }, (_, i) => (i < 40 ? 0.001 : 0.3)))! + 60) < 0.01);
+  // 60 mots en 20 s de parole = 180 mots/min ; 2 « euh » ; une coupe
+  const w = Array.from({ length: 60 }, (_, i) => ({ text: "mot", start: i / 3, end: i / 3 + 0.3 }));
+  const sg: any[] = [{ type: "hesitation" }, { type: "hesitation" }];
+  const r = takeReport(w, sg, 20, [{ start: 0, end: 1 }]);
+  assert.ok(r.wpm > 170 && r.wpm < 190, String(r.wpm)); assert.equal(r.tics, 2); assert.equal(r.removed, 1);
+  assert.ok(r.score >= 50 && r.score < 100); assert.ok(r.tips.length >= 1);
+  const fast = takeReport(Array.from({ length: 90 }, (_, i) => ({ text: "x", start: i / 4.5, end: i / 4.5 + 0.2 })), [], 20, []);
+  assert.ok(fast.wpm > 230 && fast.tips[0].startsWith("Débit rapide"));
+});
+
+test("rédaction : réponse de Gemini Nano lue, version locale utile sans IA", async () => {
+  const { parseDraft, localDraft, buildPrompt } = await import("../src/core/writer.ts");
+  const d = parseDraft("**TITRE1:** Le nouveau Spider-Man déçoit ?\nTITRE2: Spider-Man : mon avis\nTITRE3: Faut-il voir Spider-Man ?\nDESCRIPTION: Mon avis honnête. Sans spoiler.\nHASHTAGS: #spiderman #marvel cinema #comics\nACCROCHE: « Ce film m'a vraiment surpris. »");
+  assert.ok(d); assert.equal(d!.titles.length, 3); assert.equal(d!.titles[0], "Le nouveau Spider-Man déçoit ?");
+  assert.deepEqual(d!.hashtags, ["#spiderman", "#marvel", "#cinema", "#comics"]); assert.equal(d!.hook, "Ce film m'a vraiment surpris.");
+  assert.equal(parseDraft("Désolé, je ne peux pas."), null);
+  const tx = "Salut à tous. Aujourd'hui on parle du nouveau Spider-Man. Pourquoi Spider-Man divise autant les fans ? Le Spider-Man de Marvel a un costume incroyable. Les fans de Marvel adorent.";
+  const l = localDraft(tx);
+  assert.equal(l.by, "local"); assert.ok(l.hashtags.includes("#spiderman") && l.hashtags.includes("#marvel"), l.hashtags.join(" "));
+  assert.ok(!l.hashtags.some((h) => ["#aujourd", "#salut", "#tous"].includes(h)));
+  assert.match(l.hook, /Pourquoi|incroyable/); assert.ok(l.titles[0].startsWith("Spider-Man"));
+  assert.ok(buildPrompt(tx).includes("TITRE1:") && buildPrompt("x".repeat(9000)).length < 3200);
+});

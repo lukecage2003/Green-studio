@@ -44,7 +44,9 @@ public class StudioPlugin extends Plugin {
         if (engine == null) engine = new StudioEngine(getActivity(), surfaceView, new StudioEngine.Listener() {
             @Override public void onStats(int fps, double inferMs, int w, int h, double lightG, Double expo) {
                 JSObject o = new JSObject(); o.put("fps", fps); o.put("inferMs", inferMs); o.put("width", w); o.put("height", h); o.put("lightG", lightG);
-                if (expo != null) o.put("expo", expo); notifyListeners("stats", o);
+                if (expo != null) o.put("expo", expo);
+                if (engine != null) { double[] c = engine.coach(); o.put("subj", c[0]); o.put("bg", c[1]); o.put("hx", c[2]); o.put("hy", c[3]); o.put("hs", c[4]); }
+                notifyListeners("stats", o);
             }
             @Override public void onLevel(double rms) { JSObject o = new JSObject(); o.put("rms", rms); notifyListeners("level", o); }
             @Override public void onError(String m) { JSObject o = new JSObject(); o.put("message", m); notifyListeners("error", o); }
@@ -88,7 +90,7 @@ public class StudioPlugin extends Plugin {
         if (d.has("autoLight")) p.autoLight = d.optBoolean("autoLight", true);
         p.cz = f(d, "cz", p.cz); p.sx = f(d, "sx", p.sx); p.sy = f(d, "sy", p.sy); p.zoom = f(d, "zoom", p.zoom); p.px = f(d, "px", p.px); p.py = f(d, "py", p.py);
         p.br = f(d, "br", p.br); p.ct = f(d, "ct", p.ct); p.sa = f(d, "sa", p.sa); p.lo = f(d, "lo", p.lo); p.hi = f(d, "hi", p.hi);
-        p.dsp = f(d, "dsp", p.dsp); p.wrap = f(d, "wrap", p.wrap); p.shd = f(d, "shd", p.shd); p.skin = f(d, "skin", p.skin); p.warm = f(d, "warm", p.warm); p.lgt = f(d, "lgt", p.lgt); p.harm = f(d, "harm", p.harm);
+        p.dsp = f(d, "dsp", p.dsp); p.wrap = f(d, "wrap", p.wrap); p.shd = f(d, "shd", p.shd); p.skin = f(d, "skin", p.skin); p.warm = f(d, "warm", p.warm); p.lgt = f(d, "lgt", p.lgt); p.harm = f(d, "harm", p.harm); p.par = f(d, "par", p.par);
         if (d.has("fine")) p.fine = d.optBoolean("fine", true);
         if (d.has("blurBg")) p.blurBg = d.optBoolean("blurBg", false);
         call.resolve();

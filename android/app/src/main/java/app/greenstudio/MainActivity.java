@@ -19,6 +19,7 @@ public class MainActivity extends BridgeActivity {
         });
         registerPlugin(GalleryPlugin.class); // avant super.onCreate : les plugins doivent être connus du pont au démarrage
         registerPlugin(StudioPlugin.class);
+        registerPlugin(WriterPlugin.class);
         super.onCreate(savedInstanceState);
         // Appli de tournage : l'écran ne s'éteint pas pendant qu'elle est ouverte.
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);

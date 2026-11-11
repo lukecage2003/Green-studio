@@ -22,8 +22,13 @@ const FAKE = `self.onmessage = (e) => { if (e.data.type === 'run') self.postMess
   console.log('mots coupés :', cut, '·', await p.textContent('.qe [data-r=status]'));
   // gardés : « Salut à tous » et la 2e tentative complète ; coupés : ad-lib, tentative ratée, « voilà »
   assert.equal(cut, '11000111110000001');
-  await p.click('.qe [data-tab=sg]'); const card = await p.textContent('.qe .body .card'); console.log('bilan :', card.replace(/\s+/g, ' '));
+  await p.click('.qe [data-tab=sg]'); const card = await p.textContent('.qe .body .card:not([data-coach])'); console.log('bilan :', card.replace(/\s+/g, ' '));
+  assert.ok(await p.$('.qe [data-coach]'), 'bilan de la prise affiché'); console.log('coach :', (await p.textContent('.qe [data-coach]')).replace(/\s+/g, ' ').slice(0, 140));
   assert.match(card, /2 phrase\(s\) gardée\(s\), 1 reprise\(s\) retirée\(s\)/); assert.match(card, /Abonnez-vous/);
+  // Publication : sans Gemini Nano (navigateur), version locale à partir du texte gardé
+  await p.click('.qe [data-a=pub]'); await p.waitForSelector('.qe .modal [data-copy]', { timeout: 15000 });
+  const pub = (await p.textContent('.qe .modal')).replace(/\s+/g, ' '); console.log('publication :', pub.slice(0, 220));
+  assert.match(pub, /Version simple/); assert.match(pub, /#spiderman/); await p.click('.qe .modal [data-x=ok]');
   // Sous-titres anglais : traduction (Whisper simulé), seuls les passages gardés restent
   await p.click('.qe [data-tab=cc]'); await p.click('.qe [data-a=lang][data-v=en]');
   await p.waitForFunction(() => /Traduction prête \(7 mots\)/.test(document.querySelector('.qe .body').textContent), null, { timeout: 20000 });

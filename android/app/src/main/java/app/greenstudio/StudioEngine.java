@@ -81,7 +81,7 @@ public class StudioEngine {
     public static class Params {
         public volatile boolean mirror = true, autoLight = true;
         public volatile float cz = 1, sx = 0, sy = 0, zoom = 1, px = 0, py = 0, br = 0, ct = 1, sa = 1;
-        public volatile float lo = .35f, hi = .65f, dsp = .6f, wrap = .3f, shd = .25f, skin = .25f, warm = 0, lgt = 0, harm = .5f;
+        public volatile float lo = .35f, hi = .65f, dsp = .6f, wrap = .3f, shd = .25f, skin = .25f, warm = 0, lgt = 0, harm = .5f, par = .6f; // par : plateau 3D
         public volatile boolean fine = true; // contours fins (filtre guidé)
         public volatile boolean blurBg; // décor « Flou » : vrai fond de la caméra, flouté
         public volatile int vx, vy, vw, vh; // zone du viseur dans la surface (pixels physiques)
@@ -210,6 +210,7 @@ public class StudioEngine {
             for (int i = 0; i < mask.length; i++) { float v = fb.get(i); mask[i] = (byte) (v <= 0 ? 0 : v >= 1 ? 255 : (int) (v * 255)); }
             double ms = SystemClock.uptimeMillis() - t0; inferMs += (ms - inferMs) * .15;
             if (++lumN % 6 == 0) measureLight(img, rot, mask, mw, mh);
+            headSeen(mask, mw, mh);
             gl.post(() -> { try { render(img, rot, mask, mw, mh); } catch (Throwable t) { Log.e(TAG, "rendu", t); fail("Rendu : " + t.getMessage()); } finally { img.close(); } });
         }).addOnFailureListener(analysis, e -> { Log.w(TAG, "détourage", e); img.close(); });
     }
@@ -238,6 +239,40 @@ public class StudioEngine {
         if (p.autoLight && t != null && subjLum != null) { double l = Math.min(.95, Math.max(.03, subjLum)); gt = Math.log(1 - t) / Math.log(1 - l); }
         gt = Math.min(2.2, Math.max(.8, gt)); lightG += (gt - lightG) * .5;
         adjustExposure(t);
+    }
+
+    /* ======================= Plateau 3D ======================= */
+    // Même règle que la version web : tête à droite → décor à gauche, tête plus proche → décor un peu plus grand. Amorti.
+    private volatile float parTx, parTy, parTz; private volatile long parLast; private float parX, parY, parZ, parS0; private long parT;
+    private void headSeen(byte[] m, int w, int h) {
+        int th = Math.max(3, (int) (w * .04f)), top = -1;
+        for (int y = 0; y < h && top < 0; y += 2) { int c = 0; for (int x = 0; x < w; x += 2) if ((m[y * w + x] & 0xff) > 128) c++; if (c * 2 > th) top = y; }
+        if (top < 0 || top > h * .8f) return;
+        int y0 = Math.min(h - 1, top + (int) (h * .03f)), y1 = Math.min(h, top + (int) (h * .13f)); long sx = 0; int n = 0, rows = 0;
+        for (int y = y0; y < y1; y += 2) { rows++; for (int x = 0; x < w; x += 2) if ((m[y * w + x] & 0xff) > 128) { sx += x; n++; } }
+        if (n < 8 || rows == 0) return;
+        float hx = (float) sx / n / w, hy = (float) top / h, hs = n * 2f / rows / w, x = p.mirror ? 1 - hx : hx;
+        parS0 = parS0 > 0 ? parS0 + (hs - parS0) * .004f : hs;
+        parTz = Math.max(-.35f, Math.min(.35f, (hs - parS0) / Math.max(.05f, parS0)));
+        headX = x; headY = hy; headS = hs;
+        parTx = Math.max(-1, Math.min(1, (x - .5f) * 3)); parTy = Math.max(-1, Math.min(1, (hy - .22f) * 2)); parLast = SystemClock.uptimeMillis();
+    }
+    /** {zoom, dx, dy} pour l'image courante. */
+    private volatile float headX = -1, headY = -1, headS = -1;
+    /** Mesures pour le « check studio » : lumière du visage, du fond, position et taille de la tête (−1 si inconnues). */
+    public double[] coach() {
+        boolean fresh = SystemClock.uptimeMillis() - parLast < 1500;
+        return new double[]{ subjLum != null ? subjLum : -1, bgLum != null ? bgLum : -1, fresh ? headX : -1, fresh ? headY : -1, fresh ? headS : -1 };
+    }
+    private float[] parallax() {
+        long now = SystemClock.uptimeMillis(); float dt = Math.min(.2f, parT > 0 ? (now - parT) / 1000f : .033f); parT = now;
+        if (now - parLast > 1500) { float e = (float) Math.exp(-dt); parTx *= e; parTy *= e; parTz *= e; }
+        float k = 1 - (float) Math.exp(-dt / .25f); parX += (parTx - parX) * k; parY += (parTy - parY) * k; parZ += (parTz - parZ) * k;
+        float a = p.par; if (a <= 0 || p.blurBg) return new float[]{ 1, 0, 0 };
+        return new float[]{ 1 + .16f * a + .07f * a * parZ, parX * .06f * a, parY * .03f * a };
+    }
+    private static float[] slide(float[] b, float dx, float dy) {
+        b[2] = Math.max(0, Math.min(1 - b[0], b[2] + dx * b[0])); b[3] = Math.max(0, Math.min(1 - b[1], b[3] + dy * b[1])); return b;
     }
 
     private Double lightTarget() {
@@ -582,7 +617,8 @@ public class StudioEngine {
 
     private void setUniforms(int rot) {
         float cw = camW > 0 ? camW : 1080, ch = camH > 0 ? camH : 1920;
-        float[] c = cover(cw, ch, p.cz, 0, 0), b = cover(bgW, bgH, p.zoom, p.px, p.py), b2 = cover(bg2W, bg2H, p.zoom, p.px, p.py);
+        float[] pr = parallax(), c = cover(cw, ch, p.cz, 0, 0), b = slide(cover(bgW, bgH, p.zoom * pr[0], p.px, p.py), pr[1], pr[2]),
+            b2 = cover(bg2W, bg2H, p.zoom * (p.par > 0 ? 1 + .16f * p.par : 1), p.px, p.py);
         float m = Math.min(1f, (SystemClock.uptimeMillis() - mixT0) / 220f); m = m * m * (3 - 2 * m);
         GLES30.glUniform1i(U.get("uRot"), rot);
         GLES30.glUniform2f(U.get("uCS"), c[0], c[1]); GLES30.glUniform2f(U.get("uCO"), c[2], c[3]);

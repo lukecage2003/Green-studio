@@ -8,6 +8,7 @@ import { compose, drawTitle, activeAt, type Overlay, type OverlayMode, type Titl
 const mediaDb = () => new Promise<IDBDatabase>((res, rej) => { const r = indexedDB.open("gs-media", 1); r.onupgradeneeded = () => r.result.createObjectStore("files"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
 async function mediaPut(id: string, b: Blob) { const db = await mediaDb(); await new Promise((res, rej) => { const t = db.transaction("files", "readwrite"); t.objectStore("files").put(b, id); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
 async function mediaGet(id: string): Promise<Blob | null> { const db = await mediaDb(); return new Promise((res) => { const q = db.transaction("files").objectStore("files").get(id); q.onsuccess = () => res(q.result ?? null); q.onerror = () => res(null); }); }
+import { takeReport } from "../core/coach.ts";
 import { analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
 import { peaks as computePeaks, loudnessGain, speechBounds } from "../core/audio.ts";
 import { buildCaptions, drawCaption, lineAt, CAPTION_DEFAULT, PRESETS, type CapLine, type CaptionStyle, type CaptionPreset } from "../core/captions.ts";
@@ -15,7 +16,7 @@ import { probe, extractAudio, exportEdited, webCodecsAvailable, extractClip } fr
 import { StudioVoice, loadDenoiser } from "../core/voice.ts";
 import { exportRealtime } from "../core/export.ts";
 
-const LABEL: Record<IssueType, string> = { repetition: "Répétition", stutter: "Bégaiement", false_start: "Faux départ", hesitation: "Hésitation", long_silence: "Silence long", untranscribed: "Bégaiement / son non transcrit" };
+const LABEL: Record<IssueType, string> = { retake: "Reprise (« je reprends »)", repetition: "Répétition", stutter: "Bégaiement", false_start: "Faux départ", hesitation: "Hésitation", long_silence: "Silence long", untranscribed: "Bégaiement / son non transcrit" };
 const SAFE = 0.7;
 const fmt = (t: number) => { t = Math.max(0, t); const m = Math.floor(t / 60), s = Math.floor(t % 60); return `${m}:${String(s).padStart(2, "0")}`; };
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -124,6 +125,7 @@ export async function openEditor(o: EditorOptions) {
       <label>Zooms <input type="checkbox" data-a="zooms"></label>
       <button class="ib" data-a="ins" title="Insérer une image ou un extrait par-dessus la vidéo">🖼 Insérer</button>
       <button class="ib" data-a="title" title="Ajouter un bandeau titre">🅣 Bandeau</button>
+      <button class="ib" data-a="pub" title="Titres, description, hashtags et accroche">✍️ Publication</button>
       <button class="ib" data-a="voiceAB" title="Écouter votre voix avant / après le traitement studio">🎙 Voix studio</button>
       <button class="ib" data-a="trim" title="Couper le silence avant la première et après la dernière parole">✂ Bords muets</button>
       <button class="ib" data-a="in" title="Marquer le début d'une coupe à la tête de lecture">⟦ Début</button><button class="ib" data-a="out" disabled>Couper ⟧</button>
@@ -230,13 +232,29 @@ export async function openEditor(o: EditorOptions) {
     });
   }
 
+  /** Bilan de la prise (coach) + comparaison avec la moyenne des prises précédentes. */
+  function coachCard() {
+    if (!words || words.length < 8) return "";
+    const r = takeReport(words, sugs, duration, session.cuts);
+    let hist: { k: string; score: number; wpm: number; tpm: number }[] = []; try { hist = JSON.parse(localStorage.getItem("gs.coach") || "[]"); } catch { /* */ }
+    const prev = hist.filter((h) => h.k !== storeKey).slice(-10);
+    hist = [...hist.filter((h) => h.k !== storeKey), { k: storeKey, score: r.score, wpm: r.wpm, tpm: r.ticsPerMin }].slice(-40);
+    try { localStorage.setItem("gs.coach", JSON.stringify(hist)); } catch { /* */ }
+    const avg = prev.length ? Math.round(prev.reduce((a, h) => a + h.score, 0) / prev.length) : null;
+    const cmp = avg == null ? "" : r.score > avg + 2 ? ` · <span style="color:var(--accent)">▲ ${r.score - avg} vs vos ${prev.length} dernières prises</span>` : r.score < avg - 2 ? ` · <span style="color:#ffd60a">▼ ${avg - r.score} vs vos ${prev.length} dernières prises</span>` : " · comme d’habitude";
+    const col = r.score >= 80 ? "var(--accent)" : r.score >= 60 ? "#ffd60a" : "#ff6961";
+    return `<div class="card" data-coach style="margin-bottom:10px"><div style="display:flex;align-items:center;gap:14px">
+      <div style="flex:0 0 58px;height:58px;border-radius:29px;border:4px solid ${col};display:grid;place-items:center;font-size:20px;font-weight:800">${r.score}</div>
+      <div><b>Bilan de la prise</b><p style="margin:2px 0 0">${r.wpm ? r.wpm + " mots/min · " : ""}${r.tics} tic(s) · ${r.silences} silence(s)${r.removed > 0.5 ? ` · −${Math.round(r.removed)} s` : ""}${cmp}</p></div></div>
+      <ul style="margin:8px 0 0;padding-left:18px">${r.tips.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>`;
+  }
   function renderSugs() {
     if (!words) { body.innerHTML = `<div class="card"><p>Les suggestions apparaissent après la transcription (onglet Texte).</p></div>`; return; }
-    if (!sugs.length) { body.innerHTML = `<div class="card"><p>Aucune répétition, hésitation ni silence long détecté. 👌</p>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}</div>`; return; }
+    if (!sugs.length) { body.innerHTML = coachCard() + `<div class="card"><p>Aucune répétition, hésitation ni silence long détecté. 👌</p>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}</div>`; return; }
     const open = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range));
     const all = open.filter((s) => s.confidence >= AUTO_MIN).length, sil = open.filter((s) => s.type === "long_silence").length;
     const take = takeInfo ? `<div class="card" style="margin-bottom:10px"><b>Meilleure prise</b><p>${esc(takeSummary())}</p>${takeInfo.missing.length ? `<p>Non dit : ${takeInfo.missing.map((m) => "« " + esc(m) + " »").join(", ")}</p>` : ""}</div>` : "";
-    body.innerHTML = take + `<div class="row" style="padding:0 0 8px"><button class="ib go" data-a="clean" ${all ? "" : "disabled"}>✨ Tout supprimer (${all})</button>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}
+    body.innerHTML = coachCard() + take + `<div class="row" style="padding:0 0 8px"><button class="ib go" data-a="clean" ${all ? "" : "disabled"}>✨ Tout supprimer (${all})</button>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}
       <button class="ib" data-a="sil" ${sil ? "" : "disabled"}>Couper les silences (${sil})</button></div>` +
       sugs.map((s) => { const on = covered(s.range), ign = ignored.has(s.id);
         return `<div class="sg ${on ? "on" : ""} ${ign ? "ign" : ""}" data-s="${esc(s.id)}"><div class="t"><b>${LABEL[s.type]} · ${Math.round(s.confidence * 100)} %${on ? " · coupé" : ""}</b>
@@ -508,6 +526,45 @@ export async function openEditor(o: EditorOptions) {
   }
 
   /** Écoute comparée : 6 s à partir de la tête de lecture, son d'origine puis voix studio. */
+  /** Textes de publication : Gemini Nano sur le téléphone si possible, sinon version locale. */
+  async function publishText() {
+    if (!words) { toast("Transcrivez d’abord la vidéo (onglet Texte).", 3000); return; }
+    video.pause();
+    const W = await import("../core/writer.ts"), N = await import("../native.ts");
+    const cutW = (w: Word) => { const m = (w.start + w.end) / 2; return session.cuts.some((c) => m >= c.start && m < c.end); };
+    const text = words.filter((w) => !cutW(w)).map((w) => w.text).join(" ");
+    const m = document.createElement("div"); m.className = "modal";
+    m.innerHTML = `<div class="card" style="max-height:80vh;overflow:auto"><b>Publication</b><p data-r="pst">Rédaction sur votre téléphone…</p><div data-r="pres"></div>
+      <div class="row" style="padding:0"><button class="ib" data-x="again" hidden>↻ Autres idées</button><button class="ib" data-x="ok">Fermer</button></div></div>`;
+    root.appendChild(m);
+    const st = m.querySelector<HTMLElement>("[data-r=pst]")!, res = m.querySelector<HTMLElement>("[data-r=pres]")!;
+    let temp = 0.6;
+    const show = (d: import("../core/writer.ts").Draft) => {
+      const row = (label: string, v: string) => v ? `<div class="sg" style="margin:6px 0"><div class="t"><b>${label}</b><div style="white-space:pre-wrap">${esc(v)}</div></div><button class="ib" data-copy="${esc(v)}">Copier</button></div>` : "";
+      const all = [d.titles[0], "", d.description, "", d.hashtags.join(" ")].filter((x) => x != null).join("\n").trim();
+      st.textContent = d.by === "ia" ? "Rédigé par Gemini Nano, sur votre téléphone." : "Version simple (l’IA de Google n’est pas disponible sur cet appareil).";
+      res.innerHTML = d.titles.map((t, i) => row(`Titre ${i + 1}`, t)).join("") + row("Description", d.description) + row("Hashtags", d.hashtags.join(" "))
+        + row("Accroche (à dire en premier)", d.hook)
+        + `<div class="row" style="padding:6px 0 0"><button class="ib go" data-copy="${esc(all)}">Copier titre + description + hashtags</button>${N.isNative() ? `<button class="ib" data-x="share" data-v="${esc(all)}">Partager</button>` : ""}</div>`;
+      m.querySelector<HTMLElement>("[data-x=again]")!.hidden = d.by !== "ia";
+    };
+    const run = async () => {
+      if (N.isNative()) try {
+        let s = (await N.Writer.status()).status;
+        if (s === 1 || s === 2) { st.textContent = "Préparation de l’IA de Google (une seule fois)…"; const h = await N.Writer.addListener("progress", (e: any) => (st.textContent = `Téléchargement de l’IA : ${Math.round(e.p * 100)} %`)); try { await N.Writer.download(); s = 3; } finally { h.remove(); } }
+        if (s === 3) { st.textContent = "Rédaction par Gemini Nano…"; const r = await N.Writer.generate({ prompt: W.buildPrompt(text), temperature: temp, maxTokens: 300 }); const d = W.parseDraft(r.text || ""); if (d) return show(d); }
+      } catch (e: any) { console.warn("Gemini Nano", e?.message ?? e); }
+      show(W.localDraft(text));
+    };
+    m.addEventListener("click", async (e) => {
+      const t = e.target as HTMLElement, c = t.closest<HTMLElement>("[data-copy]"), x = t.closest<HTMLElement>("[data-x]")?.dataset.x;
+      if (c) { try { await navigator.clipboard.writeText(c.dataset.copy!); toast("Copié.", 1200); } catch { toast("Copie impossible.", 2000); } }
+      else if (x === "ok") m.remove();
+      else if (x === "again") { temp = Math.min(1, temp + 0.2); res.innerHTML = ""; run(); }
+      else if (x === "share") N.shareCaption(t.closest<HTMLElement>("[data-x]")!.dataset.v!).catch(() => {});
+    });
+    run();
+  }
   async function voiceAB() {
     video.pause();
     const m = document.createElement("div"); m.className = "modal";
@@ -629,6 +686,7 @@ export async function openEditor(o: EditorOptions) {
         if (v) { words[sel.a] = { ...words[sel.a], text: v }; const sp = body.querySelector<HTMLElement>(`.tx span[data-i="${sel.a}"]`); if (sp) sp.textContent = v; sugs = suggest(words); sel = null; commit(); } } break;
       case "trim": trimEdges(); break;
       case "voiceAB": voiceAB(); break;
+      case "pub": publishText(); break;
       case "zooms": zooms = (t as HTMLInputElement).checked; save(); break;
       case "lang": capLang = t.closest<HTMLElement>("[data-v]")!.dataset.v as "fr" | "en"; save(); body.innerHTML = ""; refresh(); if (capLang === "en" && !enWords) translateEN(); break;
       case "retr": enWords = null; save(); body.innerHTML = ""; refresh(); translateEN(); break;

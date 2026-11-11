@@ -1,7 +1,7 @@
 /** SpeechAnalysisEngine : suggestions de coupes à partir des mots horodatés. Ne supprime jamais rien : propose seulement. */
 import type { Range, Word } from "./timeline.ts";
 
-export type IssueType = "repetition" | "stutter" | "false_start" | "hesitation" | "long_silence" | "untranscribed";
+export type IssueType = "retake" | "repetition" | "stutter" | "false_start" | "hesitation" | "long_silence" | "untranscribed";
 export interface Suggestion { id: string; type: IssueType; range: Range; firstWord: number; lastWord: number; excerpt: string; confidence: number }
 
 export interface AnalysisOptions {
@@ -19,6 +19,13 @@ export const DEFAULTS: AnalysisOptions = {
 
 export const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9']/g, "");
 
+const RETAKE = [["je", "reprends"], ["je", "reprend"], ["on", "reprend"], ["je", "recommence"], ["on", "recommence"], ["je", "la", "refais"], ["on", "la", "refait"], ["coupez"], ["coupe"]];
+/** Longueur de la commande de reprise qui commence au mot i (0 si aucune). */
+function retakeAt(n: string[], i: number): number {
+  for (const c of RETAKE) if (c.every((x, k) => n[i + k] === x)) return c.length;
+  return 0;
+}
+
 export function analyze(words: Word[], opt: Partial<AnalysisOptions> = {}): Suggestion[] {
   const o = { ...DEFAULTS, ...opt };
   const emph = new Set(o.emphaticWords.map(norm)), fill = new Set(o.fillers.map(norm));
@@ -32,6 +39,19 @@ export function analyze(words: Word[], opt: Partial<AnalysisOptions> = {}): Sugg
   };
   const conf = (i: number) => words[i].conf ?? 0.8;
 
+  // 0. Commande vocale de reprise (« je reprends », « on recommence », « coupez »…) dite pendant la prise, suivie d'une pause :
+  //    la tentative en cours (depuis la dernière vraie pause ou fin de phrase, ≤ 20 s) et la commande sont retirées.
+  for (let i = 0; i < words.length; i++) {
+    const L = retakeAt(n, i); if (!L) continue;
+    const e = i + L - 1, after = e + 1 < words.length ? words[e + 1].start - words[e].end : 99;
+    if (after < 0.3) continue; // « je reprends ma voiture » : pas de pause → phrase normale
+    let j = i; const t0 = words[i].start;
+    while (j > 0 && t0 - words[j - 1].start < 20 && words[j].start - words[j - 1].end < 0.6 && !/[.!?…]$/.test(words[j - 1].text) && !used.has(j - 1)) j--;
+    if (L === 1 && i === j && after < 0.5) continue; // « coupe » isolé sans pause nette : prudence
+    push("retake", j, e, 0.96);
+    if (out.length && out[out.length - 1].type === "retake") out[out.length - 1].range.end = Math.min(words[e].end + Math.max(0, after - 0.2), e + 1 < words.length ? words[e + 1].start - 0.05 : words[e].end + 0.3);
+    i = e;
+  }
   // 1. Phrases recommencées (n-grammes consécutifs identiques) — avant les mots seuls. On supprime la 1re occurrence.
   for (let len = o.maxPhrase; len >= 2; len--) {
     for (let i = 0; i + 2 * len <= words.length; i++) {

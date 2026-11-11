@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.7)
+# Green Studio 3.1 — état réel (beta.8)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,14 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.8
+- **Plateau 3D** (Réglages › Plateau 3D, 0 = coupé) : le décor glisse à l'opposé de la tête et grossit un peu quand on s'approche, comme une caméra qui suit. Amorti en ~0,25 s quel que soit le débit d'images, jamais de bord visible. Web et natif. Testé : `tests/browser/stage.e2e.cjs` (sens, amplitude ~3 %, bornes, désactivation).
+- **« Je reprends »** : dite pendant la prise (suivie d'une pause), la commande retire la tentative en cours et la commande elle-même au nettoyage (« on recommence », « coupez »… aussi). Retour immédiat « Reprise notée » si la reconnaissance vocale native tourne. Tests unitaires (vraie reprise, phrase normale non touchée, « coupez » en fin).
+- **Check studio** (Réglages › Vérifier, et automatique une fois par session si problème) : contre-jour, visage sombre ou surexposé, bruit de fond, tête coupée, décentrée, trop loin ou trop près. Vérifié sur une vraie photo (contre-jour et haut coupé détectés).
+- **Bilan de la prise** (onglet Suggestions) : note sur 100, débit en mots/min, tics, silences, reprises, comparaison avec vos 10 dernières prises, conseils.
+- **✍️ Publication** : 3 titres, description, hashtags et phrase d'accroche. Gemini Nano sur le téléphone (ML Kit GenAI Prompt API) quand l'appareil le permet, sinon version locale par mots-clés. Copier / Partager. La version locale est testée ; Gemini Nano n'a pas pu être essayé ici (S25 non listé explicitement par Google, à vérifier sur l'appareil).
+- Android 8.0 minimum (exigé par ML Kit GenAI).
 
 ## 3.1.0-beta.7
 - **Sous-titres en anglais** (onglet Sous-titres › 🇬🇧) : Whisper traduit l'audio sur l'appareil, phrase par phrase, puis les mots sont répartis dans le temps (animation karaoké approximative). Les coupes s'appliquent aussi. Enchaînement testé avec un Whisper simulé (takes.e2e) et répartition testée en unitaire. Le vrai modèle n'a pas pu être essayé ici (Hugging Face inaccessible depuis l'environnement de test).

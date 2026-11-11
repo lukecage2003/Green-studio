@@ -215,6 +215,15 @@ html.native .webonly{display:none!important}
 #onb .bar{width:100%;max-width:420px;display:flex;gap:10px}
 #onb .bar .btn{flex:1}
 #onb a{color:var(--accent,#30d158)}
+
+/* Check studio */
+#check{position:fixed;left:12px;right:12px;top:calc(var(--st) + 64px);z-index:30;padding:16px 18px;border-radius:26px;background:rgba(28,28,32,.78);
+  backdrop-filter:blur(26px) saturate(1.6);-webkit-backdrop-filter:blur(26px) saturate(1.6);border:1px solid rgba(255,255,255,.14);box-shadow:0 16px 50px rgba(0,0,0,.5)}
+#check h3{margin:0 0 8px;font-size:17px;display:flex;justify-content:space-between;align-items:center}
+#check ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+#check li{display:grid;grid-template-columns:22px 1fr;gap:6px;font-size:15px}
+#check li small{grid-column:2;color:var(--muted);font-size:13px;line-height:1.35}
+#check .ok{color:var(--accent,#30d158)} #check .ko{color:#ffd60a}
 </style>
 </head>
 <body>
@@ -248,11 +257,12 @@ html.native .webonly{display:none!important}
 </div>
 
 <div id="toast" hidden></div>
+<section id="check" hidden aria-live="polite"><h3><span>Check studio</span><button class="btn sm" id="checkOk">OK</button></h3><ul id="checkList"></ul></section>
 
 <section class="ov" id="onb" hidden aria-label="Bienvenue">
   <div class="pages" id="onbPages">
     <div class="pg"><div class="art">🎬</div><h2>Votre décor, sans fond vert</h2><p>Green Studio vous détoure en direct, cheveux compris, et accorde la lumière de votre visage au décor. Filmez en 9:16, prêt pour TikTok, Reels et Shorts.</p></div>
-    <div class="pg"><div class="art">✂️</div><h2>Montez en éditant le texte</h2><p>Bégaiements, hésitations, silences et reprises sont repérés et retirés pour vous. Le prompteur suit votre voix, la meilleure prise est choisie d’après votre script.</p></div>
+    <div class="pg"><div class="art">✂️</div><h2>Montez en éditant le texte</h2><p>Bégaiements, hésitations, silences et reprises sont repérés et retirés pour vous. Ratez une phrase ? Dites « je reprends » et enchaînez : la tentative disparaît au montage.</p></div>
     <div class="pg"><div class="art">🔒</div><h2>Tout reste sur votre téléphone</h2><p>Aucun compte, aucune publicité, aucune vidéo envoyée.</p>
       <ul><li><b>📷 Caméra</b><span>pour filmer et détourer, image traitée sur l’appareil</span></li><li><b>🎙 Micro</b><span>pour le son, le vumètre et le prompteur qui suit votre voix</span></li><li><b>🌐 Internet</b><span>uniquement pour télécharger une fois les modèles de transcription</span></li></ul>
       <p style="font-size:13px"><a href="privacy.html" target="_blank" rel="noopener">Politique de confidentialité</a></p></div>
@@ -288,6 +298,7 @@ html.native .webonly{display:none!important}
     <label>Peau <input type="range" id="skin" min="0" max="0.8" step="0.01" value="0.25"></label>
     <label>Chaleur <input type="range" id="warm" min="-1" max="1" step="0.01" value="0"></label>
     <label><span>Teinte du décor<span class="sub">Visage assorti à la lumière du décor</span></span><input type="range" id="harm" min="0" max="1" step="0.01" value="0.5"></label>
+    <label><span>Plateau 3D<span class="sub">Le décor suit vos mouvements comme une vraie caméra</span></span><input type="range" id="par" min="0" max="1" step="0.01" value="0.6"></label>
   </div>
   <div class="gh">Détourage</div>
   <div class="group">
@@ -305,6 +316,7 @@ html.native .webonly{display:none!important}
   <p class="foot">Glissez sur l’image pour vous placer, pincez pour vous agrandir. Double-tap : recentrer.</p>
   <div class="gh">Assistance</div>
   <div class="group">
+    <div class="item"><span>Check studio<span class="sub">Lumière, bruit et cadrage en 3 secondes</span></span><button class="btn sm" id="checkRun">Vérifier</button></div>
     <div class="item"><span>Confidentialité<span class="sub">Rien ne quitte votre téléphone</span></span><a class="btn sm" href="privacy.html" target="_blank" rel="noopener">Lire</a></div>
     <div class="item"><span>Journal de diagnostic<span class="sub">Erreurs et événements, sur le téléphone</span></span><span style="display:flex;gap:8px"><button class="btn sm" id="logShare">Partager</button><button class="btn sm" id="logClear">Effacer</button></span></div>
   </div>
@@ -620,7 +632,7 @@ function gfRun() {
   gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, B);
 }
 
-const S = { sx: 0, sy: 0, mirror: true, cz: 1, zoom: 1, px: 0, py: 0, br: 0, ct: 1, sa: 1, lo: .35, hi: .65, stab: .6, dsp: .6, wrap: .3, shd: .25, invert: false, lgt: 0, skin: .25, warm: 0, harm: .5, autoLight: true, fine: true };
+const S = { sx: 0, sy: 0, mirror: true, cz: 1, zoom: 1, px: 0, py: 0, br: 0, ct: 1, sa: 1, lo: .35, hi: .65, stab: .6, dsp: .6, wrap: .3, shd: .25, invert: false, lgt: 0, skin: .25, warm: 0, harm: .5, par: .6, autoLight: true, fine: true };
 let maskW = 0, maskH = 0;
 /* Décors : chaque image est envoyée UNE fois au GPU puis gardée (texture en cache) ; changer de décor = changer de texture,
    sans décodage ni envoi : instantané. Les décors vidéo ont leur texture mise à jour à chaque image. */
@@ -652,6 +664,30 @@ function defaultBg() {
   g.fillStyle = gr; g.fillRect(0, 0, 720, 1280); return c;
 }
 bgCur = texFor("init", defaultBg());
+/* ---------- Plateau 3D : le décor réagit à la position de la tête (comme une caméra qui vous suit) ----------
+   Tête à droite → le décor glisse à gauche ; tête plus proche → le décor grossit un peu. Mouvement amorti, sans tremblement. */
+const PAR = { tx: 0, ty: 0, tz: 0, x: 0, y: 0, z: 0, s0: 0, last: 0, t: 0, test: false };
+function headSeen(h, forced = false) {
+  if (!h || (PAR.test && !forced)) return; const now = performance.now();
+  const x = S.mirror ? 1 - h.x : h.x; // position à l'écran (aperçu en miroir)
+  PAR.h = { x, y: h.y, s: h.s };
+  PAR.s0 = PAR.s0 ? PAR.s0 + (h.s - PAR.s0) * 0.004 : h.s; // taille de tête « au repos » (s'adapte en ~10 s)
+  const dz = Math.max(-0.35, Math.min(0.35, (h.s - PAR.s0) / Math.max(0.05, PAR.s0)));
+  PAR.tx = Math.max(-1, Math.min(1, (x - 0.5) * 3)); PAR.ty = Math.max(-1, Math.min(1, (h.y - 0.22) * 2)); PAR.tz = dz; PAR.last = now;
+}
+function parallax() { // appelé à chaque image : amorti critique vers la cible, retour au centre si plus de tête
+  const now = performance.now(), dt = Math.min(0.2, PAR.t ? (now - PAR.t) / 1000 : 0.033); PAR.t = now;
+  if (performance.now() - PAR.last > 1500) { PAR.tx *= Math.exp(-dt); PAR.ty *= Math.exp(-dt); PAR.tz *= Math.exp(-dt); }
+  const k = 1 - Math.exp(-dt / 0.25); PAR.x += (PAR.tx - PAR.x) * k; PAR.y += (PAR.ty - PAR.y) * k; PAR.z += (PAR.tz - PAR.z) * k;
+  const a = S.par; if (!a || bgCur?.id === "blur") return { zoom: 1, dx: 0, dy: 0 };
+  // marge de zoom (1 + 0,16·a) pour pouvoir glisser sans montrer de bord ; glissement ≤ 6 % de l'écran à fond
+  return { zoom: 1 + 0.16 * a + 0.07 * a * PAR.z, dx: PAR.x * 0.06 * a, dy: PAR.y * 0.03 * a };
+}
+/** Applique le glissement (fraction d'écran) aux coordonnées du décor, sans jamais sortir de l'image. */
+function slide(b, dx, dy) {
+  b[2] = Math.max(0, Math.min(1 - b[0], b[2] + dx * b[0])); b[3] = Math.max(0, Math.min(1 - b[1], b[3] + dy * b[1])); return b;
+}
+window.gsPar = PAR; PAR.seen = (h) => { PAR.test = true; headSeen(h, true); }; // diagnostic et tests
 function cover(sw, sh_, zoom, px, py) {
   const a = sw / sh_; let sx = 1, sy = 1;
   if (a > TA) sx = TA / a; else sy = a / TA;
@@ -671,9 +707,9 @@ function render(frame) {
   gl.uniform1f(U.uUseGF, useGF ? 1 : 0);
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, bgCur.t);
   let m = Math.min(1, (performance.now() - mixT0) / MIX_MS); m = m * m * (3 - 2 * m);
-  if (m < 1 && bgPrev) { const p = cover(bgPrev.w, bgPrev.h, S.zoom, S.px, S.py); gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, bgPrev.t); gl.uniform2f(U.uBS2, p[0], p[1]); gl.uniform2f(U.uBO2, p[2], p[3]); }
+  if (m < 1 && bgPrev) { const p = cover(bgPrev.w, bgPrev.h, S.zoom * (S.par ? 1 + 0.16 * S.par : 1), S.px, S.py); gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, bgPrev.t); gl.uniform2f(U.uBS2, p[0], p[1]); gl.uniform2f(U.uBO2, p[2], p[3]); }
   gl.uniform1f(U.uMix, bgPrev ? m : 1);
-  const c = cover(video.videoWidth, video.videoHeight, S.cz, 0, 0), b = cover(bgCur.w, bgCur.h, S.zoom, S.px, S.py);
+  const pr = parallax(), c = cover(video.videoWidth, video.videoHeight, S.cz, 0, 0), b = slide(cover(bgCur.w, bgCur.h, S.zoom * pr.zoom, S.px, S.py), pr.dx, pr.dy); PAR.b = b;
   gl.viewport(0, 0, W, H); gl.uniform2f(U.uPx, 1 / video.videoWidth, 1 / video.videoHeight);
   gl.uniform2f(U.uCS, c[0], c[1]); gl.uniform2f(U.uCO, c[2], c[3]);
   gl.uniform2f(U.uBS, b[0], b[1]); gl.uniform2f(U.uBO, b[2], b[3]);
@@ -747,6 +783,7 @@ function makeWorker(model) {
       else if (d.type === "mask" && w === segWorker) {
         busy = false; const f = held; held = null;
         if (d.q) maskQ = d.q;
+        headSeen(d.head);
         if (d.lum) { subjLum = subjLum == null ? d.lum.subj : subjLum * 0.7 + d.lum.subj * 0.3; if (d.lum.bg != null) bgLum = bgLum == null ? d.lum.bg : bgLum * 0.7 + d.lum.bg * 0.3; }
         if (d.data) { uploadMask(d.data, d.w, d.h); gl.uniform2f(U.uMO, sentRect[0], sentRect[1]); gl.uniform2f(U.uMS, sentRect[2], sentRect[3]); inferMs += (d.ms - inferMs) * .15; cnt.ai++; }
         if (f) { if (!suspended && d.data) { render(f); cnt.r++; } f.close(); } // image et masque de la MÊME prise de vue : aucun décalage
@@ -978,7 +1015,7 @@ $("go").onclick = async () => {
 
 /* ---------- Moteur natif ---------- */
 const nativeParams = () => ({ mirror: S.mirror, autoLight: S.autoLight, cz: S.cz, sx: S.sx, sy: S.sy, zoom: S.zoom, px: S.px, py: S.py, br: S.br, ct: S.ct, sa: S.sa,
-  lo: S.lo, hi: S.hi, dsp: S.dsp, wrap: S.wrap, shd: S.shd, skin: S.skin, warm: S.warm, lgt: S.lgt, harm: S.harm, fine: S.fine, blurBg: bgCur?.id === "blur" });
+  lo: S.lo, hi: S.hi, dsp: S.dsp, wrap: S.wrap, shd: S.shd, skin: S.skin, warm: S.warm, lgt: S.lgt, harm: S.harm, par: S.par, fine: S.fine, blurBg: bgCur?.id === "blur" });
 let lastParams = "", lastSusp = false, nativeFacing = "user", nativeStats = null;
 function sendViewport() {
   if (!nativeOn) return; const r = $("out").getBoundingClientRect();
@@ -1020,7 +1057,7 @@ async function startNative(facing) {
     startNative.wired = true;
     St.addListener("stats", (s) => { nativeStats = s; inferMs = s.inferMs; camInfo = `${s.width}×${s.height}`;
       if (running) $("perf").textContent = `Natif · ${s.fps} i/s · IA ${Math.round(s.inferMs)} ms · caméra ${s.width}×${s.height}${s.expo != null ? " · expo " + s.expo : ""}`; });
-    St.addListener("level", (l) => { vad?.update(l.rms, performance.now()); $("meter").firstElementChild.style.width = Math.min(100, l.rms * 300) + "%"; });
+    St.addListener("level", (l) => { coachRms(l.rms); vad?.update(l.rms, performance.now()); $("meter").firstElementChild.style.width = Math.min(100, l.rms * 300) + "%"; });
     addEventListener("resize", () => setTimeout(sendViewport, 50));
     St.addListener("mics", async (ev) => { // micro externe branché : utilisé tout de suite ; débranché : retour au micro du téléphone
       try {
@@ -1064,7 +1101,7 @@ $("bClose").onclick = () => ($("panel").hidden = true);
 $("bMirror").onclick = () => { S.mirror = !S.mirror; $("bMirror").setAttribute("aria-pressed", String(S.mirror)); };
 $("bFlip").onclick = async () => {
   if (nativeOn) { const f = nativeFacing === "user" ? "environment" : "user"; try { const c = await St.start({ facing: f }); nativeFacing = f; nativeCam = { w: c.width, h: c.height }; S.mirror = f === "user"; $("bMirror").setAttribute("aria-pressed", String(S.mirror)); setupLens(); } catch (e) { showErr("Changement de caméra impossible : " + (e?.message ?? e)); } return; } try { await startCam(facing === "user" ? "environment" : "user"); } catch (e) { showErr("Changement de caméra impossible : " + (e?.message ?? e)); } };
-for (const [id, key] of [["zoom","zoom"],["px","px"],["py","py"],["br","br"],["ct","ct"],["sa","sa"],["lo","lo"],["hi","hi"],["stab","stab"],["dsp","dsp"],["wrap","wrap"],["shd","shd"],["lgt","lgt"],["skin","skin"],["warm","warm"],["harm","harm"]])
+for (const [id, key] of [["zoom","zoom"],["px","px"],["py","py"],["br","br"],["ct","ct"],["sa","sa"],["lo","lo"],["hi","hi"],["stab","stab"],["dsp","dsp"],["wrap","wrap"],["shd","shd"],["lgt","lgt"],["skin","skin"],["warm","warm"],["harm","harm"],["par","par"]])
   $(id).oninput = (e) => (S[key] = parseFloat(e.target.value));
 $("inv").onchange = (e) => (S.invert = e.target.checked);
 /* ---------- Panneaux ---------- */
@@ -1116,7 +1153,7 @@ $("gain").oninput = (e) => gainN && (gainN.gain.value = +e.target.value);
 $("mon").onchange = (e) => { if (!gainN) return; if (e.target.checked) gainN.connect(actx.destination); else gainN.disconnect(actx.destination); };
 const abuf = new Float32Array(1024);
 setInterval(() => { if (!analyser) return; analyser.getFloatTimeDomainData(abuf); let pk = 0, ss = 0; for (const v of abuf) { pk = Math.max(pk, Math.abs(v)); ss += v * v; }
-  vad?.update(Math.sqrt(ss / abuf.length), performance.now()); /* détection de parole pour le prompteur */ $("meter").firstElementChild.style.width = Math.min(100, pk * 100) + "%"; $("meter").classList.toggle("clip", pk > .97); }, 60);
+  coachRms(Math.sqrt(ss / abuf.length)); vad?.update(Math.sqrt(ss / abuf.length), performance.now()); /* détection de parole pour le prompteur */ $("meter").firstElementChild.style.width = Math.min(100, pk * 100) + "%"; $("meter").classList.toggle("clip", pk > .97); }, 60);
 
 /* ---------- Enregistrement ---------- */
 let rec = null, t0r = 0, recTimer = 0, recMime = "";
@@ -1325,7 +1362,12 @@ function markRead() { // estompe les mots déjà dits (mode « mots »)
 function aimAt(pos) { const sp = tp.querySelector(`span[data-w="${Math.min(pos, (tpTok?.norm.length ?? 1) - 1)}"]`); if (sp) tpTarget = Math.max(0, sp.offsetTop - tp.clientHeight * 0.3); }
 // Moteur natif : reconnaissance vocale d'Android SUR L'APPAREIL (hors ligne)
 let nativeWords = false;
+let retakeT = 0;
 function heardWords(text) { // mots entendus → position dans le script (même alignement que dans le navigateur)
+  // « je reprends » / « coupez » pendant l'enregistrement : confirmé tout de suite (le montage retirera la tentative)
+  if (!$("recChip").hidden && /\b(je reprends?|on reprend|je recommence|on recommence|coupez)\s*$/i.test(text.trim()) && performance.now() - retakeT > 4000) {
+    retakeT = performance.now(); buzz(30); const t = $("toast"); t.classList.add("ok"); toast("↺ Reprise notée : la tentative sera retirée au montage", 2500); setTimeout(() => t.classList.remove("ok"), 2600); logEvent("info", "reprise vocale");
+  }
   if (!PM || !tpTok) return; const heard = text.split(/\s+/).map(PM.normWord).filter(Boolean);
   const p = PM.align(tpTok.norm, heard, tpPos); if (p != null && p !== tpPos) { tpPos = p; markRead(); aimAt(p); }
 }
@@ -1379,14 +1421,14 @@ $("tpTop").onclick = tpRestart;
 try { $("tpIn").value = localStorage.getItem("gs.script") || ""; const m = localStorage.getItem("gs.tpMode"); if (m) $("tpMode").value = m; } catch {}
 
 /* ---------- Profils ---------- */
-const SK = ["zoom", "px", "py", "br", "ct", "sa", "lo", "hi", "stab", "dsp", "wrap", "shd", "lgt", "skin", "warm", "harm"];
+const SK = ["zoom", "px", "py", "br", "ct", "sa", "lo", "hi", "stab", "dsp", "wrap", "shd", "lgt", "skin", "warm", "harm", "par"];
 const DEF = {
   "Comics News": { zoom: 1.1, ct: 1.05, sa: 1.1, spd: 40, size: 26, pos: 12 },
   "Comic Analysis": { lo: .38, hi: .68, spd: 30, size: 24, pos: 10 },
   "Hot Takes": { zoom: 1.2, ct: 1.15, sa: 1.25, lo: .33, hi: .62, spd: 55, size: 28, pos: 14 },
   "Podcast": { br: -.05, ct: 1.05, sa: .9, gain: 1.1, ns: true, spd: 25, size: 24, pos: 8 },
 };
-const BASE = { zoom: 1, px: 0, py: 0, br: 0, ct: 1, sa: 1, lo: .35, hi: .65, stab: .6, dsp: .6, wrap: .3, shd: .25, lgt: 0, skin: .25, warm: 0, harm: .5, spd: 40, size: 26, pos: 12, gain: 1, ns: false };
+const BASE = { zoom: 1, px: 0, py: 0, br: 0, ct: 1, sa: 1, lo: .35, hi: .65, stab: .6, dsp: .6, wrap: .3, shd: .25, lgt: 0, skin: .25, warm: 0, harm: .5, par: .6, spd: 40, size: 26, pos: 12, gain: 1, ns: false };
 let presets = null; try { presets = JSON.parse(localStorage.getItem("gs.presets")); } catch {}
 if (!presets || !Object.keys(presets).length) presets = JSON.parse(JSON.stringify(DEF));
 const savePre = () => { try { localStorage.setItem("gs.presets", JSON.stringify(presets)); } catch { toast("Stockage local indisponible : profils non conservés."); } };
@@ -1606,6 +1648,28 @@ $('ai').onclick = () => ($('perf').hidden = !$('perf').hidden);
   next.onclick = () => { const i = idx(); if (i >= dots.length - 1) done(); else { tgt = i + 1; pg.scrollTo({ left: tgt * pg.clientWidth, behavior: "smooth" }); upd(); } };
   $("onbSkip").onclick = done;
 })();
+
+/* ---------- Check studio : lumière, bruit de fond, cadrage (avant de filmer) ---------- */
+const rmsHist = [];
+function coachRms(r) { if (vad?.speaking) return; rmsHist.push(r); if (rmsHist.length > 240) rmsHist.shift(); }
+async function runCheck(manual) {
+  const C = await import("/src/core/coach.ts");
+  if (manual) { $("checkList").innerHTML = "<li><span>⏳</span><span>Restez face à la caméra, sans parler…</span></li>"; $("check").hidden = false; }
+  rmsHist.length = 0; await new Promise((r) => setTimeout(r, 3000));
+  if (!manual && (!(inferMs > 0) || suspended || !$("recChip").hidden)) return; // détourage pas prêt, montage ouvert ou déjà en train de filmer
+  const ns = nativeStats, nat = nativeOn && ns;
+  const head = nat ? (ns.hx >= 0 ? { x: ns.hx, y: ns.hy, s: ns.hs } : null) : performance.now() - PAR.last < 3000 ? PAR.h : null;
+  const input = { subj: nat ? (ns.subj >= 0 ? ns.subj : null) : subjLum, bg: nat ? (ns.bg >= 0 ? ns.bg : null) : bgLum, head, floorDb: C.noiseFloorDb(rmsHist) };
+  const items = C.studioCheck(input); window.gsCheckLast = { input, age: performance.now() - PAR.last, n: rmsHist.length };
+  const bad = items.filter((x) => !x.ok); logEvent("info", "check studio : " + (bad.map((x) => x.id).join(",") || "ok"));
+  if (!manual && !bad.length) return;
+  $("checkList").innerHTML = items.map((x) => `<li><span class="${x.ok ? "ok" : "ko"}">${x.ok ? "✓" : "⚠"}</span><span>${x.label}</span>${x.tip ? `<small>${x.tip}</small>` : ""}</li>`).join("");
+  $("check").hidden = false; if (bad.length) buzz(15);
+}
+$("go").addEventListener("click", () => { try { if (navigator.webdriver || sessionStorage.getItem("gs.checked")) return; sessionStorage.setItem("gs.checked", "1"); } catch { return; } setTimeout(() => runCheck(false), 5000); });
+$("checkOk").onclick = () => ($("check").hidden = true);
+$("checkRun").onclick = () => { openP(null); runCheck(true); };
+window.gsCheck = runCheck;
 </script>
 </body>
 </html>

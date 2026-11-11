@@ -49,7 +49,8 @@ Film yourself in front of any backdrop, **no green screen needed**. Green Studio
 - Public cible : 13 ans et plus (évite les obligations « Familles »)
 
 ## Sécurité des données (formulaire Data safety)
-- Données collectées : **aucune**
+- ⚠ Google ML Kit (détourage, Gemini Nano) envoie des diagnostics anonymes à Google. Selon la documentation ML Kit, déclarer « Infos et performances de l'app : journaux de plantage, diagnostics » et « Appareil ou autres identifiants », collectés (non partagés), à des fins d'analyse, sans lien avec l'identité. À revérifier avec la page « ML Kit data disclosure » au moment de publier.
+- Données personnelles collectées par l'app elle-même : **aucune**
 - Données partagées : **aucune**
 - Chiffrement en transit : sans objet (aucune donnée envoyée). Les modèles sont téléchargés en HTTPS.
 - Suppression des données : sans objet. Tout est local et supprimé à la désinstallation.

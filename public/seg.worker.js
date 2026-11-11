@@ -41,6 +41,17 @@ function subjectLum(frame, m) {
   return w > 20 ? { subj: s / w, bg: bw > 20 ? bs / bw : null } : null; // assez de sujet visible pour mesurer
 }
 
+/* Position de la tête (plateau 3D) : haut de la silhouette, centre et largeur de la tête, en fractions de l'image. */
+function headOf(m) {
+  const { w, h, data } = m, th = Math.max(3, (w * 0.04) | 0); let top = -1;
+  for (let y = 0; y < h && top < 0; y += 2) { let c = 0; for (let x = 0; x < w; x += 2) if (data[y * w + x] > 128) c++; if (c * 2 > th) top = y; }
+  if (top < 0 || top > h * 0.8) return null;
+  const y0 = Math.min(h - 1, top + ((h * 0.03) | 0)), y1 = Math.min(h, top + ((h * 0.13) | 0)); let sx = 0, n = 0, rows = 0;
+  for (let y = y0; y < y1; y += 2) { rows++; for (let x = 0; x < w; x += 2) if (data[y * w + x] > 128) { sx += x; n++; } }
+  if (n < 8) return null;
+  return { x: sx / n / w, y: top / h, s: (n * 2) / rows / w };
+}
+
 let ImageSegmenter = null;
 async function create(model) {
   let lastErr;
@@ -97,6 +108,7 @@ self.onmessage = async (e) => {
     let lum = null;
     try { if (res && ++lumN % 6 === 0) lum = subjectLum(d.frame, res); } catch { /* mesure facultative */ }
     finally { d.frame.close?.(); }
-    self.postMessage({ type: "mask", ms: performance.now() - t0, lum, q: quality, ...(res ?? {}) }, res ? [res.data.buffer] : []);
+    let head = null; try { if (res) head = headOf(res); } catch { /* facultatif */ }
+    self.postMessage({ type: "mask", ms: performance.now() - t0, lum, head, q: quality, ...(res ?? {}) }, res ? [res.data.buffer] : []);
   }
 };

@@ -44,6 +44,11 @@ export async function shareText(text: string, name: string) {
   await Share.share({ title: "Journal Green Studio", files: [uri], dialogTitle: "Envoyer le journal" });
 }
 
+/** Partage d'un texte (titre, description, hashtags) vers une autre app. */
+export async function shareCaption(text: string) { await Share.share({ text, dialogTitle: "Partager le texte" }); }
+/** Rédaction Gemini Nano sur l'appareil (android/…/WriterPlugin.java). */
+export const Writer = registerPlugin<any>("Writer");
+
 /** Ouvre le partage Android (TikTok, Instagram, WhatsApp, Drive…). */
 export async function shareVideo(blob: Blob, name: string, onProgress?: (p: number) => void) {
   const uri = await toCache(blob, name, onProgress);
