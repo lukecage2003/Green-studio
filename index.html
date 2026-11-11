@@ -149,6 +149,11 @@ textarea:focus{box-shadow:0 0 0 2px var(--accent)}
 .pv video{flex:1;min-height:0;width:100%;object-fit:contain;background:#000}
 .pv .info{margin:10px 16px;font-size:13px;color:var(--muted);text-align:center}
 .pv .btns{padding:0 16px}
+/* Moteur natif : l'image vient d'une surface Android SOUS la page ; la page devient transparente là où est le viseur */
+html.native,html.native body,html.native .stage,html.native .frame{background:transparent!important}
+html.native #out{opacity:0}
+.nativeonly{display:none!important}html.app .nativeonly{display:flex!important}
+html.native .webonly{display:none!important}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -213,7 +218,8 @@ textarea:focus{box-shadow:0 0 0 2px var(--accent)}
   </div>
   <div class="gh">Détourage</div>
   <div class="group">
-    <label>Qualité <select id="qSel"><option value="auto">Auto</option><option value="hq">Précis</option><option value="fast">Rapide</option></select></label>
+    <label class="nativeonly">Moteur <select id="engSel"><option value="native">Natif (recommandé)</option><option value="web">Web</option></select></label>
+    <label class="webonly">Qualité <select id="qSel"><option value="auto">Auto</option><option value="hq">Précis</option><option value="fast">Rapide</option></select></label>
     <label>Miroir <button class="sw" id="bMirror" aria-pressed="true" aria-label="Miroir"></button></label>
     <label class="item">Importer un décor<span class="sub">Image ou vidéo</span><input type="file" id="file" accept="image/*,video/*" hidden><span style="color:var(--muted2);font-size:22px">›</span></label>
   </div>
@@ -284,11 +290,11 @@ textarea:focus{box-shadow:0 0 0 2px var(--accent)}
   <div class="group">
     <label>Source <select id="micSel"><option>—</option></select></label>
     <div class="item"><span>Niveau</span><div class="meter" id="meter" style="max-width:58%"><b></b></div></div>
-    <label>Volume <input type="range" id="gain" min="0" max="2" step="0.01" value="1"></label>
+    <label class="webonly">Volume <input type="range" id="gain" min="0" max="2" step="0.01" value="1"></label>
   </div>
   <div class="group" style="margin-top:12px">
-    <label>Réduction du bruit <input type="checkbox" id="ns"></label>
-    <label>Écoute au casque <input type="checkbox" id="mon"></label>
+    <label class="webonly">Réduction du bruit <input type="checkbox" id="ns"></label>
+    <label class="webonly">Écoute au casque <input type="checkbox" id="mon"></label>
   </div>
   <p class="foot">Un micro branché (USB, Bluetooth, cravate) est utilisé automatiquement. Le niveau devient rouge en cas de saturation. N’activez l’écoute qu’avec un casque.</p>
 </aside>
@@ -305,6 +311,12 @@ import "@fontsource-variable/inter/index.css"; // police façon Apple, incluse d
 // App Android (Capacitor) : tout est déjà dans l'APK, pas de service worker ; enregistrement vers la Galerie et partage natif.
 const NATIVE = !!window.Capacitor?.isNativePlatform?.();
 const nativeP = NATIVE ? import("/src/native.ts") : null;
+// Moteur : natif (caméra + détourage + rendu + enregistrement dans Android) dans l'app, web sinon ou en secours.
+let ENGINE = "web"; try { ENGINE = NATIVE ? localStorage.getItem("gs.engine") || "native" : "web"; } catch { ENGINE = NATIVE ? "native" : "web"; }
+let nativeFailed = null; try { nativeFailed = sessionStorage.getItem("gs.nativeFailed"); } catch {}
+if (nativeFailed && ENGINE === "native") ENGINE = "web"; // le moteur natif a échoué pendant cette session : moteur web jusqu'au prochain lancement
+if (NATIVE) document.documentElement.classList.add("app");
+let nativeOn = false, nativeCam = null, St = null;
 if (!NATIVE && "serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("/sw.js").catch(() => {});
 /** Enregistre une vidéo : Galerie (app Android) ou téléchargement (navigateur). */
 async function saveBlob(blob, name) {
@@ -697,7 +709,7 @@ async function startCam(f) {
    « 0,6 » = tout le champ de la caméra, sans grossissement, calé en BAS du cadre (le corps va jusqu'au bord, le décor remplit le haut :
    ce qui dépasse au-dessus de la tête est du fond, donc invisible) ; « 1× » = plein cadre (recadré, donc zoomé). */
 let lens = "mid"; try { lens = localStorage.getItem("gs.lens") || "mid"; } catch {}
-const camAspect = () => (video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : TA);
+const camAspect = () => (nativeOn && nativeCam ? nativeCam.w / nativeCam.h : video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : TA);
 /** Zoom de chaque « objectif » : large = tout le champ (+3 % de marge pour cacher les bords adoucis), moyen = entre les deux, 1× = plein cadre. */
 function lensZoom(m) { const a = camAspect(), w = (TA / a) * 1.03; return m === "wide" ? w : m === "mid" ? Math.sqrt(w) : 1; }
 function applyLens(m) {
@@ -758,9 +770,19 @@ setInterval(() => { for (const k in cnt) { rate[k] = cnt[k] * 2; cnt[k] = 0; }
   if (running) $("perf").textContent = `Cam ${rate.cam} · IA ${rate.ai} · Rendu ${rate.r} fps · ${inferMs.toFixed(0)} ms${segWorker && sync ? " · synchro" : ""} · caméra ${camInfo}`; }, 500);
 
 // L'IA se prépare dès l'ouverture de la page (pendant que vous lisez l'écran d'accueil) : prête quand la caméra s'allume.
-const segP = (async () => { try { await initSeg(); return true; } catch (e) { console.error(e); segmenter = null; return false; } })();
+let segP = null;
+const startWebSeg = () => (segP ??= (async () => { try { await initSeg(); return true; } catch (e) { console.error(e); segmenter = null; return false; } })());
+if (ENGINE === "web") startWebSeg();
 $("go").onclick = async () => {
   $("go").disabled = true; showErr(null); setAi("", "Préparation…");
+  if (ENGINE === "native") {
+    try { await startNative("user"); return; }
+    catch (e) {
+      console.warn("Moteur natif indisponible", e); stopNativeUi();
+      if (e?.code === "NotAllowedError" || /refusé/.test(e?.message ?? "")) { showErr("Accès caméra refusé. Autorisez la caméra dans les réglages Android de l’app."); $("go").disabled = false; setAi("err", "Erreur"); return; }
+      toast("Moteur natif indisponible : moteur web utilisé.", 5000); ENGINE = "web"; startWebSeg();
+    }
+  }
   try {
     if (!navigator.mediaDevices?.getUserMedia) throw new Error("Caméra indisponible dans ce contexte (HTTPS requis).");
     if (!("requestVideoFrameCallback" in video)) throw new Error("Chrome récent requis.");
@@ -768,7 +790,7 @@ $("go").onclick = async () => {
     // La caméra s'affiche tout de suite ; le détourage s'active dès que l'IA est prête (souvent déjà le cas).
     $("start").hidden = true; $("bar").hidden = false; $("rec").hidden = false; $("strip").hidden = false; keepAwake();
     running = true; video.requestVideoFrameCallback(camLoop);
-    segP.then((ok) => {
+    startWebSeg().then((ok) => {
       if (ok && segWorker) aiChip(); else if (ok) setAi("ok", "IA : " + backend);
       else { setAi("err", "Détourage indisponible"); toast("Détourage indisponible (modèle non chargé, internet requis au premier lancement) : caméra seule.", 9000); }
     });
@@ -783,6 +805,65 @@ $("go").onclick = async () => {
   }
 };
 
+/* ---------- Moteur natif ---------- */
+const nativeParams = () => ({ mirror: S.mirror, autoLight: S.autoLight, cz: S.cz, sx: S.sx, sy: S.sy, zoom: S.zoom, px: S.px, py: S.py, br: S.br, ct: S.ct, sa: S.sa,
+  lo: S.lo, hi: S.hi, dsp: S.dsp, wrap: S.wrap, shd: S.shd, skin: S.skin, warm: S.warm, lgt: S.lgt });
+let lastParams = "", lastSusp = false, nativeFacing = "user", nativeStats = null;
+function sendViewport() {
+  if (!nativeOn) return; const r = $("out").getBoundingClientRect();
+  St.setViewport({ x: r.left, y: r.top, w: r.width, h: r.height, dpr: devicePixelRatio }).catch(() => {});
+}
+function nativeTick() { // réglages poussés vers le moteur dès qu'ils changent ; moteur en pause pendant le montage / la bibliothèque
+  if (!nativeOn) return;
+  const j = JSON.stringify(nativeParams()); if (j !== lastParams) { lastParams = j; St.setParams(JSON.parse(j)).catch(() => {}); }
+  if (suspended !== lastSusp) { lastSusp = suspended; if (suspended) St.stop().catch(() => {}); else St.start({ facing: nativeFacing }).then(sendViewport).catch(() => {}); }
+  requestAnimationFrame(nativeTick);
+}
+const bgData = new Map();
+function sendBgNative(e) { // décor envoyé une fois en JPEG (les décors vidéo passent en image fixe dans le moteur natif)
+  if (!nativeOn || !e) return;
+  let d = bgData.get(e.id);
+  if (!d) {
+    const src = e.src, w = src.videoWidth || src.width, h = src.videoHeight || src.height; if (!w || !h) return;
+    const k = Math.min(1, 1920 / Math.max(w, h)), c = document.createElement("canvas"); c.width = Math.round(w * k); c.height = Math.round(h * k);
+    c.getContext("2d").drawImage(src, 0, 0, c.width, c.height); d = c.toDataURL("image/jpeg", 0.92); if (!(src instanceof HTMLVideoElement)) bgData.set(e.id, d);
+  }
+  St.setBackground({ data: d }).catch(() => {});
+}
+async function startNative(facing) {
+  St = (await nativeP).Studio;
+  if (!(await St.isAvailable()).available) throw new Error("surface native absente");
+  document.documentElement.classList.add("native"); nativeOn = true;
+  const cam = await St.start({ facing }); nativeFacing = facing; nativeCam = { w: cam.width, h: cam.height };
+  S.mirror = facing === "user"; $("bMirror").setAttribute("aria-pressed", String(S.mirror));
+  camInfo = `${cam.width}×${cam.height}`;
+  if (!startNative.wired) {
+    startNative.wired = true;
+    St.addListener("stats", (s) => { nativeStats = s; inferMs = s.inferMs; camInfo = `${s.width}×${s.height}`;
+      if (running) $("perf").textContent = `Natif · ${s.fps} i/s · IA ${Math.round(s.inferMs)} ms · caméra ${s.width}×${s.height}${s.expo != null ? " · expo " + s.expo : ""}`; });
+    St.addListener("level", (l) => { vad?.update(l.rms, performance.now()); $("meter").firstElementChild.style.width = Math.min(100, l.rms * 300) + "%"; });
+    addEventListener("resize", () => setTimeout(sendViewport, 50));
+    St.addListener("error", (e) => { // erreur grave du moteur natif : on repasse sur le moteur web, sans perdre la prise en cours
+      try { sessionStorage.setItem("gs.nativeFailed", e?.message || "erreur"); } catch {}
+      if (rec) { toast("Moteur natif en erreur : arrêtez la prise, l’app basculera sur le moteur web.", 8000); return; }
+      toast("Moteur natif en erreur : bascule sur le moteur web…", 3000); setTimeout(() => location.reload(), 1200);
+    });
+  }
+  // micros vus par Android
+  try {
+    const { mics } = await St.listMics(); $("micSel").replaceChildren(...mics.map((m) => new Option(m.label, m.id)));
+    const pick = mics.find((m) => m.id === micId) ?? mics[0];
+    if (pick) { $("micSel").value = pick.id; await St.setMic({ id: pick.id }); $("micChip").innerHTML = MIC_SVG + "<span></span>"; $("micChip").lastChild.textContent = pick.label; $("micChip").hidden = false; }
+    hasMic = mics.length > 0;
+  } catch {}
+  $("micSel").onchange = (e) => { rememberMic(e.target.value); St.setMic({ id: e.target.value }); $("micChip").lastChild.textContent = e.target.selectedOptions[0]?.textContent ?? ""; };
+  $("start").hidden = true; $("bar").hidden = false; $("rec").hidden = false; $("strip").hidden = false; keepAwake();
+  running = true; lastParams = ""; lastSusp = false;
+  setupLens(); sendViewport(); setTimeout(sendViewport, 300); sendBgNative(bgCur); nativeTick();
+  setAi("ok", "Natif");
+  import("/src/ui/quick-edit.ts").catch(() => {}); import("/src/ui/library.ts").catch(() => {});
+}
+function stopNativeUi() { nativeOn = false; document.documentElement.classList.remove("native"); }
 const keepAwake = () => navigator.wakeLock?.request("screen").catch(() => {});
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") { if (running) keepAwake(); }
@@ -791,7 +872,8 @@ document.addEventListener("visibilitychange", () => {
 /* ---------- Commandes ---------- */
 $("bClose").onclick = () => ($("panel").hidden = true);
 $("bMirror").onclick = () => { S.mirror = !S.mirror; $("bMirror").setAttribute("aria-pressed", String(S.mirror)); };
-$("bFlip").onclick = async () => { try { await startCam(facing === "user" ? "environment" : "user"); } catch (e) { showErr("Changement de caméra impossible : " + (e?.message ?? e)); } };
+$("bFlip").onclick = async () => {
+  if (nativeOn) { const f = nativeFacing === "user" ? "environment" : "user"; try { const c = await St.start({ facing: f }); nativeFacing = f; nativeCam = { w: c.width, h: c.height }; S.mirror = f === "user"; $("bMirror").setAttribute("aria-pressed", String(S.mirror)); setupLens(); } catch (e) { showErr("Changement de caméra impossible : " + (e?.message ?? e)); } return; } try { await startCam(facing === "user" ? "environment" : "user"); } catch (e) { showErr("Changement de caméra impossible : " + (e?.message ?? e)); } };
 for (const [id, key] of [["zoom","zoom"],["px","px"],["py","py"],["br","br"],["ct","ct"],["sa","sa"],["lo","lo"],["hi","hi"],["stab","stab"],["dsp","dsp"],["wrap","wrap"],["shd","shd"],["lgt","lgt"],["skin","skin"],["warm","warm"]])
   $(id).oninput = (e) => (S[key] = parseFloat(e.target.value));
 $("inv").onchange = (e) => (S.invert = e.target.checked);
@@ -807,6 +889,7 @@ let actx, micSrc, gainN, analyser, dest, micStream, hasMic = false;
 /* Micro : choix mémorisé ; un micro branché (USB, Bluetooth, cravate) est pris automatiquement, retour au micro du téléphone
    s'il est débranché. Le changement se fait sans couper l'enregistrement (le flux enregistré part du nœud de gain, pas du micro). */
 let micId = ""; try { micId = localStorage.getItem("gs.mic") || ""; } catch {}
+const MIC_SVG = '<svg class="i" viewBox="0 0 24 24" style="width:16px;height:16px"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>';
 let knownMics = new Set();
 const listMics = async () => (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "audioinput");
 const shortMic = (l) => (!l || /^(default|défaut|built-in|internal)/i.test(l) ? "Micro du téléphone" : l).replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)/i, "").slice(0, 28);
@@ -879,7 +962,35 @@ async function startRec() {
   try { await startRecInner(); }
   finally { recStarting = false; if (!rec && deferredModel) setModel(deferredModel); } // prise non lancée : on reprend la préparation
 }
+let nativeRecT = 0;
+async function startRecNative() {
+  recMime = "video/mp4"; writer = null; chunks = [];
+  const be = await backendP; navigator.storage?.persist?.().catch(() => {});
+  if (be) { try { const RW = (await modP)[0].RecordingWriter; writer = new RW(be, "rec-" + Date.now(), "video/mp4"); await writer.start(); }
+    catch (e) { writer = null; if (/insuffisant/.test(e.message)) { toast("Espace insuffisant : supprimez d’anciennes prises.", 6000); return library(); } } }
+  try { await St.startRecording({ width: W, height: H, bitrate: H > 1920 ? 20e6 : H > 1280 ? 14e6 : 8e6 }); }
+  catch (e) { return toast(e?.message ?? "Enregistrement impossible", 6000); }
+  rec = { state: "recording", native: true, stop() { this.state = "inactive"; finishNative(); } };
+  t0r = performance.now(); nativeRecT = t0r;
+  $("rec").classList.add("on"); $("recChip").hidden = false;
+  recTimer = setInterval(() => { const s = ((performance.now() - t0r) / 1000) | 0; $("recChip").textContent = `${String((s / 60) | 0).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; }, 250);
+}
+/** Fin d'une prise native : le MP4 écrit par Android est copié (par morceaux) dans « Mes prises », puis la suite habituelle. */
+async function finishNative() {
+  const dur = performance.now() - t0r; toast("Finalisation de la prise…", 30000);
+  try {
+    const r = await St.stopRecording(), resp = await fetch(window.Capacitor.convertFileSrc(r.path));
+    if (writer) {
+      const rd = resp.body.getReader(); let buf = [], size = 0;
+      for (;;) { const { done, value } = await rd.read(); if (value) { buf.push(value); size += value.length; }
+        if ((done && size) || size >= 4e6) { writer.write(new Blob(buf), dur); buf = []; size = 0; } if (done) break; }
+    } else chunks = [await resp.blob()];
+    St.discard({ path: r.path }).catch(() => {});
+    $("toast").hidden = true; t0r = performance.now() - dur; finishRec();
+  } catch (e) { rec = null; toast("Prise non enregistrée : " + (e?.message ?? e), 8000); }
+}
 async function startRecInner() {
+  if (nativeOn) return startRecNative();
   if (typeof MediaRecorder === "undefined") return toast("MediaRecorder indisponible sur ce navigateur.");
   recMime = MIMES.find((m) => MediaRecorder.isTypeSupported(m));
   if (!recMime) return toast("Aucun format d’enregistrement pris en charge.");
@@ -1135,7 +1246,7 @@ async function setBg(i) {
   if (!e) { let s; try { s = await srcFor(i); } catch { toast('Décor illisible.'); return; } if (tok !== swTok || !s) return; e = texFor(it.id, s); }
   if (bgCur?.video && bgCur !== e) setTimeout(((v) => () => v !== bgCur?.src && v.pause())(bgCur.src), MIX_MS + 50);
   if (e.video) e.src.play().catch(() => {});
-  if (bgCur !== e) buzz(6); showBg(e); bi = i; markStrip();
+  if (bgCur !== e) buzz(6); showBg(e); sendBgNative(e); bi = i; markStrip();
   setTimeout(() => { if (tok !== swTok) return; prune(); for (let d = 1; d <= KEEP; d++) { prefetch(i + d); prefetch(i - d); } }, MIX_MS + 30); // après le fondu
 }
 function markStrip() {
@@ -1237,7 +1348,7 @@ $("go").addEventListener("click", () => setTimeout(() => { try { if (!localStora
 // Diagnostic en lecture seule (tests, et « IA » touché pour l'afficher) : état du décor, du modèle et de la synchro.
 window.gsDebug = { get renders() { return renderCount; }, get pending() { return pendingModel; }, get deferred() { return deferredModel; }, get recording() { return !!rec; }, get lens() { return lens; }, get bg() { return bgCur?.id; }, get model() { return curModel; }, get sync() { return !!(segWorker && sync); }, get inferMs() { return inferMs; },
   get cam() { return camInfo; }, get maskRect() { return sentRect; },
-  get maskQ() { return maskQ; },
+  get maskQ() { return maskQ; }, get engine() { return nativeOn ? "native" : "web"; },
   get light() { return { subjLum, bgLum, target: lightTarget(), lightG, expo: expo?.v ?? null }; },
   get vad() { return !!vad?.speaking; }, get tpPos() { return tpPos; }, get mic() { return micStream?.getAudioTracks()[0]?.label; } };
 try { S.autoLight = localStorage.getItem("gs.autoLight") !== "0"; } catch {}
@@ -1246,6 +1357,9 @@ $("autoLight").onchange = (e) => {
   S.autoLight = e.target.checked; try { localStorage.setItem("gs.autoLight", S.autoLight ? "1" : "0"); } catch {}
   if (!S.autoLight && expo) { expo.v = 0; expo.tr.applyConstraints({ advanced: [{ exposureCompensation: 0 }] }).catch(() => {}); }
 };
+$("engSel").value = ENGINE;
+if (nativeFailed && NATIVE) setTimeout(() => toast("Moteur natif indisponible (" + nativeFailed + ") : moteur web utilisé.", 7000), 1500);
+$("engSel").onchange = (e) => { try { localStorage.setItem("gs.engine", e.target.value); } catch {} toast("Changement de moteur : redémarrage…", 2000); setTimeout(() => location.reload(), 600); };
 $("qSel").value = quality;
 $("qSel").onchange = (e) => { quality = e.target.value; try { localStorage.setItem("gs.q", quality); } catch {} demoted = false;
   setModel(quality === "fast" ? "fast" : "hq"); toast(quality === "fast" ? "Détourage Rapide." : "Détourage Précis : chargement du modèle…", 2500); };

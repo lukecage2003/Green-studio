@@ -38,3 +38,6 @@ export async function shareVideo(blob: Blob, name: string, onProgress?: (p: numb
   const uri = await toCache(blob, name, onProgress);
   await Share.share({ title: "Green Studio", files: [uri], dialogTitle: "Partager la vidéo" });
 }
+
+/** Moteur vidéo natif (android/…/StudioPlugin.java) : caméra CameraX, détourage ML Kit, rendu GPU et enregistrement natifs. */
+export const Studio = registerPlugin<any>("Studio");
