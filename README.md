@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.4)
+# Green Studio 3.1 — état réel (beta.5)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -46,6 +46,13 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
 
+## 3.1.0-beta.5
+- **Contours fins (cheveux)** : filtre guidé (He et al.) sur le GPU, dans les deux moteurs — le masque de l'IA (256×256) est affiné en suivant la luminosité de l'image en pleine résolution (6 passes ≤ 960 px, textures demi-flottantes ; repli automatique). Vérifié sur la vraie scène (train, contre-jour) : bord des cheveux naturel au lieu d'un escalier de blocs. Réglage « Contours fins ».
+- **Teinte du décor** : le visage prend légèrement la couleur et la clarté moyennes du décor (teinte bornée ±15 %, luminosité −15/+20 %) ; décors vidéo suivis ; réglage dans Visage. Vérifié sur la vraie scène.
+- **Prompteur « suit mes mots » hors ligne en natif** : reconnaissance vocale d'Android sur l'appareil (Android 12+), relance continue, repli sur « suit ma voix » si le micro est occupé.
+- **Interface « verre sombre »** (esprit iOS actuel) : capsules et feuilles flottantes translucides avec liseré lumineux, partout (caméra, réglages, aperçu, montage, bibliothèque).
+- Shaders natifs (rendu + filtre guidé) vérifiés par compilation GLSL ES 3.00.
+
 ## 3.1.0-beta.4
 - **Voix studio** (`core/voice.ts`) : coupe-bas 80 Hz → débruitage RNNoise (réseau de neurones, WASM, hors ligne, 48 kHz) → égaliseur de voix (−2 dB à 300 Hz, +2,5 dB à 3,2 kHz) → compresseur 3:1 avec expandeur sous −50 dBFS → gain automatique (même niveau de voix qu'en entrée, mesuré pendant la parole). En flux, synchrone avec l'image. Mesuré sur deux vraies prises : bruit de fond −12 et −9 dB, écart voix/bruit +11 et +5 dB, voix au même niveau (−1,5 / −3,9 dB). Option d'export (activée par défaut) ; écoute avant/après (« 🎙 Voix studio » dans le montage).
 - **Zooms dynamiques** : 1× / 1,12× (centré sur le visage) à chaque coupe et fin de phrase ; aperçu dans le lecteur, appliqués à l'export.
@@ -66,7 +73,7 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - `StudioPlugin.java` : pont avec la page (démarrage, réglages, zone du viseur, décor, micros, enregistrement). La prise MP4 est copiée par morceaux dans « Mes prises » ; montage et export inchangés.
 - Sécurité : erreurs natives interceptées (l'app ne se ferme pas) → bascule automatique sur le moteur web pour la session ; choix « Moteur : Natif / Web » dans Réglages.
 - Shader natif vérifié par compilation GLSL ES 3.00 (WebGL2) ; APK limité à ARM 64 bits (56 Mo).
-- Limites : volume du micro non appliqué en natif (« Volume optimisé » à l'export) ; « Suit mes mots » indisponible.
+- Limites : volume du micro non appliqué en natif (« Volume optimisé » à l'export).
 
 ## Correctif alpha.10 (d'après la vidéo alpha.9 : plus aucun gel, 27,9 i/s — mais masque corrompu sur le S25)
 - **Masque corrompu** (fond du train conservé, rayures horizontales) : préchauffage sur image factice 256×256 supprimé (ajouté en alpha.8 ; sur le GPU du téléphone, le modèle restait calé sur ce format).

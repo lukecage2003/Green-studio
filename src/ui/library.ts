@@ -21,7 +21,21 @@ const CSS = `
 .lib .th{width:54px;height:96px;border-radius:10px;background:#2c2c2e center/cover;flex:none}
 .lib .in{flex:1;min-width:0;display:flex;flex-direction:column;gap:7px}.lib .in b{font-size:16px;font-weight:600}.lib .in small{color:var(--muted);font-size:13px}
 .lib .acts{display:flex;gap:6px;flex-wrap:nowrap}.lib .tag{font-size:12px;color:var(--accent)}
-.lib .empty{color:var(--muted);text-align:center;padding:48px 24px;background:#1c1c1e;font-size:15px;line-height:1.4}`;
+.lib .empty{color:var(--muted);text-align:center;padding:48px 24px;background:#1c1c1e;font-size:15px;line-height:1.4}
+/* verre sombre (esprit iOS actuel) */
+.qe header,.lib header{margin:6px 8px 8px;border-radius:22px;background:rgba(255,255,255,.08);-webkit-backdrop-filter:blur(26px) saturate(185%);backdrop-filter:blur(26px) saturate(185%);border:.5px solid rgba(255,255,255,.18);box-shadow:inset 0 1px 0 rgba(255,255,255,.28)}
+.qe .ib,.lib .ib{background:rgba(255,255,255,.1);border:.5px solid rgba(255,255,255,.18);box-shadow:inset 0 1px 0 rgba(255,255,255,.22);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
+.qe .go,.lib .go{background:var(--accent);border-color:rgba(255,255,255,.3)}
+.qe .tools label{background:rgba(255,255,255,.1);border:.5px solid rgba(255,255,255,.18);box-shadow:inset 0 1px 0 rgba(255,255,255,.22)}
+.qe .tabs{background:rgba(255,255,255,.08);border:.5px solid rgba(255,255,255,.12);border-radius:16px;padding:3px}
+.qe .tabs button{border-radius:13px}.qe .tabs button[aria-selected=true]{background:rgba(255,255,255,.2);box-shadow:inset 0 1px 0 rgba(255,255,255,.25)}
+.qe .card,.qe .sg,.lib li,.lib .empty{background:rgba(255,255,255,.07);border:.5px solid rgba(255,255,255,.1)}
+.qe .card{border-radius:22px}
+.qe .vw{border-radius:24px}.qe canvas.wave{border-radius:14px;background:rgba(255,255,255,.06)}
+.qe .modal .card{background:rgba(28,28,32,.62);-webkit-backdrop-filter:blur(44px) saturate(190%);backdrop-filter:blur(44px) saturate(190%);border:.5px solid rgba(255,255,255,.2);border-radius:32px;box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 24px 60px rgba(0,0,0,.5)}
+.qe .selbar{background:rgba(40,40,46,.55);-webkit-backdrop-filter:blur(30px) saturate(185%);backdrop-filter:blur(30px) saturate(185%);border:.5px solid rgba(255,255,255,.2);border-radius:26px;box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 14px 40px rgba(0,0,0,.5)}
+.lib ul{margin:0 12px}.lib li:first-child{border-radius:20px 20px 0 0}.lib li:last-child{border-radius:0 0 20px 20px}.lib li:only-child{border-radius:20px}
+`;
 
 const mb = (b: number) => (b >= 1e9 ? (b / 1e9).toFixed(1).replace(".", ",") + " Go" : Math.max(0.1, b / 1e6).toFixed(1).replace(".", ",") + " Mo");
 const dur = (ms: number) => { const s = Math.round(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };

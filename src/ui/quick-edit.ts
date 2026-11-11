@@ -68,6 +68,20 @@ const CSS = `
 .qe select{-webkit-appearance:none;appearance:none;background:var(--fill);color:var(--fg);border:0;border-radius:10px;padding:8px 12px;font:inherit;font-size:15px}
 .qe .opt{display:flex;align-items:center;gap:12px;font-size:15px}.qe .opt input[type=range]{flex:1;accent-color:var(--accent)}
 .qe .chips{display:flex;gap:6px;flex-wrap:wrap}.qe .chips button[aria-pressed=true]{background:var(--accent);color:#000}
+
+/* verre sombre (esprit iOS actuel) */
+.qe header,.lib header{margin:6px 8px 8px;border-radius:22px;background:rgba(255,255,255,.08);-webkit-backdrop-filter:blur(26px) saturate(185%);backdrop-filter:blur(26px) saturate(185%);border:.5px solid rgba(255,255,255,.18);box-shadow:inset 0 1px 0 rgba(255,255,255,.28)}
+.qe .ib,.lib .ib{background:rgba(255,255,255,.1);border:.5px solid rgba(255,255,255,.18);box-shadow:inset 0 1px 0 rgba(255,255,255,.22);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
+.qe .go,.lib .go{background:var(--accent);border-color:rgba(255,255,255,.3)}
+.qe .tools label{background:rgba(255,255,255,.1);border:.5px solid rgba(255,255,255,.18);box-shadow:inset 0 1px 0 rgba(255,255,255,.22)}
+.qe .tabs{background:rgba(255,255,255,.08);border:.5px solid rgba(255,255,255,.12);border-radius:16px;padding:3px}
+.qe .tabs button{border-radius:13px}.qe .tabs button[aria-selected=true]{background:rgba(255,255,255,.2);box-shadow:inset 0 1px 0 rgba(255,255,255,.25)}
+.qe .card,.qe .sg,.lib li,.lib .empty{background:rgba(255,255,255,.07);border:.5px solid rgba(255,255,255,.1)}
+.qe .card{border-radius:22px}
+.qe .vw{border-radius:24px}.qe canvas.wave{border-radius:14px;background:rgba(255,255,255,.06)}
+.qe .modal .card{background:rgba(28,28,32,.62);-webkit-backdrop-filter:blur(44px) saturate(190%);backdrop-filter:blur(44px) saturate(190%);border:.5px solid rgba(255,255,255,.2);border-radius:32px;box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 24px 60px rgba(0,0,0,.5)}
+.qe .selbar{background:rgba(40,40,46,.55);-webkit-backdrop-filter:blur(30px) saturate(185%);backdrop-filter:blur(30px) saturate(185%);border:.5px solid rgba(255,255,255,.2);border-radius:26px;box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 14px 40px rgba(0,0,0,.5)}
+.lib ul{margin:0 12px}.lib li:first-child{border-radius:20px 20px 0 0}.lib li:last-child{border-radius:0 0 20px 20px}.lib li:only-child{border-radius:20px}
 `;
 
 interface Saved { v: 1; duration: number; words: Word[] | null; cuts: Range[]; ignored: string[]; peaks?: number[]; style?: CaptionStyle; norm?: boolean; q720?: boolean; voice?: boolean; zooms?: boolean }

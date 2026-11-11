@@ -7,7 +7,14 @@ import android.content.Context;
 import android.media.AudioDeviceCallback;
 import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
+import android.content.Intent;
+import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
+import android.speech.RecognitionListener;
+import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
+import java.util.ArrayList;
 import android.os.Looper;
 import android.util.Base64;
 import android.view.SurfaceView;
@@ -81,7 +88,8 @@ public class StudioPlugin extends Plugin {
         if (d.has("autoLight")) p.autoLight = d.optBoolean("autoLight", true);
         p.cz = f(d, "cz", p.cz); p.sx = f(d, "sx", p.sx); p.sy = f(d, "sy", p.sy); p.zoom = f(d, "zoom", p.zoom); p.px = f(d, "px", p.px); p.py = f(d, "py", p.py);
         p.br = f(d, "br", p.br); p.ct = f(d, "ct", p.ct); p.sa = f(d, "sa", p.sa); p.lo = f(d, "lo", p.lo); p.hi = f(d, "hi", p.hi);
-        p.dsp = f(d, "dsp", p.dsp); p.wrap = f(d, "wrap", p.wrap); p.shd = f(d, "shd", p.shd); p.skin = f(d, "skin", p.skin); p.warm = f(d, "warm", p.warm); p.lgt = f(d, "lgt", p.lgt);
+        p.dsp = f(d, "dsp", p.dsp); p.wrap = f(d, "wrap", p.wrap); p.shd = f(d, "shd", p.shd); p.skin = f(d, "skin", p.skin); p.warm = f(d, "warm", p.warm); p.lgt = f(d, "lgt", p.lgt); p.harm = f(d, "harm", p.harm);
+        if (d.has("fine")) p.fine = d.optBoolean("fine", true);
         call.resolve();
     }
     private static float f(JSObject d, String k, float def) { return d.has(k) ? (float) d.optDouble(k, def) : def; }
@@ -171,5 +179,49 @@ public class StudioPlugin extends Plugin {
         JSObject o = new JSObject(); o.put("kind", kind); o.put("mics", a); notifyListeners("mics", o);
     }
 
-    @Override protected void handleOnDestroy() { if (engine != null) engine.release(); engine = null; }
+    /* ---------- Prompteur « suit mes mots » : reconnaissance vocale SUR L'APPAREIL (Android 12+), sans internet ---------- */
+    private SpeechRecognizer words; private boolean wordsOn; private final Handler ui = new Handler(Looper.getMainLooper());
+    @PluginMethod public void startWords(PluginCall call) {
+        String lang = call.getString("lang", "fr-FR");
+        ui.post(() -> {
+            Context c = getContext();
+            boolean onDevice = Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(c);
+            if (!onDevice && !SpeechRecognizer.isRecognitionAvailable(c)) { call.reject("Reconnaissance vocale indisponible"); return; }
+            stopWordsNow();
+            words = onDevice ? SpeechRecognizer.createOnDeviceSpeechRecognizer(c) : SpeechRecognizer.createSpeechRecognizer(c);
+            wordsOn = true;
+            final Intent it = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                    .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    .putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang).putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                    .putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                    .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 4000L);
+            words.setRecognitionListener(new RecognitionListener() {
+                private void send(Bundle b, boolean fin) {
+                    ArrayList<String> r = b == null ? null : b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                    if (r == null || r.isEmpty()) return;
+                    JSObject o = new JSObject(); o.put("text", r.get(0)); o.put("final", fin); notifyListeners("words", o);
+                }
+                private void again() { if (wordsOn && words != null) ui.postDelayed(() -> { if (wordsOn && words != null) try { words.startListening(it); } catch (Exception ignored) { } }, 120); }
+                @Override public void onPartialResults(Bundle b) { send(b, false); }
+                @Override public void onResults(Bundle b) { send(b, true); again(); }
+                @Override public void onError(int e) {
+                    boolean fatal = e == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS || e == 12 /* LANGUAGE_NOT_SUPPORTED */ || e == 13 /* LANGUAGE_UNAVAILABLE */ || e == SpeechRecognizer.ERROR_AUDIO;
+                    if (fatal) { JSObject o = new JSObject(); o.put("code", e); notifyListeners("wordsError", o); stopWordsNow(); } else again();
+                }
+                @Override public void onReadyForSpeech(Bundle b) { }
+                @Override public void onBeginningOfSpeech() { }
+                @Override public void onRmsChanged(float v) { }
+                @Override public void onBufferReceived(byte[] b) { }
+                @Override public void onEndOfSpeech() { }
+                @Override public void onEvent(int t, Bundle b) { }
+            });
+            words.startListening(it);
+            JSObject o = new JSObject(); o.put("onDevice", onDevice); call.resolve(o);
+        });
+    }
+    @PluginMethod public void stopWords(PluginCall call) { ui.post(this::stopWordsNow); call.resolve(); }
+    private void stopWordsNow() { wordsOn = false; if (words != null) { try { words.cancel(); words.destroy(); } catch (Exception ignored) { } words = null; } }
+
+    @Override protected void handleOnDestroy() {
+        stopWordsNow(); if (engine != null) engine.release(); engine = null; }
 }

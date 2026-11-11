@@ -151,6 +151,46 @@ textarea:focus{box-shadow:0 0 0 2px var(--accent)}
 .pv video{flex:1;min-height:0;width:100%;object-fit:contain;background:#000}
 .pv .info{margin:10px 16px;font-size:13px;color:var(--muted);text-align:center}
 .pv .btns{padding:0 16px}
+/* ===== Verre sombre (esprit iOS actuel) : surfaces translucides et floutées, liseré lumineux, capsules flottantes ===== */
+:root{--g-bg:rgba(255,255,255,.09);--g-bg2:rgba(255,255,255,.14);--g-line:rgba(255,255,255,.2);--g-hi:rgba(255,255,255,.32);
+  --g-blur:blur(26px) saturate(185%);--g-shadow:0 10px 30px rgba(0,0,0,.28);--g-sheet:rgba(22,22,26,.58)}
+.glass,.chip,.iconbtn,.dock .lib,.dock #bFlip,#gmode,#toast,.lens,.ov .group,.btn:not(.prim),#tp{
+  background:var(--g-bg)!important;-webkit-backdrop-filter:var(--g-blur)!important;backdrop-filter:var(--g-blur)!important;
+  border:.5px solid var(--g-line)!important;box-shadow:inset 0 1px 0 var(--g-hi),inset 0 -1px 0 rgba(255,255,255,.04),var(--g-shadow)!important}
+.topbar{background:linear-gradient(rgba(0,0,0,.42),rgba(0,0,0,0))}
+.chip{height:32px;border-radius:16px;padding:0 13px}
+.iconbtn{width:42px;height:42px}
+#recChip{background:rgba(255,69,58,.85)!important;border-color:rgba(255,255,255,.3)!important}
+.controls{background:linear-gradient(rgba(0,0,0,0),rgba(0,0,0,.38) 55%)}
+/* objectifs : une capsule de verre */
+.lens{width:max-content;margin:0 auto 12px;padding:4px;gap:4px;border-radius:24px}
+.lens button{background:transparent;backdrop-filter:none;width:36px;height:36px}
+.lens button.on{background:rgba(255,255,255,.16);color:#ffd60a}
+/* carrousel de décors dans une capsule de verre */
+#strip{margin:0 14px 14px;padding:6px 8px;border-radius:26px;background:var(--g-bg);-webkit-backdrop-filter:var(--g-blur);backdrop-filter:var(--g-blur);
+  border:.5px solid var(--g-line);box-shadow:inset 0 1px 0 var(--g-hi),var(--g-shadow)}
+#strip .th{width:46px;height:46px;border-radius:18px;border:1.5px solid rgba(255,255,255,.18)}
+#strip .th.on{border:2.5px solid #fff;transform:scale(1.06)}
+#strip .add{background:rgba(255,255,255,.1);border:1px dashed rgba(255,255,255,.35)}
+.dock .lib{border-radius:16px}
+.recbtn{border-color:rgba(255,255,255,.95);box-shadow:0 0 0 1px rgba(255,255,255,.18),0 10px 30px rgba(0,0,0,.35)}
+/* feuilles flottantes en verre */
+.panel{left:8px;right:8px;bottom:calc(var(--sb) + 8px);border-radius:34px;padding-bottom:20px;background:var(--g-sheet);
+  -webkit-backdrop-filter:blur(44px) saturate(190%);backdrop-filter:blur(44px) saturate(190%);border:.5px solid var(--g-line);
+  box-shadow:inset 0 1px 0 var(--g-hi),0 24px 60px rgba(0,0,0,.5)}
+@media (min-width:600px){.panel{left:50%;right:auto}}
+.group{background:rgba(255,255,255,.07);border:.5px solid rgba(255,255,255,.1);border-radius:18px}
+.seg{background:rgba(255,255,255,.08);border-radius:14px;padding:3px}
+.seg button{border-radius:11px}.seg button.on,.seg button[aria-pressed=true]{background:rgba(255,255,255,.2);box-shadow:inset 0 1px 0 rgba(255,255,255,.25)}
+.disclose{background:rgba(255,255,255,.07);border:.5px solid rgba(255,255,255,.1);border-radius:18px}
+textarea{background:rgba(255,255,255,.07);border:.5px solid rgba(255,255,255,.12);border-radius:18px}
+.btn{border-radius:18px}.btn.prim{box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 10px 30px rgba(48,209,88,.3)}
+#toast{border-radius:22px;background:rgba(40,40,46,.55)!important}
+#tp{border-radius:26px;background:rgba(0,0,0,.32)!important}
+/* aperçu */
+.pv .nav{background:var(--g-bg);-webkit-backdrop-filter:var(--g-blur);backdrop-filter:var(--g-blur);border-bottom:.5px solid var(--g-line);margin:0 8px 8px;border-radius:22px}
+.ov .group{border-radius:20px}
+
 /* Moteur natif : l'image vient d'une surface Android SOUS la page ; la page devient transparente là où est le viseur */
 html.native,html.native body,html.native .stage,html.native .frame{background:transparent!important}
 html.native #out{opacity:0}
@@ -217,11 +257,13 @@ html.native .webonly{display:none!important}
     <label>Lumière <input type="range" id="lgt" min="-1" max="1" step="0.01" value="0"></label>
     <label>Peau <input type="range" id="skin" min="0" max="0.8" step="0.01" value="0.25"></label>
     <label>Chaleur <input type="range" id="warm" min="-1" max="1" step="0.01" value="0"></label>
+    <label><span>Teinte du décor<span class="sub">Visage assorti à la lumière du décor</span></span><input type="range" id="harm" min="0" max="1" step="0.01" value="0.5"></label>
   </div>
   <div class="gh">Détourage</div>
   <div class="group">
     <label class="nativeonly">Moteur <select id="engSel"><option value="native">Natif (recommandé)</option><option value="web">Web</option></select></label>
     <label class="webonly">Qualité <select id="qSel"><option value="auto">Auto</option><option value="hq">Précis</option><option value="fast">Rapide</option></select></label>
+    <label><span>Contours fins<span class="sub">Cheveux, mèches</span></span><input type="checkbox" id="fine" checked></label>
     <label>Miroir <button class="sw" id="bMirror" aria-pressed="true" aria-label="Miroir"></button></label>
     <label class="item">Importer un décor<span class="sub">Image ou vidéo</span><input type="file" id="file" accept="image/*,video/*" hidden><span style="color:var(--muted2);font-size:22px">›</span></label>
   </div>
@@ -391,7 +433,7 @@ in vec2 p; out vec2 v;
 void main(){ v = vec2(p.x*.5+.5, .5-p.y*.5); gl_Position = vec4(p,0.,1.); }`;
 const FS = `#version 300 es
 precision highp float; in vec2 v; out vec4 o;
-uniform sampler2D uCam,uBg,uMask,uBg2;
+uniform sampler2D uCam,uBg,uMask,uBg2,uGF; uniform float uUseGF; uniform vec4 uHarm; // harmonisation : teinte (rgb) et luminosité (a) du décor
 uniform vec2 uBS2,uBO2; uniform float uMix;
 uniform vec2 uMO,uMS;
 uniform vec2 uSL; uniform float uSkin; // retouche du sujet : (courbe de lumière, chaleur), lissage de peau // zone de l'image caméra analysée par l'IA (décalage, taille) : le masque ne couvre que cette zone // fondu enchaîné entre l'ancien et le nouveau décor
@@ -432,7 +474,10 @@ void main(){
   vec3 cam = texture(uCam,cu).rgb;
   vec3 bg = grade(texture(uBg,v*uBS+uBO).rgb);
   if (uMix < .999) bg = mix(grade(texture(uBg2,v*uBS2+uBO2).rgb), bg, uMix);
-  float a = smoothstep(uEdge.x,uEdge.y,refined(cu));
+  // contours fins (filtre guidé) : alpha = a·I + b, avec I la luminosité de l'image en pleine résolution → mèches, cheveux
+  float base = refined(cu);
+  if (uUseGF > .5){ vec2 ab = texture(uGF,cu).rg; float I = dot(texture(uCam,cu).rgb, vec3(.299,.587,.114)); base = clamp(ab.x*I+ab.y, 0., 1.); }
+  float a = smoothstep(uEdge.x,uEdge.y,base);
   a*=inside(cu);
   vec2 asp = vec2(1., 1.7778); // pixels ~carrés à l'écran 9:16
   if (uFx.z>.001 && a<.999){ // ombre portée douce, décalée vers le bas/droite
@@ -477,6 +522,7 @@ void main(){
     }
     cam = 1.-pow(1.-clamp(cam,0.,1.),vec3(uSL.x)); // éclaircit les ombres et les tons moyens sans brûler les hautes lumières
     cam *= vec3(1.+uSL.y*.07,1.,1.-uSL.y*.07);
+    cam = clamp(cam*uHarm.rgb*uHarm.a, 0., 1.);
   }
   o = vec4(mix(bg,cam,a),1.);
 }`;
@@ -487,8 +533,8 @@ gl.linkProgram(prog); gl.useProgram(prog);
 gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
 const loc = gl.getAttribLocation(prog, "p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-const U = {}; for (const n of ["uSL","uSkin","uMO","uMS","uCam","uBg","uMask","uBg2","uBS2","uBO2","uMix","uCS","uCO","uBS","uBO","uEdge","uMir","uBr","uCt","uSa","uPx","uSub","uFx"]) U[n] = gl.getUniformLocation(prog, n);
-gl.uniform1i(U.uCam, 0); gl.uniform1i(U.uBg, 1); gl.uniform1i(U.uMask, 2); gl.uniform1i(U.uBg2, 3); gl.uniform1f(U.uMix, 1); gl.uniform2f(U.uMO, 0, 0); gl.uniform2f(U.uMS, 1, 1);
+const U = {}; for (const n of ["uHarm","uGF","uUseGF","uSL","uSkin","uMO","uMS","uCam","uBg","uMask","uBg2","uBS2","uBO2","uMix","uCS","uCO","uBS","uBO","uEdge","uMir","uBr","uCt","uSa","uPx","uSub","uFx"]) U[n] = gl.getUniformLocation(prog, n);
+gl.uniform1i(U.uCam, 0); gl.uniform1i(U.uBg, 1); gl.uniform1i(U.uMask, 2); gl.uniform1i(U.uBg2, 3); gl.uniform1i(U.uGF, 4); gl.uniform1f(U.uUseGF, 0); gl.uniform1f(U.uMix, 1); gl.uniform2f(U.uMO, 0, 0); gl.uniform2f(U.uMS, 1, 1);
 function tex(unit) { const t = gl.createTexture(); gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t);
   for (const [k, val] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR],[gl.TEXTURE_MAG_FILTER, gl.LINEAR],[gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, val);
   return t; }
@@ -496,7 +542,52 @@ const tCam = tex(0), tBg = tex(1), tMask = tex(2);
 gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
 gl.activeTexture(gl.TEXTURE2); gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 1, 1, 0, gl.RED, gl.UNSIGNED_BYTE, new Uint8Array([255]));
 
-const S = { sx: 0, sy: 0, mirror: true, cz: 1, zoom: 1, px: 0, py: 0, br: 0, ct: 1, sa: 1, lo: .35, hi: .65, stab: .6, dsp: .6, wrap: .3, shd: .25, invert: false, lgt: 0, skin: .25, warm: 0, autoLight: true };
+/* ---------- Contours fins : filtre guidé (He et al.) sur le GPU ----------
+   Le masque de l'IA est grossier (256×256). On l'affine en le « guidant » par l'image caméra : dans chaque petite zone,
+   alpha ≈ a·luminosité + b ; a et b sont estimés sur le masque puis appliqués à l'image en pleine résolution, ce qui
+   reconstitue les mèches et les contours fins. 6 passes rapides à ≤ 960 px. Repli automatique si le GPU ne le permet pas. */
+const GF_VS = `#version 300 es
+in vec2 p; out vec2 v; void main(){ v = p*.5+.5; gl_Position = vec4(p,0.,1.); }`;
+const GF_PREP = `#version 300 es
+precision highp float; in vec2 v; out vec4 o; uniform sampler2D uCam,uMask; uniform vec2 uMO,uMS;
+void main(){ float I = dot(texture(uCam,v).rgb, vec3(.299,.587,.114)); float p = texture(uMask,(v-uMO)/uMS).r; o = vec4(I,p,I*p,I*I); }`;
+const GF_BLUR = `#version 300 es
+precision highp float; in vec2 v; out vec4 o; uniform sampler2D uT; uniform vec2 uD;
+void main(){ vec4 s=vec4(0.); for(int i=-6;i<=6;i++) s+=texture(uT,v+uD*float(i)); o=s/13.; }`;
+const GF_COEF = `#version 300 es
+precision highp float; in vec2 v; out vec4 o; uniform sampler2D uT; uniform float uEps;
+void main(){ vec4 m=texture(uT,v); float va=m.w-m.x*m.x, cv=m.z-m.x*m.y; float a=cv/(va+uEps); o=vec4(a, m.y-a*m.x, 0., 1.); }`;
+const GF = (() => {
+  try {
+    if (!gl || !gl.getExtension("EXT_color_buffer_float")) return null;
+    const mk = (fs) => { const p = gl.createProgram(); gl.attachShader(p, sh(gl.VERTEX_SHADER, GF_VS)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs)); gl.bindAttribLocation(p, 0, "p"); gl.linkProgram(p);
+      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)); return p; };
+    const g = { prep: mk(GF_PREP), blur: mk(GF_BLUR), coef: mk(GF_COEF), fb: gl.createFramebuffer(), t: [], w: 0, h: 0, u: {} };
+    for (const [pn, names] of [["prep", ["uCam", "uMask", "uMO", "uMS"]], ["blur", ["uT", "uD"]], ["coef", ["uT", "uEps"]]]) for (const n of names) g.u[pn + n] = gl.getUniformLocation(g[pn], n);
+    gl.useProgram(g.prep); gl.uniform1i(g.u.prepuCam, 0); gl.uniform1i(g.u.prepuMask, 2);
+    gl.useProgram(g.blur); gl.uniform1i(g.u.bluruT, 5); gl.useProgram(g.coef); gl.uniform1i(g.u.coefuT, 5); gl.uniform1f(g.u.coefuEps, 0.004);
+    gl.useProgram(prog); return g;
+  } catch (e) { console.warn("Contours fins indisponibles", e); gl.useProgram(prog); return null; }
+})();
+function gfRun() {
+  const vw = video.videoWidth, vh = video.videoHeight, k = Math.min(1, 960 / Math.max(vw, vh)), w = Math.round(vw * k), h = Math.round(vh * k);
+  if (GF.w !== w || GF.h !== h) {
+    GF.t.forEach((t) => gl.deleteTexture(t)); GF.t = [0, 1, 2].map(() => { const t = tex(5); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null); return t; });
+    GF.w = w; GF.h = h;
+  }
+  const [A, B, C] = GF.t;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, GF.fb); gl.viewport(0, 0, w, h);
+  const pass = (p, out, input, setup) => { gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, out, 0); gl.useProgram(p);
+    if (input) { gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D, input); } setup?.(); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); };
+  pass(GF.prep, A, null, () => { gl.uniform2f(GF.u.prepuMO, sentRect[0], sentRect[1]); gl.uniform2f(GF.u.prepuMS, sentRect[2], sentRect[3]); });
+  pass(GF.blur, B, A, () => gl.uniform2f(GF.u.bluruD, 1 / w, 0)); pass(GF.blur, A, B, () => gl.uniform2f(GF.u.bluruD, 0, 1 / h)); // moyennes
+  pass(GF.coef, B, A);                                                                                                         // a, b
+  pass(GF.blur, C, B, () => gl.uniform2f(GF.u.bluruD, 1 / w, 0)); pass(GF.blur, B, C, () => gl.uniform2f(GF.u.bluruD, 0, 1 / h)); // a, b moyens
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.useProgram(prog);
+  gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, B);
+}
+
+const S = { sx: 0, sy: 0, mirror: true, cz: 1, zoom: 1, px: 0, py: 0, br: 0, ct: 1, sa: 1, lo: .35, hi: .65, stab: .6, dsp: .6, wrap: .3, shd: .25, invert: false, lgt: 0, skin: .25, warm: 0, harm: .5, autoLight: true, fine: true };
 let maskW = 0, maskH = 0;
 /* Décors : chaque image est envoyée UNE fois au GPU puis gardée (texture en cache) ; changer de décor = changer de texture,
    sans décodage ni envoi : instantané. Les décors vidéo ont leur texture mise à jour à chaque image. */
@@ -505,8 +596,22 @@ function texFor(id, s) {
   let e = texCache.get(id); if (e) return e;
   const t = tex(3), w = s.videoWidth ?? s.width, h = s.videoHeight ?? s.height;
   if (w && h) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, s);
-  e = { id, t, w: w || 1, h: h || 1, src: s, video: s instanceof HTMLVideoElement }; texCache.set(id, e); return e;
+  e = { id, t, w: w || 1, h: h || 1, src: s, video: s instanceof HTMLVideoElement, mean: bgMean(s) }; texCache.set(id, e); return e;
 }
+/** Couleur moyenne d'un décor (image ou image courante d'une vidéo), pour assortir la lumière du visage. */
+const meanCv = document.createElement("canvas"); meanCv.width = meanCv.height = 4;
+function bgMean(src) {
+  try { const g = meanCv.getContext("2d", { willReadFrequently: true }); g.drawImage(src, 0, 0, 4, 4); const d = g.getImageData(0, 0, 4, 4).data; let r = 0, gg = 0, b = 0;
+    for (let i = 0; i < d.length; i += 4) { r += d[i]; gg += d[i + 1]; b += d[i + 2]; } return [r / 4080, gg / 4080, b / 4080]; } catch { return [.5, .5, .5]; }
+}
+/** Teinte (rgb) et luminosité (a) appliquées au sujet : vers la couleur et la clarté moyennes du décor (même règle qu'en natif). */
+function harmony() {
+  const k = S.harm, m = bgCur?.mean; if (!k || !m) return [1, 1, 1, 1];
+  const l = Math.max(.02, .2126 * m[0] + .7152 * m[1] + .0722 * m[2]), t = m.map((c) => Math.max(.85, Math.min(1.15, 1 + (c / l - 1) * .35 * k)));
+  const sl = subjLum ?? .4; t.push(Math.max(.85, Math.min(1.2, 1 + (Math.pow(l / Math.max(.05, sl), .3) - 1) * .6 * k)));
+  return t;
+}
+let meanT = 0;
 function showBg(e) { if (bgCur === e) return; bgPrev = bgCur; bgCur = e; mixT0 = performance.now(); }
 function defaultBg() {
   const c = document.createElement("canvas"); c.width = 720; c.height = 1280; const g = c.getContext("2d");
@@ -528,6 +633,9 @@ function render(frame) {
   for (const e of [bgCur, bgPrev]) if (e?.video && e.src.readyState >= 2 && (e === bgCur || !e.src.paused)) {
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, e.t); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, e.src); e.w = e.src.videoWidth; e.h = e.src.videoHeight;
   }
+  const useGF = !!(GF && S.fine && (segWorker || segmenter));
+  if (useGF) gfRun();
+  gl.uniform1f(U.uUseGF, useGF ? 1 : 0);
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, bgCur.t);
   let m = Math.min(1, (performance.now() - mixT0) / MIX_MS); m = m * m * (3 - 2 * m);
   if (m < 1 && bgPrev) { const p = cover(bgPrev.w, bgPrev.h, S.zoom, S.px, S.py); gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, bgPrev.t); gl.uniform2f(U.uBS2, p[0], p[1]); gl.uniform2f(U.uBO2, p[2], p[3]); }
@@ -539,6 +647,8 @@ function render(frame) {
   gl.uniform2f(U.uSub, S.sx, S.sy); gl.uniform3f(U.uFx, S.dsp, S.wrap, S.shd); gl.uniform2f(U.uEdge, S.lo, Math.max(S.hi, S.lo + .01));
   gl.uniform1f(U.uMir, S.mirror ? 1 : 0); gl.uniform1f(U.uBr, S.br); gl.uniform1f(U.uCt, S.ct); gl.uniform1f(U.uSa, S.sa);
   gl.uniform2f(U.uSL, lightG, S.warm); gl.uniform1f(U.uSkin, S.skin);
+  if (bgCur.video && performance.now() - meanT > 1000) { meanT = performance.now(); bgCur.mean = bgMean(bgCur.src); } // décor vidéo : couleur suivie
+  gl.uniform4fv(U.uHarm, harmony());
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 
@@ -835,7 +945,7 @@ $("go").onclick = async () => {
 
 /* ---------- Moteur natif ---------- */
 const nativeParams = () => ({ mirror: S.mirror, autoLight: S.autoLight, cz: S.cz, sx: S.sx, sy: S.sy, zoom: S.zoom, px: S.px, py: S.py, br: S.br, ct: S.ct, sa: S.sa,
-  lo: S.lo, hi: S.hi, dsp: S.dsp, wrap: S.wrap, shd: S.shd, skin: S.skin, warm: S.warm, lgt: S.lgt });
+  lo: S.lo, hi: S.hi, dsp: S.dsp, wrap: S.wrap, shd: S.shd, skin: S.skin, warm: S.warm, lgt: S.lgt, harm: S.harm, fine: S.fine });
 let lastParams = "", lastSusp = false, nativeFacing = "user", nativeStats = null;
 function sendViewport() {
   if (!nativeOn) return; const r = $("out").getBoundingClientRect();
@@ -921,7 +1031,7 @@ $("bClose").onclick = () => ($("panel").hidden = true);
 $("bMirror").onclick = () => { S.mirror = !S.mirror; $("bMirror").setAttribute("aria-pressed", String(S.mirror)); };
 $("bFlip").onclick = async () => {
   if (nativeOn) { const f = nativeFacing === "user" ? "environment" : "user"; try { const c = await St.start({ facing: f }); nativeFacing = f; nativeCam = { w: c.width, h: c.height }; S.mirror = f === "user"; $("bMirror").setAttribute("aria-pressed", String(S.mirror)); setupLens(); } catch (e) { showErr("Changement de caméra impossible : " + (e?.message ?? e)); } return; } try { await startCam(facing === "user" ? "environment" : "user"); } catch (e) { showErr("Changement de caméra impossible : " + (e?.message ?? e)); } };
-for (const [id, key] of [["zoom","zoom"],["px","px"],["py","py"],["br","br"],["ct","ct"],["sa","sa"],["lo","lo"],["hi","hi"],["stab","stab"],["dsp","dsp"],["wrap","wrap"],["shd","shd"],["lgt","lgt"],["skin","skin"],["warm","warm"]])
+for (const [id, key] of [["zoom","zoom"],["px","px"],["py","py"],["br","br"],["ct","ct"],["sa","sa"],["lo","lo"],["hi","hi"],["stab","stab"],["dsp","dsp"],["wrap","wrap"],["shd","shd"],["lgt","lgt"],["skin","skin"],["warm","warm"],["harm","harm"]])
   $(id).oninput = (e) => (S[key] = parseFloat(e.target.value));
 $("inv").onchange = (e) => (S.invert = e.target.checked);
 /* ---------- Panneaux ---------- */
@@ -1153,7 +1263,7 @@ const escH = (x) => x.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">"
 import("/src/core/prompter.ts").then((m) => { PM = m; vad = new m.VoiceDetector(); tpTxt = null; tpApply(); }).catch(() => {});
 const tpMode = () => $("tpMode").value;
 const HINTS = { voice: "Le texte avance quand vous parlez (à la vitesse choisie) et s’arrête quand vous vous taisez. Hors ligne.",
-  words: "Le texte se cale sur vos mots, même si vous sautez ou reprenez une phrase. Utilise la reconnaissance vocale de Chrome (le son est analysé par Google). Repli automatique sur « Suit ma voix » si indisponible.",
+  words: NATIVE ? "Le texte se cale sur vos mots, même si vous sautez ou reprenez une phrase. Reconnaissance vocale d’Android sur le téléphone, sans internet. Repli automatique sur « Suit ma voix » si le micro est occupé." : "Le texte se cale sur vos mots, même si vous sautez ou reprenez une phrase. Utilise la reconnaissance vocale de Chrome (le son est analysé par Google). Repli automatique sur « Suit ma voix » si indisponible.",
   fixed: "Défilement continu à la vitesse choisie." };
 function tpApply() {
   const txt = $("tpIn").value || "Ajoutez votre script dans le panneau Script.";
@@ -1174,7 +1284,22 @@ function markRead() { // estompe les mots déjà dits (mode « mots »)
   readUpTo = to;
 }
 function aimAt(pos) { const sp = tp.querySelector(`span[data-w="${Math.min(pos, (tpTok?.norm.length ?? 1) - 1)}"]`); if (sp) tpTarget = Math.max(0, sp.offsetTop - tp.clientHeight * 0.3); }
+// Moteur natif : reconnaissance vocale d'Android SUR L'APPAREIL (hors ligne)
+let nativeWords = false;
+function heardWords(text) { // mots entendus → position dans le script (même alignement que dans le navigateur)
+  if (!PM || !tpTok) return; const heard = text.split(/\s+/).map(PM.normWord).filter(Boolean);
+  const p = PM.align(tpTok.norm, heard, tpPos); if (p != null && p !== tpPos) { tpPos = p; markRead(); aimAt(p); }
+}
+async function startNativeWords() {
+  if (!startNativeWords.wired) { startNativeWords.wired = true;
+    St.addListener("words", (w) => heardWords(w.text));
+    St.addListener("wordsError", (e) => { nativeWords = false; $("tpMode").value = "voice"; tpApply(); logEvent("alerte", "suivi des mots : code " + e.code);
+      toast("Suivi des mots indisponible (micro occupé ou langue absente) : le prompteur suit votre voix.", 5000); }); }
+  try { const r = await St.startWords({ lang: "fr-FR" }); nativeWords = true; logEvent("info", "suivi des mots " + (r.onDevice ? "sur l'appareil" : "en ligne")); }
+  catch (e) { $("tpMode").value = "voice"; tpApply(); toast("Suivi des mots indisponible : le prompteur suit votre voix.", 4000); }
+}
 function startRecog() {
+  if (nativeOn) return startNativeWords();
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR || !PM) { toast("Suivi des mots indisponible ici : le prompteur suit votre voix.", 4000); $("tpMode").value = "voice"; tpApply(); return; }
   stopRecog(); const r = new SR(); recog = r; r.lang = "fr-FR"; r.continuous = true; r.interimResults = true; r.maxAlternatives = 1;
@@ -1189,7 +1314,7 @@ function startRecog() {
   r.onend = () => { if (recog === r && tpOn && tpMode() === "words") try { r.start(); } catch {} }; // Chrome s'arrête après un silence : on relance
   try { r.start(); } catch {}
 }
-function stopRecog() { const r = recog; recog = null; try { r?.abort(); } catch {} }
+function stopRecog() { const r = recog; recog = null; try { r?.abort(); } catch {} if (nativeWords) { nativeWords = false; St?.stopWords().catch(() => {}); } }
 function tpToggle() {
   tpOn = !tpOn; if (tpOn) { tpY = tp.scrollTop; tpTarget = null; } $("tpPlay").textContent = tpOn ? "⏸ Pause" : "▶ Lancer";
   if (tpOn && tpMode() === "words") startRecog(); else stopRecog();
@@ -1215,14 +1340,14 @@ $("tpTop").onclick = tpRestart;
 try { $("tpIn").value = localStorage.getItem("gs.script") || ""; const m = localStorage.getItem("gs.tpMode"); if (m) $("tpMode").value = m; } catch {}
 
 /* ---------- Profils ---------- */
-const SK = ["zoom", "px", "py", "br", "ct", "sa", "lo", "hi", "stab", "dsp", "wrap", "shd", "lgt", "skin", "warm"];
+const SK = ["zoom", "px", "py", "br", "ct", "sa", "lo", "hi", "stab", "dsp", "wrap", "shd", "lgt", "skin", "warm", "harm"];
 const DEF = {
   "Comics News": { zoom: 1.1, ct: 1.05, sa: 1.1, spd: 40, size: 26, pos: 12 },
   "Comic Analysis": { lo: .38, hi: .68, spd: 30, size: 24, pos: 10 },
   "Hot Takes": { zoom: 1.2, ct: 1.15, sa: 1.25, lo: .33, hi: .62, spd: 55, size: 28, pos: 14 },
   "Podcast": { br: -.05, ct: 1.05, sa: .9, gain: 1.1, ns: true, spd: 25, size: 24, pos: 8 },
 };
-const BASE = { zoom: 1, px: 0, py: 0, br: 0, ct: 1, sa: 1, lo: .35, hi: .65, stab: .6, dsp: .6, wrap: .3, shd: .25, lgt: 0, skin: .25, warm: 0, spd: 40, size: 26, pos: 12, gain: 1, ns: false };
+const BASE = { zoom: 1, px: 0, py: 0, br: 0, ct: 1, sa: 1, lo: .35, hi: .65, stab: .6, dsp: .6, wrap: .3, shd: .25, lgt: 0, skin: .25, warm: 0, harm: .5, spd: 40, size: 26, pos: 12, gain: 1, ns: false };
 let presets = null; try { presets = JSON.parse(localStorage.getItem("gs.presets")); } catch {}
 if (!presets || !Object.keys(presets).length) presets = JSON.parse(JSON.stringify(DEF));
 const savePre = () => { try { localStorage.setItem("gs.presets", JSON.stringify(presets)); } catch { toast("Stockage local indisponible : profils non conservés."); } };
@@ -1419,6 +1544,9 @@ if (NATIVE) nativeP.then(async (n) => { try { const c = await n.Studio.lastCrash
 $("engSel").value = ENGINE;
 if (nativeFailed && NATIVE) setTimeout(() => toast("Moteur natif indisponible (" + nativeFailed + ") : moteur web utilisé.", 7000), 1500);
 $("engSel").onchange = (e) => { try { localStorage.setItem("gs.engine", e.target.value); } catch {} toast("Changement de moteur : redémarrage…", 2000); setTimeout(() => location.reload(), 600); };
+try { S.fine = localStorage.getItem("gs.fine") !== "0"; } catch {}
+$("fine").checked = S.fine;
+$("fine").onchange = (e) => { S.fine = e.target.checked; try { localStorage.setItem("gs.fine", S.fine ? "1" : "0"); } catch {} };
 $("qSel").value = quality;
 $("qSel").onchange = (e) => { quality = e.target.value; try { localStorage.setItem("gs.q", quality); } catch {} demoted = false;
   setModel(quality === "fast" ? "fast" : "hq"); toast(quality === "fast" ? "Détourage Rapide." : "Détourage Précis : chargement du modèle…", 2500); };
