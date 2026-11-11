@@ -163,3 +163,20 @@ test("son non transcrit et bégaiement dans un mot (ce que Whisper efface)", asy
   assert.equal(s.length, 2, "rien d'autre : pas de fausse alerte sur les mots normaux");
   assert.equal(analyzeAudio(words, new Float32Array(rate * 6), rate).length, 0, "silence : rien");
 });
+
+test("meilleure prise : reprises, hors-script, phrase oubliée", async () => {
+  const { bestTakes, similar } = await import("../src/core/takes.ts");
+  assert.ok(similar("numero", "numeros") && similar("spiderman", "spidermen") && !similar("le", "la"));
+  const script = "Salut à tous. Aujourd'hui on parle du nouveau Spider-Man. C'est vraiment une pépite. Abonnez-vous !";
+  // prise réelle : ad-lib, phrase 2 ratée puis reprise, phrase 3 dite deux fois (la 2e complète), phrase 4 oubliée
+  const said = ["euh", "attends", "Salut", "à", "tous", "Aujourd'hui", "on", "parle", "du", "non", "Aujourd'hui", "on", "parle", "du", "nouveau", "Spider-Man",
+    "C'est", "vraiment", "C'est", "vraiment", "une", "pépite", "voilà"];
+  let t = 0; const w = said.map((x) => { const r = W(x, t, t + 0.3); t += 0.4; return r; });
+  const r = bestTakes(w, script, t + 1);
+  const keptText = (k: { first: number; last: number }) => said.slice(k.first, k.last + 1).join(" ");
+  assert.deepEqual(r.kept.map(keptText), ["Salut à tous", "Aujourd'hui on parle du nouveau Spider-Man", "C'est vraiment une pépite"]);
+  assert.equal(r.retakes, 2); assert.deepEqual(r.missing, ["Abonnez-vous !"]);
+  // tout le reste est coupé : « euh attends », la 1re tentative ratée, le 1er « C'est vraiment », « voilà »
+  const inCut = (i: number) => r.cuts.some((c) => (w[i].start + w[i].end) / 2 > c.start && (w[i].start + w[i].end) / 2 < c.end);
+  assert.deepEqual(said.map((_, i) => inCut(i) ? 1 : 0).join(""), "11000111110000001100001");
+});

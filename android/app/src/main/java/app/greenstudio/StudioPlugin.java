@@ -45,6 +45,13 @@ public class StudioPlugin extends Plugin {
         return engine;
     }
 
+    /** Cause du dernier plantage natif (puis effacée). */
+    @PluginMethod public void lastCrash(PluginCall call) {
+        File f = new File(getContext().getFilesDir(), "last-crash.txt"); JSObject o = new JSObject();
+        if (f.exists()) { try (java.io.FileInputStream in = new java.io.FileInputStream(f)) { byte[] b = new byte[(int) Math.min(f.length(), 64000)]; int n = in.read(b); String s = new String(b, 0, Math.max(0, n), java.nio.charset.StandardCharsets.UTF_8); o.put("text", s.length() > 4000 ? s.substring(0, 4000) : s); } catch (Exception ignored) { } f.delete(); }
+        call.resolve(o);
+    }
+
     @PluginMethod public void isAvailable(PluginCall call) { JSObject o = new JSObject(); o.put("available", surfaceView != null); call.resolve(o); }
 
     @PluginMethod public void start(PluginCall call) {

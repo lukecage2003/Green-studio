@@ -1,6 +1,7 @@
 /** Quick Edit : montage par le texte. Lecteur qui saute les coupes, forme d'onde + timeline, transcription cliquable,
  *  suggestions (répétitions, hésitations, silences…), annuler/rétablir, export. Tout reste sur l'appareil. */
 import { EditSession, wordsToRange, EPS, type Range, type Word } from "../core/timeline.ts";
+import { bestTakes, type TakeResult } from "../core/takes.ts";
 import { analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
 import { peaks as computePeaks, loudnessGain, speechBounds } from "../core/audio.ts";
 import { buildCaptions, drawCaption, lineAt, CAPTION_DEFAULT, PRESETS, type CapLine, type CaptionStyle, type CaptionPreset } from "../core/captions.ts";
@@ -79,6 +80,8 @@ export interface EditorOptions {
 }
 /** Seuil de confiance du nettoyage automatique (les suggestions plus incertaines restent proposées). */
 const AUTO_MIN = 0.5;
+/** Script du prompteur (s'il y en a un) : sert à « Meilleure prise ». */
+const scriptText = () => { try { return (localStorage.getItem("gs.script") || "").trim(); } catch { return ""; } };
 const autoPref = () => { try { return localStorage.getItem("gs.autoClean") !== "0"; } catch { return true; } };
 
 export async function openEditor(o: EditorOptions) {
@@ -180,10 +183,11 @@ export async function openEditor(o: EditorOptions) {
 
   function renderSugs() {
     if (!words) { body.innerHTML = `<div class="card"><p>Les suggestions apparaissent après la transcription (onglet Texte).</p></div>`; return; }
-    if (!sugs.length) { body.innerHTML = `<div class="card"><p>Aucune répétition, hésitation ni silence long détecté. 👌</p></div>`; return; }
+    if (!sugs.length) { body.innerHTML = `<div class="card"><p>Aucune répétition, hésitation ni silence long détecté. 👌</p>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}</div>`; return; }
     const open = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range));
     const all = open.filter((s) => s.confidence >= AUTO_MIN).length, sil = open.filter((s) => s.type === "long_silence").length;
-    body.innerHTML = `<div class="row" style="padding:0 0 8px"><button class="ib go" data-a="clean" ${all ? "" : "disabled"}>✨ Tout supprimer (${all})</button>
+    const take = takeInfo ? `<div class="card" style="margin-bottom:10px"><b>Meilleure prise</b><p>${esc(takeSummary())}</p>${takeInfo.missing.length ? `<p>Non dit : ${takeInfo.missing.map((m) => "« " + esc(m) + " »").join(", ")}</p>` : ""}</div>` : "";
+    body.innerHTML = take + `<div class="row" style="padding:0 0 8px"><button class="ib go" data-a="clean" ${all ? "" : "disabled"}>✨ Tout supprimer (${all})</button>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}
       <button class="ib" data-a="sil" ${sil ? "" : "disabled"}>Couper les silences (${sil})</button></div>` +
       sugs.map((s) => { const on = covered(s.range), ign = ignored.has(s.id);
         return `<div class="sg ${on ? "on" : ""} ${ign ? "ign" : ""}" data-s="${esc(s.id)}"><div class="t"><b>${LABEL[s.type]} · ${Math.round(s.confidence * 100)} %${on ? " · coupé" : ""}</b>
@@ -343,13 +347,29 @@ export async function openEditor(o: EditorOptions) {
   }
   /** Supprime d'un coup tous les défauts détectés (bégaiements, « euh », répétitions, faux départs, silences, bords muets).
    *  Une seule action : ↶ annule tout ; chaque coupe reste visible et réversible dans Suggestions. */
+  /** Meilleure prise selon le script, seulement si la prise suit vraiment le script (≥ 40 % des mots reconnus). */
+  let takeInfo: TakeResult | null = null;
+  function takeCuts(): Range[] {
+    const sc = scriptText(); if (!sc || !words?.length) return [];
+    const r = bestTakes(words, sc, duration), hit = r.matched.filter((m) => m >= 0).length / words.length;
+    if (hit < 0.4) { takeInfo = null; return []; }
+    takeInfo = r; return r.cuts.filter((c) => !covered(c));
+  }
+  const takeSummary = () => takeInfo ? `🎬 ${takeInfo.kept.length} phrase(s) gardée(s)${takeInfo.retakes ? `, ${takeInfo.retakes} reprise(s) retirée(s)` : ""}${takeInfo.missing.length ? ` · ${takeInfo.missing.length} non dite(s)` : ""}` : "";
+  async function bestTake() {
+    const r = takeCuts();
+    if (!takeInfo) return toast(scriptText() ? "Cette prise ne suit pas le script du prompteur." : "Ajoutez votre script dans le prompteur pour utiliser « Meilleure prise ».", 4000);
+    if (r.length) { session.addCuts(r); commit(); } else refresh();
+    toast(takeSummary() + " · ↶ pour annuler.", 6000);
+  }
   async function cleanAll() {
     await audioP; if (words) sugs = suggest(words);
     const r = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range) && s.confidence >= AUTO_MIN).map((s) => s.range);
+    r.push(...takeCuts()); // reprises et hors-script retirés si la prise suit le script
     r.push(...((await edgeCuts()) ?? []));
     if (!r.length) { refresh(); return toast("Aucun défaut à supprimer. 👌", 3000); }
     const before = session.editedDuration; session.addCuts(r); commit();
-    toast(`✨ ${r.length} défaut(s) supprimé(s) (−${(before - session.editedDuration).toFixed(1)} s). ↶ pour annuler.`, 5000);
+    toast(`✨ ${r.length} défaut(s) supprimé(s) (−${(before - session.editedDuration).toFixed(1)} s)${takeInfo ? " · " + takeSummary() : ""}. ↶ pour annuler.`, 6000);
   }
 
   /* ---------- Export ---------- */
@@ -452,6 +472,7 @@ export async function openEditor(o: EditorOptions) {
       case "hear": if (sg) playRange(sg.range.start - 1, sg.range.end + 1); break;
       case "safe": { const r = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range) && s.confidence >= SAFE).map((s) => s.range); if (r.length) { session.addCuts(r); commit(); toast(`${r.length} coupe(s) appliquée(s). ↶ pour annuler.`, 3000); } break; }
       case "clean": cleanAll(); break;
+      case "take": bestTake(); break;
       case "autoPref": { const c = (t as HTMLInputElement).checked; try { localStorage.setItem("gs.autoClean", c ? "1" : "0"); } catch { /* */ } break; }
       case "sil": { const r = sugs.filter((s) => s.type === "long_silence" && !ignored.has(s.id) && !covered(s.range)).map((s) => s.range); if (r.length) { session.addCuts(r); commit(); } break; }
     }

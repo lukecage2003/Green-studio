@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.2)
+# Green Studio 3.1 — état réel (beta.3)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -14,7 +14,7 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - Projet natif : `android/` (Capacitor 8) ; plugin `GalleryPlugin.java` (MediaStore).
 
 ## Tests
-- `npm test` : tests unitaires (Node 22) — 20/20.
+- `npm test` : tests unitaires (Node 22) — 21/21.
 - `npm run test:browser` (avec `npx vite --port 5173` lancé) : tests dans Chromium, caméra simulée.
   - `media.e2e` : vraie vidéo MediaRecorder → extraction audio, export avec coupe (durée exacte), annulation.
   - `live.e2e` (et `LANDSCAPE=1` : caméra limitée au 4:3 paysage) : caméra plein écran ; zone analysée par l'IA limitée au visible ; micro affiché ; changement de décor mesuré (≈ 0–1 ms) ; modèle Précis chargé en arrière-plan ; prompteur qui avance avec la voix et s'arrête au silence.
@@ -45,6 +45,10 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.3
+- **Meilleure prise** (`core/takes.ts`) : la transcription est alignée sur le script du prompteur (programmation dynamique tolérant les reprises, les mots sautés et les erreurs de transcription) ; pour chaque phrase, la prise la plus complète est gardée (la plus récente à égalité), les essais ratés, reprises et hors-script sont retirés, les phrases non dites sont signalées. Intégrée à « ✨ Nettoyer » si la prise suit le script (≥ 40 % des mots reconnus) ; bouton « 🎬 Meilleure prise » et bilan dans Suggestions. Testé : unitaire + `takes.e2e` (prise réelle, Whisper simulé).
+- **Journal de diagnostic** : erreurs, alertes et événements clés gardés sur le téléphone (200 dernières entrées) ; plantages natifs enregistrés et relus au démarrage suivant ; Réglages › Assistance › Partager (fichier .txt) ; version affichée.
 
 ## 3.1.0-beta.2
 - **Nettoyage automatique** : « ✨ Nettoyer automatiquement » (aperçu) = transcription + suppression de tous les défauts détectés (bégaiements, y compris ceux effacés par Whisper ; « euh » ; répétitions ; faux départs ; silences longs ; bords muets). Option « Supprimer automatiquement les défauts » (activée par défaut) à la fin de chaque transcription ; « ✨ Tout supprimer » dans Suggestions. Une seule action : ↶ annule tout. Seuil de confiance 0,5 (les suggestions plus incertaines restent proposées). Testé (app.e2e).

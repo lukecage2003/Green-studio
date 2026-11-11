@@ -36,6 +36,14 @@ export async function saveToGallery(blob: Blob, name: string, onProgress?: (p: n
   return Gallery.saveVideo({ path: uri, name, mime: blob.type || "video/mp4" });
 }
 
+/** Partage un texte (journal de diagnostic) sous forme de fichier .txt. */
+export async function shareText(text: string, name: string) {
+  const { Encoding } = await import("@capacitor/filesystem");
+  await Filesystem.writeFile({ path: "logs/" + name, directory: Directory.Cache, data: text, encoding: Encoding.UTF8, recursive: true });
+  const { uri } = await Filesystem.getUri({ path: "logs/" + name, directory: Directory.Cache });
+  await Share.share({ title: "Journal Green Studio", files: [uri], dialogTitle: "Envoyer le journal" });
+}
+
 /** Ouvre le partage Android (TikTok, Instagram, WhatsApp, Drive…). */
 export async function shareVideo(blob: Blob, name: string, onProgress?: (p: number) => void) {
   const uri = await toCache(blob, name, onProgress);

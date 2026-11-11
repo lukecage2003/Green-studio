@@ -229,6 +229,11 @@ html.native .webonly{display:none!important}
     <label>Résolution <select id="res"><option value="1920">1080p</option><option value="2560">1440p</option><option value="1280">720p</option></select></label>
   </div>
   <p class="foot">Glissez sur l’image pour vous placer, pincez pour vous agrandir. Double-tap : recentrer.</p>
+  <div class="gh">Assistance</div>
+  <div class="group">
+    <div class="item"><span>Journal de diagnostic<span class="sub">Erreurs et événements, sur le téléphone</span></span><span style="display:flex;gap:8px"><button class="btn sm" id="logShare">Partager</button><button class="btn sm" id="logClear">Effacer</button></span></div>
+  </div>
+  <p class="foot" id="appVer"></p>
   <button class="disclose" id="advBtn">Réglages avancés</button>
   <div class="advonly">
     <div class="gh">Cadrage caméra</div>
@@ -309,6 +314,26 @@ html.native .webonly{display:none!important}
 
 <script type="module">
 import "@fontsource-variable/inter/index.css"; // police façon Apple, incluse dans l’app (hors ligne)
+/* ---------- Journal de diagnostic (sur le téléphone ; partagé seulement à la demande) ---------- */
+const APP_VERSION = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev";
+const LOG_KEY = "gs.log";
+function logEvent(lvl, msg) {
+  try {
+    const l = JSON.parse(localStorage.getItem(LOG_KEY) || "[]"); l.push({ t: Date.now(), lvl, msg: String(msg).slice(0, 600) });
+    localStorage.setItem(LOG_KEY, JSON.stringify(l.slice(-200)));
+  } catch {}
+}
+addEventListener("error", (e) => logEvent("erreur", `${e.message} @ ${(e.filename || "").split("/").pop()}:${e.lineno}`));
+addEventListener("unhandledrejection", (e) => logEvent("erreur", "promesse : " + (e.reason?.stack || e.reason?.message || e.reason)));
+for (const k of ["error", "warn"]) { const f = console[k].bind(console); console[k] = (...a) => { logEvent(k === "error" ? "erreur" : "alerte", a.map((x) => x?.stack || x?.message || (typeof x === "object" ? JSON.stringify(x) : x)).join(" ")); f(...a); }; }
+logEvent("info", `démarrage ${APP_VERSION}`);
+function logReport() {
+  let l = []; try { l = JSON.parse(localStorage.getItem(LOG_KEY) || "[]"); } catch {}
+  const d = window.gsDebug ?? {}; let st = {}; try { st = { moteur: d.engine, modele: d.model, camera: d.cam, lumiere: d.light }; } catch {}
+  return [`Green Studio ${APP_VERSION}`, `Appareil : ${navigator.userAgent}`, `Écran : ${screen.width}×${screen.height} @${devicePixelRatio}`,
+    `État : ${JSON.stringify(st)}`, "", ...l.map((e) => `${new Date(e.t).toISOString()} [${e.lvl}] ${e.msg}`)].join("\n");
+}
+
 // App Android (Capacitor) : tout est déjà dans l'APK, pas de service worker ; enregistrement vers la Galerie et partage natif.
 const NATIVE = !!window.Capacitor?.isNativePlatform?.();
 const nativeP = NATIVE ? import("/src/native.ts") : null;
@@ -779,7 +804,7 @@ $("go").onclick = async () => {
   if (ENGINE === "native") {
     try { await startNative("user"); return; }
     catch (e) {
-      console.warn("Moteur natif indisponible", e); stopNativeUi();
+      console.warn("Moteur natif indisponible", e); logEvent("erreur", "moteur natif : " + (e?.message ?? e)); stopNativeUi();
       if (e?.code === "NotAllowedError" || /refusé/.test(e?.message ?? "")) { showErr("Accès caméra refusé. Autorisez la caméra dans les réglages Android de l’app."); $("go").disabled = false; setAi("err", "Erreur"); return; }
       toast("Moteur natif indisponible : moteur web utilisé.", 5000); ENGINE = "web"; startWebSeg();
     }
@@ -862,6 +887,7 @@ async function startNative(facing) {
       } catch {}
     });
     St.addListener("error", (e) => { // erreur grave du moteur natif : on repasse sur le moteur web, sans perdre la prise en cours
+      logEvent("erreur", "moteur natif : " + (e?.message ?? "erreur"));
       try { sessionStorage.setItem("gs.nativeFailed", e?.message || "erreur"); } catch {}
       if (rec) { toast("Moteur natif en erreur : arrêtez la prise, l’app basculera sur le moteur web.", 8000); return; }
       toast("Moteur natif en erreur : bascule sur le moteur web…", 3000); setTimeout(() => location.reload(), 1200);
@@ -879,7 +905,7 @@ async function startNative(facing) {
   $("start").hidden = true; $("bar").hidden = false; $("rec").hidden = false; $("strip").hidden = false; keepAwake();
   running = true; lastParams = ""; lastSusp = false;
   setupLens(); sendViewport(); setTimeout(sendViewport, 300); sendBgNative(bgCur); nativeTick();
-  setAi("ok", "Natif");
+  setAi("ok", "Natif"); logEvent("info", `moteur natif démarré · caméra ${cam.width}×${cam.height}`);
   import("/src/ui/quick-edit.ts").catch(() => {}); import("/src/ui/library.ts").catch(() => {});
 }
 function stopNativeUi() { nativeOn = false; document.documentElement.classList.remove("native"); }
@@ -989,7 +1015,7 @@ async function startRecNative() {
     catch (e) { writer = null; if (/insuffisant/.test(e.message)) { toast("Espace insuffisant : supprimez d’anciennes prises.", 6000); return library(); } } }
   try { await St.startRecording({ width: W, height: H, bitrate: H > 1920 ? 20e6 : H > 1280 ? 14e6 : 8e6 }); }
   catch (e) { return toast(e?.message ?? "Enregistrement impossible", 6000); }
-  rec = { state: "recording", native: true, stop() { this.state = "inactive"; finishNative(); } };
+  rec = { state: "recording", native: true, stop() { this.state = "inactive"; finishNative(); } }; logEvent("info", `prise native ${W}×${H}`);
   t0r = performance.now(); nativeRecT = t0r;
   $("rec").classList.add("on"); $("recChip").hidden = false;
   recTimer = setInterval(() => { const s = ((performance.now() - t0r) / 1000) | 0; $("recChip").textContent = `${String((s / 60) | 0).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; }, 250);
@@ -1006,7 +1032,7 @@ async function finishNative() {
     } else chunks = [await resp.blob()];
     St.discard({ path: r.path }).catch(() => {});
     $("toast").hidden = true; t0r = performance.now() - dur; finishRec();
-  } catch (e) { rec = null; toast("Prise non enregistrée : " + (e?.message ?? e), 8000); }
+  } catch (e) { rec = null; logEvent("erreur", "prise native : " + (e?.message ?? e)); toast("Prise non enregistrée : " + (e?.message ?? e), 8000); }
 }
 async function startRecInner() {
   if (nativeOn) return startRecNative();
@@ -1378,6 +1404,16 @@ $("autoLight").onchange = (e) => {
   S.autoLight = e.target.checked; try { localStorage.setItem("gs.autoLight", S.autoLight ? "1" : "0"); } catch {}
   if (!S.autoLight && expo) { expo.v = 0; expo.tr.applyConstraints({ advanced: [{ exposureCompensation: 0 }] }).catch(() => {}); }
 };
+$("appVer").textContent = `Green Studio ${APP_VERSION} · moteur ${ENGINE === "native" ? "natif" : "web"}`;
+$("logShare").onclick = async () => {
+  const txt = logReport(), name = `green-studio-journal-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.txt`;
+  try {
+    if (NATIVE) await (await nativeP).shareText(txt, name);
+    else { const u = URL.createObjectURL(new Blob([txt], { type: "text/plain" })), a = document.createElement("a"); a.href = u; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(u), 30000); }
+  } catch (e) { try { await navigator.clipboard.writeText(txt); toast("Journal copié dans le presse-papiers.", 3000); } catch { toast("Partage impossible : " + (e?.message ?? e), 5000); } }
+};
+$("logClear").onclick = () => { try { localStorage.removeItem(LOG_KEY); } catch {} logEvent("info", "journal effacé"); toast("Journal effacé.", 2000); };
+if (NATIVE) nativeP.then(async (n) => { try { const c = await n.Studio.lastCrash(); if (c?.text) { logEvent("plantage", c.text); toast("L’app s’est fermée lors de la dernière utilisation : le journal en garde la trace (Réglages › Assistance).", 7000); } } catch {} });
 $("engSel").value = ENGINE;
 if (nativeFailed && NATIVE) setTimeout(() => toast("Moteur natif indisponible (" + nativeFailed + ") : moteur web utilisé.", 7000), 1500);
 $("engSel").onchange = (e) => { try { localStorage.setItem("gs.engine", e.target.value); } catch {} toast("Changement de moteur : redémarrage…", 2000); setTimeout(() => location.reload(), 600); };
