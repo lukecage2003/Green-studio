@@ -81,7 +81,8 @@ public class StudioEngine {
     public static class Params {
         public volatile boolean mirror = true, autoLight = true;
         public volatile float cz = 1, sx = 0, sy = 0, zoom = 1, px = 0, py = 0, br = 0, ct = 1, sa = 1;
-        public volatile float lo = .35f, hi = .65f, dsp = .6f, wrap = .3f, shd = .25f, skin = .25f, warm = 0, lgt = 0, harm = .5f, par = .6f; // par : plateau 3D
+        public volatile float lo = .35f, hi = .65f, dsp = .6f, wrap = .3f, shd = .25f, skin = .25f, warm = 0, lgt = 0, harm = .5f, par = .6f, ktol = .5f; // par : plateau 3D ; ktol : tolérance du vrai fond vert
+        public volatile String key = "auto"; // vrai fond vert : auto / on / off
         public volatile boolean fine = true; // contours fins (filtre guidé)
         public volatile boolean blurBg; // décor « Flou » : vrai fond de la caméra, flouté
         public volatile int vx, vy, vw, vh; // zone du viseur dans la surface (pixels physiques)
@@ -222,15 +223,23 @@ public class StudioEngine {
     private void measureLight(ImageProxy img, int rot, byte[] mask, int mw, int mh) {
         ImageProxy.PlaneProxy yp = img.getPlanes()[0]; ByteBuffer yb = yp.getBuffer(); int rs = yp.getRowStride();
         int w = img.getWidth(), h = img.getHeight();
-        double s = 0, sw = 0, b = 0; int bw = 0;
+        double s = 0, sw = 0, b = 0; int bw = 0; double kr = 0, kg = 0, kb = 0, kq = 0;
+        ImageProxy.PlaneProxy up = img.getPlanes()[1], vp = img.getPlanes()[2]; ByteBuffer ub = up.getBuffer(), vb = vp.getBuffer();
+        int urs = up.getRowStride(), ups = up.getPixelStride(), vrs = vp.getRowStride(), vps = vp.getPixelStride();
         for (int j = 0; j < 32; j++) for (int i = 0; i < 32; i++) {
             float u = (i + .5f) / 32, v = (j + .5f) / 32;
             float a = (mask[Math.min(mh - 1, (int) (v * mh)) * mw + Math.min(mw - 1, (int) (u * mw))] & 0xff) / 255f;
             float[] sv = toSensor(u, v, rot);
             int x = Math.min(w - 1, (int) (sv[0] * w)), y = Math.min(h - 1, (int) (sv[1] * h));
             double l = (yb.get(y * rs + x) & 0xff) / 255.0;
-            if (a > .6f) { s += a * l; sw += a; } else if (a < .2f) { b += l; bw++; }
+            if (a > .6f) { s += a * l; sw += a; } else if (a < .2f) { b += l; bw++;
+                int ui = (y / 2) * urs + (x / 2) * ups, vi = (y / 2) * vrs + (x / 2) * vps;
+                double cu = ui < ub.limit() ? (ub.get(ui) & 0xff) / 255.0 - .5 : 0, cv = vi < vb.limit() ? (vb.get(vi) & 0xff) / 255.0 - .5 : 0;
+                double r = clamp01(l + 1.402 * cv), g = clamp01(l - .344136 * cu - .714136 * cv), bl = clamp01(l + 1.772 * cu);
+                kr += r; kg += g; kb += bl; kq += r * r + g * g + bl * bl; }
         }
+        if (bw > 40) { double mr = kr / bw, mg = kg / bw, mb = kb / bw; keySeen(mr, mg, mb, Math.sqrt(Math.max(0, kq / bw - (mr * mr + mg * mg + mb * mb)) / 3)); }
+        else keySeen(-1, 0, 0, 1);
         if (sw > 20) {
             double sl = s / sw; subjLum = subjLum == null ? sl : subjLum * .7 + sl * .3;
             if (bw > 20) { double bl = b / bw; bgLum = bgLum == null ? bl : bgLum * .7 + bl * .3; }
@@ -275,6 +284,23 @@ public class StudioEngine {
         b[2] = Math.max(0, Math.min(1 - b[0], b[2] + dx * b[0])); b[3] = Math.max(0, Math.min(1 - b[1], b[3] + dy * b[1])); return b;
     }
 
+    /* ======================= Vrai fond vert ======================= */
+    // Mêmes règles que src/core/chroma.ts (version web) : fond uni vert/bleu détecté ≈ 1 s, perdu après ≈ 2 s.
+    private static double clamp01(double x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
+    private volatile float keyU = .5f, keyV = .5f, rawU = .5f, rawV = .5f; private volatile boolean keyDetected; private int keyHits, keyMiss, keyRaw;
+    private void keySeen(double r, double g, double b, double sd) {
+        if (r >= 0) { float u = (float) (r * -.169 + g * -.331 + b * .5 + .5), v = (float) (r * .5 + g * -.419 + b * -.081 + .5);
+            if (keyRaw++ == 0) { rawU = u; rawV = v; } else { rawU += (u - rawU) * .2f; rawV += (v - rawV) * .2f; } }
+        boolean green = r >= 0 && sd <= .13 && g > .12 && g > r * 1.3 && g > b * 1.15, blue = r >= 0 && sd <= .13 && b > .12 && b > r * 1.3 && b > g * 1.1;
+        if (green || blue) {
+            float u = (float) (r * -.169 + g * -.331 + b * .5 + .5), v = (float) (r * .5 + g * -.419 + b * -.081 + .5);
+            if (keyHits == 0) { keyU = u; keyV = v; } else { keyU += (u - keyU) * .2f; keyV += (v - keyV) * .2f; }
+            keyHits++; keyMiss = 0; if (keyHits >= 4) keyDetected = true;
+        } else if (++keyMiss >= 8) { keyDetected = false; keyHits = 0; }
+    }
+    private boolean keyOn() { return "on".equals(p.key) ? keyRaw > 0 : "auto".equals(p.key) && keyDetected; }
+    public boolean keyActive() { return keyOn(); }
+
     private Double lightTarget() {
         if (subjLum == null) return null;
         double t = subjLum, r = bgLum != null ? bgLum / Math.max(.02, subjLum) : 1;
@@ -303,11 +329,12 @@ public class StudioEngine {
     // Même composition que la version web (contours affinés, anti-halo, ombre, lumière, peau, décor), caméra lue en YUV.
     private static final String FS = "#version 300 es\nprecision highp float; in vec2 v; out vec4 o;\n"
         + "uniform sampler2D uY,uU,uV,uMask,uBg,uBg2,uGF; uniform int uRot; uniform float uUseGF; uniform vec4 uHarm; uniform float uBlurBg;\n"
-        + "uniform vec2 uCS,uCO,uBS,uBO,uBS2,uBO2,uEdge,uPx,uSub,uSL; uniform float uMir,uBr,uCt,uSa,uMix,uSkin; uniform vec3 uFx;\n"
+        + "uniform vec2 uCS,uCO,uBS,uBO,uBS2,uBO2,uEdge,uPx,uSub,uSL; uniform float uMir,uBr,uCt,uSa,uMix,uSkin; uniform vec3 uFx; uniform vec4 uKey; uniform vec2 uKeyS;\n"
         + "vec2 sensor(vec2 c){ if(uRot==90) return vec2(c.y,1.-c.x); if(uRot==270) return vec2(1.-c.y,c.x); if(uRot==180) return 1.-c; return c; }\n"
         + "vec3 cam(vec2 c){ vec2 s=sensor(clamp(c,0.,1.)); float y=texture(uY,s).r, u=texture(uU,s).r-.5, w=texture(uV,s).r-.5;\n"
         + "  return clamp(vec3(y+1.402*w, y-.344136*u-.714136*w, y+1.772*u),0.,1.); }\n"
         + "float M(vec2 c){ return texture(uMask,c).r; }\n"
+        + "vec2 rgbUV(vec3 c){ return vec2(c.r*-.169+c.g*-.331+c.b*.5+.5, c.r*.5+c.g*-.419+c.b*-.081+.5); }\n"
         + "float inside(vec2 c){ vec2 e=smoothstep(vec2(0.),vec2(.012),c)*smoothstep(vec2(0.),vec2(.012),1.-c); return e.x*e.y; }\n"
         + "vec3 grade(vec3 c){ c+=uBr; c=(c-.5)*uCt+.5; float l=dot(c,vec3(.2126,.7152,.0722)); return clamp(mix(vec3(l),c,uSa),0.,1.); }\n"
         + "float refined(vec2 cu){ float m0=M(cu);\n"
@@ -324,6 +351,10 @@ public class StudioEngine {
         + "  vec3 bg; if(uBlurBg>.5) bg=grade(camBlur(s0)*.92); else bg=grade(texture(uBg,v*uBS+uBO).rgb); if(uBlurBg<.5&&uMix<.999) bg=mix(grade(texture(uBg2,v*uBS2+uBO2).rgb),bg,uMix);\n"
         + "  float base=refined(cu); if(uUseGF>.5){ vec2 ab=texture(uGF,cu).rg; base=clamp(ab.x*texture(uY,sensor(clamp(cu,0.,1.))).r+ab.y,0.,1.); }\n"
         + "  float a=smoothstep(uEdge.x,uEdge.y,base)*inside(cu); vec2 asp=vec2(1.,1.7778);\n"
+        + "  if(uKey.w>.5){ vec2 r=uPx*28.; float g=max(max(M(cu),max(M(cu+vec2(r.x,0.)),M(cu-vec2(r.x,0.)))),max(M(cu+vec2(0.,r.y)),M(cu-vec2(0.,r.y))));\n"
+        + "    float d=0.; for(int j=-1;j<=1;j++) for(int i=-1;i<=1;i++) d+=distance(rgbUV(cam(cu+vec2(float(i),float(j))*uPx*1.5)),uKey.xy); d/=9.;\n"
+        + "    float bm=d-uKey.z; a=pow(clamp(bm/uKeyS.x,0.,1.),1.5)*smoothstep(.02,.3,g)*inside(cu);\n"
+        + "    float sp=pow(clamp(bm/uKeyS.y,0.,1.),1.5); c=mix(vec3(dot(c,vec3(.2126,.7152,.0722))),c,sp); }\n"
         + "  if(uFx.z>.001&&a<.999){ float sh=mq(s0-vec2(.012,.008)*asp)*.25; for(int i=0;i<6;i++) sh+=mq(s0-vec2(.012,.008)*asp+R[i]*.02*asp)*.125; bg*=1.-uFx.z*.65*sh; }\n"
         + "  if(a>.02&&(uFx.x>.001||uFx.y>.001)){\n"
         + "    float ab=mq(s0)*.25; for(int i=0;i<6;i++) ab+=mq(s0+R[i]*.018*asp)*.125; float inner=a*(1.-ab);\n"
@@ -375,7 +406,7 @@ public class StudioEngine {
             for (int x = 0; x < 9; x++) g.setPixel(x, y, 0xff000000 | (r << 16) | (gg << 8) | bb); }
         uploadBitmap(tex[4], g); bgW = 9; bgH = 16; g.recycle();
         GLES30.glUseProgram(prog);
-        String[] names = { "uBlurBg", "uGF", "uUseGF", "uHarm", "uY", "uU", "uV", "uMask", "uBg", "uBg2", "uRot", "uCS", "uCO", "uBS", "uBO", "uBS2", "uBO2", "uEdge", "uPx", "uSub", "uSL", "uMir", "uBr", "uCt", "uSa", "uMix", "uSkin", "uFx" };
+        String[] names = { "uKey", "uKeyS", "uBlurBg", "uGF", "uUseGF", "uHarm", "uY", "uU", "uV", "uMask", "uBg", "uBg2", "uRot", "uCS", "uCO", "uBS", "uBO", "uBS2", "uBO2", "uEdge", "uPx", "uSub", "uSL", "uMir", "uBr", "uCt", "uSa", "uMix", "uSkin", "uFx" };
         for (String nm : names) U.put(nm, GLES30.glGetUniformLocation(prog, nm));
         for (int i = 0; i < 6; i++) GLES30.glUniform1i(U.get(new String[]{ "uY", "uU", "uV", "uMask", "uBg", "uBg2" }[i]), i);
         GLES30.glUniform1i(U.get("uGF"), 7);
@@ -632,7 +663,9 @@ public class StudioEngine {
         GLES30.glUniform1f(U.get("uMir"), p.mirror ? 1 : 0);
         GLES30.glUniform1f(U.get("uBr"), p.br); GLES30.glUniform1f(U.get("uCt"), p.ct); GLES30.glUniform1f(U.get("uSa"), p.sa);
         GLES30.glUniform1f(U.get("uSkin"), p.skin);
-        GLES30.glUniform3f(U.get("uFx"), p.dsp, p.wrap, p.shd);
+        boolean ko = keyOn(); boolean raw = "on".equals(p.key);
+        GLES30.glUniform4f(U.get("uKey"), raw ? rawU : keyU, raw ? rawV : keyV, .06f + .1f * p.ktol, ko ? 1 : 0); GLES30.glUniform2f(U.get("uKeyS"), .08f, .1f);
+        GLES30.glUniform3f(U.get("uFx"), ko ? 0 : p.dsp, p.wrap, p.shd);
     }
 
     private void draw() {

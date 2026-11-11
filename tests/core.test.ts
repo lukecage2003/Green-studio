@@ -295,3 +295,27 @@ test("« euh » effacé par Whisper : voyelle tenue entre deux mots ou collée �
   const strong = f.filter((x) => x.confidence >= 0.5).map((x) => x.excerpt), weak = f.filter((x) => x.confidence < 0.5).map((x) => x.excerpt);
   assert.deepEqual(strong, ["du coup,", "quoi."], "isolés : retirés"); assert.deepEqual(weak, [], "« genre » collé dans la phrase : laissé tranquille");
 });
+
+test("vrai fond vert : détection stable (vert, bleu, mur ordinaire) et couleur de référence", async () => {
+  const { keyKind, KeyTracker, rgbToUV } = await import("../src/core/chroma.ts");
+  assert.equal(keyKind({ r: 0.15, g: 0.6, b: 0.25, sd: 0.05 }), "green");
+  assert.equal(keyKind({ r: 0.1, g: 0.3, b: 0.7, sd: 0.06 }), "blue");
+  assert.equal(keyKind({ r: 0.6, g: 0.58, b: 0.55, sd: 0.05 }), null, "mur blanc");
+  assert.equal(keyKind({ r: 0.15, g: 0.6, b: 0.25, sd: 0.25 }), null, "plantes vertes, fond chargé");
+  const t = new KeyTracker(), g = { r: 0.15, g: 0.6, b: 0.25, sd: 0.05 };
+  for (let i = 0; i < 3; i++) t.push(g); assert.equal(t.on, false, "pas avant ~1 s");
+  t.push(g); assert.equal(t.on, true);
+  for (let i = 0; i < 5; i++) t.push(null); assert.equal(t.on, true, "un passage devant le fond ne coupe pas");
+  for (let i = 0; i < 3; i++) t.push(null); assert.equal(t.on, false);
+  const [u, v] = rgbToUV(0.15, 0.6, 0.25); assert.ok(u < 0.45 && v < 0.4, "le vert est loin du gris (0,5 ; 0,5)");
+  assert.ok(Math.abs(t.u - u) < 1e-9);
+});
+
+test("rythme : Dynamique coupe les pauses moyennes, Posé les garde", async () => {
+  const { analyze, RHYTHM } = await import("../src/core/speech-analysis.ts");
+  const w = [{ text: "Bonjour.", start: 0, end: 0.5 }, { text: "Aujourd'hui", start: 1.3, end: 1.8 }, { text: "on", start: 1.85, end: 2 }, { text: "parle", start: 2.5, end: 2.8 }];
+  const sil = (r: keyof typeof RHYTHM) => analyze(w, { longSilence: RHYTHM[r].longSilence, keepPause: RHYTHM[r].keepPause }).filter((s) => s.type === "long_silence");
+  assert.equal(sil("calm").length, 0, "pause de 0,8 s gardée");
+  const n = sil("natural"); assert.equal(n.length, 1); assert.ok(Math.abs(n[0].range.end - n[0].range.start - 0.5) < 1e-9, "0,8 s → 0,3 s");
+  const p = sil("punchy"); assert.equal(p.length, 2, "la pause de 0,5 s aussi"); assert.ok(p.every((s) => s.confidence >= 0.5));
+});

@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.9)
+# Green Studio 3.1 — état réel (beta.10)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,11 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.10
+- **Vrai fond vert / bleu** (Réglages › Vrai fond vert : Auto / Toujours / Jamais, et Tolérance) : incrustation par la couleur sur le principe du filtre Chroma Key d'[OBS Studio](https://obsproject.com/kb/chroma-key-filter) (distance de chrominance moyennée 3×3, bord adouci, retrait du reflet vert sur la peau), avec le détourage IA comme garde-fou autour de la personne. Fond uni vert ou bleu détecté automatiquement (≈ 1 s), couleur suivie en continu (éclairage inégal). Moteurs web et natif. Vérifié en navigateur sur une image de test réaliste (fond vert éclairé de façon inégale + grain) ; shader natif validé (GLSL ES 3.00) ; tests unitaires de la détection.
+- **⚡ Express** (après une prise) : transcription → nettoyage → modèle d'émission → export → Galerie, en un geste ; si la transcription échoue, la vidéo est exportée sans nettoyage. Testé : `tests/browser/express.e2e.cjs`.
+- **Rythme** (Suggestions) : Posé / Naturel / Dynamique, inspiré d'[auto-editor](https://github.com/WyattBlue/auto-editor) (seuil de silence + marge gardée). Naturel (par défaut) : silences > 0,7 s ramenés à 0,3 s (avant : seulement > 1,5 s) ; Dynamique : > 0,35 s ramenés à 0,12 s, façon TikTok. Mémorisé dans les modèles d'émission.
 
 ## 3.1.0-beta.9
 - **Timeline de dérush** (montage) : vue d'ensemble ou zoom (pincer, ＋/−, ⤢ Tout) avec tête de lecture fixe au centre ; glisser pour défiler ; forme d'onde fine et mots sous l'onde ; ✂ Scinder (calé automatiquement entre deux mots) ; toucher un clip → 🗑 Supprimer, toucher une coupe → ↺ Restaurer ; poignées pour rogner / rallonger un clip ; tout est annulable. Testé : `tests/browser/derush.e2e.cjs` + tests unitaires (clips, scission, rognage sans toucher aux voisins).

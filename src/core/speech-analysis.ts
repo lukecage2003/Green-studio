@@ -9,13 +9,14 @@ export const TICS = ["du coup", "en fait", "tu vois", "tu sais", "vous voyez", "
 export interface AnalysisOptions {
   maxRepeatGap: number;      // s entre deux occurrences d'un mot répété
   longSilence: number;       // s
+  keepPause: number;         // s de pause gardée à la place d'un silence coupé (marge, comme auto-editor)
   fillers: string[];
   tics: string[];            // tics de langage (retirés seulement quand ils sont isolés par une pause ou une virgule)
   emphaticWords: string[];   // répétitions souvent volontaires : confiance réduite
   maxPhrase: number;         // taille max (mots) d'une phrase recommencée
 }
 export const DEFAULTS: AnalysisOptions = {
-  maxRepeatGap: 0.8, longSilence: 1.5, maxPhrase: 5,
+  maxRepeatGap: 0.8, longSilence: 1.5, keepPause: 0.4, maxPhrase: 5,
   fillers: ["euh", "heu", "hum", "hmm", "mmh", "euhh", "euuh", "eeuh", "bah", "ben", "beh", "pff", "mh", "hm"],
   tics: TICS,
   emphaticWords: ["très", "bien", "trop", "vraiment", "super", "beaucoup", "non", "oui", "jamais", "toujours"],
@@ -34,6 +35,14 @@ function retakeAt(n: string[], i: number): number {
   for (const c of RETAKE) if (c.every((x, k) => n[i + k] === x)) return c.length;
   return 0;
 }
+
+/** Rythme du montage : quels silences retirer et quelle pause garder (inspiré d'auto-editor : seuil + marge). */
+export type Rhythm = "calm" | "natural" | "punchy";
+export const RHYTHM: Record<Rhythm, { label: string; longSilence: number; keepPause: number }> = {
+  calm: { label: "Posé", longSilence: 1.2, keepPause: 0.5 },
+  natural: { label: "Naturel", longSilence: 0.7, keepPause: 0.3 },
+  punchy: { label: "Dynamique", longSilence: 0.35, keepPause: 0.12 },
+};
 
 export function analyze(words: Word[], opt: Partial<AnalysisOptions> = {}): Suggestion[] {
   const o = { ...DEFAULTS, ...opt };
@@ -97,7 +106,7 @@ export function analyze(words: Word[], opt: Partial<AnalysisOptions> = {}): Sugg
   for (let i = 0; i + 1 < words.length; i++) {
     const gap = words[i + 1].start - words[i].end;
     if (gap >= o.longSilence) {
-      const keep = 0.4, s = words[i].end + keep / 2, e = words[i + 1].start - keep / 2;
+      const keep = o.keepPause, s = words[i].end + keep / 2, e = words[i + 1].start - keep / 2;
       out.push({ id: `long_silence-${i}`, type: "long_silence", firstWord: i, lastWord: i + 1, range: { start: s, end: e },
         excerpt: `[silence ${gap.toFixed(1)} s]`, confidence: Math.min(0.95, 0.5 + (gap - o.longSilence) * 0.2) });
     }

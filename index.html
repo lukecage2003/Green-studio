@@ -320,6 +320,8 @@ html.native .webonly{display:none!important}
     <label class="nativeonly">Moteur <select id="engSel"><option value="native">Natif (recommandé)</option><option value="web">Web</option></select></label>
     <label class="webonly">Qualité <select id="qSel"><option value="auto">Auto</option><option value="hq">Précis</option><option value="fast">Rapide</option></select></label>
     <label><span>Contours fins<span class="sub">Cheveux, mèches</span></span><input type="checkbox" id="fine" checked></label>
+    <label><span>Vrai fond vert<span class="sub">Incrustation studio si vous filmez devant un fond vert ou bleu</span></span><select id="keySel"><option value="auto">Auto</option><option value="on">Toujours</option><option value="off">Jamais</option></select></label>
+    <label><span>Tolérance du fond vert<span class="sub">Plus haut : retire plus de vert (fond mal éclairé)</span></span><input type="range" id="ktol" min="0" max="1" step="0.01" value="0.5"></label>
     <label>Miroir <button class="sw" id="bMirror" aria-pressed="true" aria-label="Miroir"></button></label>
     <label class="item">Importer un décor<span class="sub">Image ou vidéo</span><input type="file" id="file" accept="image/*,video/*" hidden><span style="color:var(--muted2);font-size:22px">›</span></label>
   </div>
@@ -410,7 +412,8 @@ html.native .webonly{display:none!important}
   <div class="nav"><button class="l" id="pvClose">Fermer</button><strong>Aperçu</strong><button class="r" id="pvEdit">Monter</button></div>
   <video id="pvVid" controls playsinline></video>
   <p class="info" id="pvInfo"></p>
-  <div class="btns" style="margin-bottom:10px"><button class="btn" id="pvClean" style="color:var(--accent)">✨ Nettoyer automatiquement</button></div>
+  <div class="btns" style="margin-bottom:10px"><button class="btn prim" id="pvExpress">⚡ Express : monter et enregistrer</button></div>
+  <div class="btns" style="margin-bottom:10px"><button class="btn" id="pvClean" style="color:var(--accent)">✨ Nettoyer et retoucher</button></div>
   <div class="btns"><a id="dl" class="btn prim">Télécharger</a><button class="btn" id="pvShare" hidden>Partager</button></div>
 </section>
 
@@ -493,6 +496,7 @@ const FS = `#version 300 es
 precision highp float; in vec2 v; out vec4 o;
 uniform sampler2D uCam,uBg,uMask,uBg2,uGF; uniform float uUseGF; uniform float uBlurBg; /* décor « Flou » : vrai fond flouté */ uniform vec4 uHarm; /* harmonisation : teinte (rgb), luminosité (a) */
 uniform vec2 uBS2,uBO2; uniform float uMix;
+uniform vec4 uKey; uniform vec2 uKeyS; /* vrai fond vert : (U, V de la couleur du fond, tolérance, actif) ; (douceur, anti-reflet) */
 uniform vec2 uMO,uMS;
 uniform vec2 uSL; uniform float uSkin; // retouche du sujet : (courbe de lumière, chaleur), lissage de peau // zone de l'image caméra analysée par l'IA (décalage, taille) : le masque ne couvre que cette zone // fondu enchaîné entre l'ancien et le nouveau décor
 uniform vec2 uCS,uCO,uBS,uBO,uEdge; uniform float uMir,uBr,uCt,uSa;
@@ -529,6 +533,9 @@ vec3 camBlur(vec2 s0){ vec3 acc=vec3(0.); for(int i=0;i<12;i++){ float an=.5236*
   acc+=texture(uCam,camUV(s0+d*.03)).rgb+texture(uCam,camUV(s0+d*.065)).rgb; } return acc/24.; }
 float mq(vec2 sv){ vec2 c=camUV(sv); return smoothstep(uEdge.x,uEdge.y,M(c))*inside(c); }
 const vec2 R[6] = vec2[6](vec2(1.,0.),vec2(.5,.866),vec2(-.5,.866),vec2(-1.,0.),vec2(-.5,-.866),vec2(.5,-.866));
+vec2 rgbUV(vec3 c){ return vec2(c.r*-.169+c.g*-.331+c.b*.5+.5, c.r*.5+c.g*-.419+c.b*-.081+.5); }
+/* Incrustation façon OBS : distance de chrominance au fond (moyennée sur 3×3), seuil « tolérance », bord adouci (puissance 1,5). */
+float keyDist(vec2 cu){ float d=0.; for(int j=-1;j<=1;j++) for(int i=-1;i<=1;i++) d+=distance(rgbUV(texture(uCam,cu+vec2(float(i),float(j))*uPx*1.5).rgb),uKey.xy); return d/9.; }
 void main(){
   vec2 s0 = v-uSub; vec2 cu = camUV(s0);
   vec3 cam = texture(uCam,cu).rgb;
@@ -538,6 +545,13 @@ void main(){
   float base = refined(cu);
   if (uUseGF > .5){ vec2 ab = texture(uGF,cu).rg; float I = dot(texture(uCam,cu).rgb, vec3(.299,.587,.114)); base = clamp(ab.x*I+ab.y, 0., 1.); }
   float a = smoothstep(uEdge.x,uEdge.y,base);
+  if (uKey.w > .5) {
+    // garde-fou : l'IA délimite largement la personne (masque élargi) ; dedans, c'est la couleur qui décide (cheveux au pixel près)
+    vec2 r = uPx*28.; float g = max(max(M(cu), max(M(cu+vec2(r.x,0.)), M(cu-vec2(r.x,0.)))), max(M(cu+vec2(0.,r.y)), M(cu-vec2(0.,r.y))));
+    float d = keyDist(cu), bm = d - uKey.z;
+    a = pow(clamp(bm/uKeyS.x,0.,1.),1.5) * smoothstep(.02,.3,g);
+    float sp = pow(clamp(bm/uKeyS.y,0.,1.),1.5), l = dot(cam,vec3(.2126,.7152,.0722)); cam = mix(vec3(l), cam, sp); // reflet vert retiré
+  }
   a*=inside(cu);
   vec2 asp = vec2(1., 1.7778); // pixels ~carrés à l'écran 9:16
   if (uFx.z>.001 && a<.999){ // ombre portée douce, décalée vers le bas/droite
@@ -593,7 +607,7 @@ gl.linkProgram(prog); gl.useProgram(prog);
 gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
 const loc = gl.getAttribLocation(prog, "p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-const U = {}; for (const n of ["uBlurBg","uHarm","uGF","uUseGF","uSL","uSkin","uMO","uMS","uCam","uBg","uMask","uBg2","uBS2","uBO2","uMix","uCS","uCO","uBS","uBO","uEdge","uMir","uBr","uCt","uSa","uPx","uSub","uFx"]) U[n] = gl.getUniformLocation(prog, n);
+const U = {}; for (const n of ["uKey","uKeyS","uBlurBg","uHarm","uGF","uUseGF","uSL","uSkin","uMO","uMS","uCam","uBg","uMask","uBg2","uBS2","uBO2","uMix","uCS","uCO","uBS","uBO","uEdge","uMir","uBr","uCt","uSa","uPx","uSub","uFx"]) U[n] = gl.getUniformLocation(prog, n);
 gl.uniform1i(U.uCam, 0); gl.uniform1i(U.uBg, 1); gl.uniform1i(U.uMask, 2); gl.uniform1i(U.uBg2, 3); gl.uniform1i(U.uGF, 4); gl.uniform1f(U.uUseGF, 0); gl.uniform1f(U.uMix, 1); gl.uniform2f(U.uMO, 0, 0); gl.uniform2f(U.uMS, 1, 1);
 function tex(unit) { const t = gl.createTexture(); gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t);
   for (const [k, val] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR],[gl.TEXTURE_MAG_FILTER, gl.LINEAR],[gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, val);
@@ -647,7 +661,7 @@ function gfRun() {
   gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, B);
 }
 
-const S = { sx: 0, sy: 0, mirror: true, cz: 1, zoom: 1, px: 0, py: 0, br: 0, ct: 1, sa: 1, lo: .35, hi: .65, stab: .6, dsp: .6, wrap: .3, shd: .25, invert: false, lgt: 0, skin: .25, warm: 0, harm: .5, par: .6, autoLight: true, fine: true };
+const S = { sx: 0, sy: 0, mirror: true, cz: 1, zoom: 1, px: 0, py: 0, br: 0, ct: 1, sa: 1, lo: .35, hi: .65, stab: .6, dsp: .6, wrap: .3, shd: .25, invert: false, lgt: 0, skin: .25, warm: 0, harm: .5, par: .6, autoLight: true, fine: true, key: "auto", ktol: .5 };
 let maskW = 0, maskH = 0;
 /* Décors : chaque image est envoyée UNE fois au GPU puis gardée (texture en cache) ; changer de décor = changer de texture,
    sans décodage ni envoi : instantané. Les décors vidéo ont leur texture mise à jour à chaque image. */
@@ -728,7 +742,7 @@ function render(frame) {
   gl.viewport(0, 0, W, H); gl.uniform2f(U.uPx, 1 / video.videoWidth, 1 / video.videoHeight);
   gl.uniform2f(U.uCS, c[0], c[1]); gl.uniform2f(U.uCO, c[2], c[3]);
   gl.uniform2f(U.uBS, b[0], b[1]); gl.uniform2f(U.uBO, b[2], b[3]);
-  gl.uniform2f(U.uSub, S.sx, S.sy); gl.uniform3f(U.uFx, S.dsp, S.wrap, S.shd); gl.uniform2f(U.uEdge, S.lo, Math.max(S.hi, S.lo + .01));
+  gl.uniform2f(U.uSub, S.sx, S.sy); const ko = keyOn(); gl.uniform4f(U.uKey, S.key === "on" ? KT.ru : KT.u, S.key === "on" ? KT.rv : KT.v, 0.06 + 0.1 * S.ktol, ko ? 1 : 0); gl.uniform2f(U.uKeyS, 0.08, 0.1); gl.uniform3f(U.uFx, ko ? 0 : S.dsp, S.wrap, S.shd); gl.uniform2f(U.uEdge, S.lo, Math.max(S.hi, S.lo + .01));
   gl.uniform1f(U.uMir, S.mirror ? 1 : 0); gl.uniform1f(U.uBr, S.br); gl.uniform1f(U.uCt, S.ct); gl.uniform1f(U.uSa, S.sa);
   gl.uniform2f(U.uSL, lightG, S.warm); gl.uniform1f(U.uSkin, S.skin);
   if (bgCur.video && performance.now() - meanT > 1000) { meanT = performance.now(); bgCur.mean = bgMean(bgCur.src); } // décor vidéo : couleur suivie
@@ -799,6 +813,7 @@ function makeWorker(model) {
         busy = false; const f = held; held = null;
         if (d.q) maskQ = d.q;
         headSeen(d.head);
+        if (d.lum) keySeen(d.lum.key ?? null);
         if (d.lum) { subjLum = subjLum == null ? d.lum.subj : subjLum * 0.7 + d.lum.subj * 0.3; if (d.lum.bg != null) bgLum = bgLum == null ? d.lum.bg : bgLum * 0.7 + d.lum.bg * 0.3; }
         if (d.data) { uploadMask(d.data, d.w, d.h); gl.uniform2f(U.uMO, sentRect[0], sentRect[1]); gl.uniform2f(U.uMS, sentRect[2], sentRect[3]); inferMs += (d.ms - inferMs) * .15; cnt.ai++; }
         if (f) { if (!suspended && d.data) { render(f); cnt.r++; } f.close(); } // image et masque de la MÊME prise de vue : aucun décalage
@@ -1030,7 +1045,7 @@ $("go").onclick = async () => {
 
 /* ---------- Moteur natif ---------- */
 const nativeParams = () => ({ mirror: S.mirror, autoLight: S.autoLight, cz: S.cz, sx: S.sx, sy: S.sy, zoom: S.zoom, px: S.px, py: S.py, br: S.br, ct: S.ct, sa: S.sa,
-  lo: S.lo, hi: S.hi, dsp: S.dsp, wrap: S.wrap, shd: S.shd, skin: S.skin, warm: S.warm, lgt: S.lgt, harm: S.harm, par: S.par, fine: S.fine, blurBg: bgCur?.id === "blur" });
+  lo: S.lo, hi: S.hi, dsp: S.dsp, wrap: S.wrap, shd: S.shd, skin: S.skin, warm: S.warm, lgt: S.lgt, harm: S.harm, par: S.par, fine: S.fine, blurBg: bgCur?.id === "blur", key: S.key, ktol: S.ktol });
 let lastParams = "", lastSusp = false, nativeFacing = "user", nativeStats = null;
 function sendViewport() {
   if (!nativeOn) return; const r = $("out").getBoundingClientRect();
@@ -1070,7 +1085,8 @@ async function startNative(facing) {
   camInfo = `${cam.width}×${cam.height}`;
   if (!startNative.wired) {
     startNative.wired = true;
-    St.addListener("stats", (s) => { nativeStats = s; inferMs = s.inferMs; camInfo = `${s.width}×${s.height}`;
+    St.addListener("stats", (s) => { if (s.key && S.key === "auto" && !keyToast) { keyToast = true; toast("Fond vert détecté : incrustation studio activée", 3000); logEvent("info", "fond vert détecté (natif)"); }
+      nativeStats = s; inferMs = s.inferMs; camInfo = `${s.width}×${s.height}`;
       if (running) $("perf").textContent = `Natif · ${s.fps} i/s · IA ${Math.round(s.inferMs)} ms · caméra ${s.width}×${s.height}${s.expo != null ? " · expo " + s.expo : ""}`; });
     St.addListener("level", (l) => { coachRms(l.rms); vad?.update(l.rms, performance.now()); $("meter").firstElementChild.style.width = Math.min(100, l.rms * 300) + "%"; });
     addEventListener("resize", () => setTimeout(sendViewport, 50));
@@ -1300,15 +1316,17 @@ $("pvClose").onclick = async () => {
   pvId = null; pvBlob = null; showPending();
 };
 /* ---------- Montage (Quick Edit) ---------- */
-async function edit(file, key, fromLib = false, autoClean = false) {
+async function edit(file, key, fromLib = false, autoClean = false, express = false) {
   $("pvVid").pause(); suspended = true;
-  try { const { openEditor } = await import("/src/ui/quick-edit.ts"); await openEditor({ file, key, toast, autoClean, ...(NATIVE ? { save: saveBlob, share: shareBlob } : {}), onClose: () => (suspended = fromLib || !!libRefresh) }); }
+  try { const { openEditor } = await import("/src/ui/quick-edit.ts"); await openEditor({ file, key, toast, autoClean, express, ...(NATIVE ? { save: saveBlob, share: shareBlob } : {}), onClose: () => (suspended = fromLib || !!libRefresh) }); }
   catch (e) { suspended = false; toast("Montage indisponible : " + (e?.message ?? e), 6000); }
 }
 // La prise reste dans le stockage tant que l'aperçu est ouvert : le montage lit le fichier sur disque, sans copie.
 $("pvEdit").onclick = () => pvBlob && edit(pvBlob, pvId ?? `mem-${pvBlob.size}`);
 // Un geste : transcription + suppression de tous les défauts détectés (bégaiements, « euh », répétitions, silences, bords muets)
 $("pvClean").onclick = () => pvBlob && edit(pvBlob, pvId ?? `mem-${pvBlob.size}`, false, true);
+// Express : un geste après la prise → transcription, nettoyage, modèle d'émission, export, Galerie
+$("pvExpress").onclick = () => pvBlob && edit(pvBlob, pvId ?? `mem-${pvBlob.size}`, false, true, true);
 $("openEdit").onclick = () => $("editFile").click();
 /* Miniature de la dernière prise sur le bouton « Mes prises » (comme l'appareil photo du téléphone). */
 function setLibThumb(d) { const b = $("bLib"); if (!d) { b.classList.remove("has"); b.style.backgroundImage = ""; return; } b.style.backgroundImage = `url(${d})`; b.classList.add("has"); }
@@ -1683,6 +1701,17 @@ $("engSel").value = ENGINE;
 if (nativeFailed && NATIVE) setTimeout(() => toast("Moteur natif indisponible (" + nativeFailed + ") : moteur web utilisé.", 7000), 1500);
 $("engSel").onchange = (e) => { try { localStorage.setItem("gs.engine", e.target.value); } catch {} toast("Changement de moteur : redémarrage…", 2000); setTimeout(() => location.reload(), 600); };
 try { S.fine = localStorage.getItem("gs.fine") !== "0"; } catch {}
+/* ---------- Vrai fond vert ---------- */
+let KT = { u: .5, v: .5, ru: .5, rv: .5, raw: 0, hits: 0, on: false, kind: null, push() { return false; } };
+import("/src/core/chroma.ts").then((m) => { const t = new m.KeyTracker(); KT = t; }).catch(() => {});
+let keyToast = false;
+function keySeen(k) { const was = KT.on; KT.push(k); if (KT.on && !was && S.key === "auto" && !keyToast) { keyToast = true; toast(`Fond ${KT.kind === "blue" ? "bleu" : "vert"} détecté : incrustation studio activée`, 3000); logEvent("info", "fond " + KT.kind + " détecté"); } }
+const keyOn = () => S.key === "on" ? KT.raw > 0 : S.key === "auto" && KT.on;
+try { S.key = localStorage.getItem("gs.key") || "auto"; S.ktol = +(localStorage.getItem("gs.ktol") || .5); } catch {}
+$("keySel").value = S.key; $("ktol").value = S.ktol;
+$("keySel").onchange = (e) => { S.key = e.target.value; try { localStorage.setItem("gs.key", S.key); } catch {} };
+$("ktol").oninput = (e) => { S.ktol = +e.target.value; try { localStorage.setItem("gs.ktol", String(S.ktol)); } catch {} };
+window.gsKey = { get on() { return keyOn(); }, get kt() { return KT; } };
 $("fine").checked = S.fine;
 $("fine").onchange = (e) => { S.fine = e.target.checked; try { localStorage.setItem("gs.fine", S.fine ? "1" : "0"); } catch {} };
 $("qSel").value = quality;

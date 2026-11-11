@@ -10,7 +10,7 @@ const mediaDb = () => new Promise<IDBDatabase>((res, rej) => { const r = indexed
 async function mediaPut(id: string, b: Blob) { const db = await mediaDb(); await new Promise((res, rej) => { const t = db.transaction("files", "readwrite"); t.objectStore("files").put(b, id); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
 async function mediaGet(id: string): Promise<Blob | null> { const db = await mediaDb(); return new Promise((res) => { const q = db.transaction("files").objectStore("files").get(id); q.onsuccess = () => res(q.result ?? null); q.onerror = () => res(null); }); }
 import { takeReport } from "../core/coach.ts";
-import { TICS, analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
+import { TICS, RHYTHM, type Rhythm, analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
 import { peaks as computePeaks, loudnessGain, speechBounds } from "../core/audio.ts";
 import { buildCaptions, drawCaption, lineAt, CAPTION_DEFAULT, PRESETS, type CapLine, type CaptionStyle, type CaptionPreset } from "../core/captions.ts";
 import { probe, extractAudio, exportEdited, webCodecsAvailable, extractClip } from "../core/media.ts";
@@ -102,19 +102,22 @@ export interface EditorOptions {
   save?: (b: Blob, name: string) => Promise<void>; share?: (b: Blob, name: string) => Promise<void>;
   /** Nettoyage en un geste : transcrire si besoin, puis supprimer tous les défauts détectés. */
   autoClean?: boolean;
+  /** Express : transcription → nettoyage → export (réglages et modèle mémorisés) → Galerie, sans autre geste. */
+  express?: boolean;
 }
 /** Seuil de confiance du nettoyage automatique (les suggestions plus incertaines restent proposées). */
 const AUTO_MIN = 0.5;
 /** Script du prompteur (s'il y en a un) : sert à « Meilleure prise ». */
 const scriptText = () => { try { return (localStorage.getItem("gs.script") || "").trim(); } catch { return ""; } };
 /** Modèle d'émission : réglages de montage réutilisables d'une vidéo à l'autre (style des sous-titres, zooms, voix, volume, bandeau d'ouverture). */
-interface Template { id: string; name: string; lang?: "fr" | "en"; style: CaptionStyle; zooms: boolean; voice: boolean; norm: boolean; q720: boolean; intro?: { text: string; sub?: string } }
+interface Template { id: string; name: string; rhythm?: Rhythm; lang?: "fr" | "en"; style: CaptionStyle; zooms: boolean; voice: boolean; norm: boolean; q720: boolean; intro?: { text: string; sub?: string } }
 const loadTpls = (): Template[] => { try { return JSON.parse(localStorage.getItem("gs.tpl") || "[]"); } catch { return []; } };
 const saveTpls = (l: Template[]) => { try { localStorage.setItem("gs.tpl", JSON.stringify(l)); } catch { /* */ } };
 const autoTplId = () => { try { return localStorage.getItem("gs.tplAuto") || ""; } catch { return ""; } };
 /** Tics de langage de l'utilisateur (modifiables dans Suggestions). */
 const myTics = (): string[] => { try { const v = JSON.parse(localStorage.getItem("gs.tics") || "null"); return Array.isArray(v) ? v : TICS; } catch { return TICS; } };
 const setTics = (l: string[]) => { try { localStorage.setItem("gs.tics", JSON.stringify(l)); } catch { /* */ } };
+const myRhythm = (): Rhythm => { try { const v = localStorage.getItem("gs.rhythm") as Rhythm; return v && v in RHYTHM ? v : "natural"; } catch { return "natural"; } };
 const autoPref = () => { try { return localStorage.getItem("gs.autoClean") !== "0"; } catch { return true; } };
 
 export async function openEditor(o: EditorOptions) {
@@ -157,9 +160,9 @@ export async function openEditor(o: EditorOptions) {
   try { duration = (await probe(o.file)).duration || duration; } catch { /* repli : métadonnées du lecteur */ }
   if (!duration || !isFinite(duration)) { await new Promise((r) => (video.onloadedmetadata = r)); duration = isFinite(video.duration) ? video.duration : 0; }
   const session = new EditSession(duration, saved?.cuts ?? []);
-  let words: Word[] | null = saved?.words ?? null, sugs: Suggestion[] = words ? analyze(words, { tics: myTics() }) : [];
+  let words: Word[] | null = saved?.words ?? null, sugs: Suggestion[] = words ? analyze(words, { tics: myTics(), longSilence: RHYTHM[myRhythm()].longSilence, keepPause: RHYTHM[myRhythm()].keepPause }) : [];
   /** Suggestions du texte + du son (bégaiements et hésitations que Whisper n'a pas écrits). */
-  const suggest = (w: Word[]) => { const t = analyze(w, { tics: myTics() }); return pcm ? [...t, ...analyzeAudio(w, pcm, 16000, t)].sort((a, b) => a.range.start - b.range.start) : t; };
+  const suggest = (w: Word[]) => { const R = RHYTHM[myRhythm()]; const t = analyze(w, { tics: myTics(), longSilence: R.longSilence, keepPause: R.keepPause }); return pcm ? [...t, ...analyzeAudio(w, pcm, 16000, t)].sort((a, b) => a.range.start - b.range.start) : t; };
   const ignored = new Set(saved?.ignored ?? []);
   let pk: Float32Array | null = saved?.peaks ? Float32Array.from(saved.peaks, (x) => x / 255) : null;
   let pcm: Float32Array | null = null, audioErr = "";
@@ -169,7 +172,7 @@ export async function openEditor(o: EditorOptions) {
   let splits: number[] = saved?.splits ?? [];
   let enWords: Word[] | null = saved?.enWords ?? null, capLang: "fr" | "en" = saved?.capLang ?? "fr";
   function applyTpl(tp: Template) {
-    style = { ...CAPTION_DEFAULT, ...tp.style }; capLang = tp.lang ?? "fr"; zooms = tp.zooms; voice = tp.voice; norm = tp.norm; q720 = tp.q720;
+    style = { ...CAPTION_DEFAULT, ...tp.style }; capLang = tp.lang ?? "fr"; if (tp.rhythm) try { localStorage.setItem("gs.rhythm", tp.rhythm); } catch { /* */ } zooms = tp.zooms; voice = tp.voice; norm = tp.norm; q720 = tp.q720;
     (root.querySelector("[data-a=zooms]") as HTMLInputElement).checked = zooms;
     if (tp.intro?.text && !titles.some((x) => x.id.startsWith("intro"))) titles.push({ id: "intro" + Date.now().toString(36), text: tp.intro.text, sub: tp.intro.sub, start: Math.min(0.3, duration / 4), end: Math.min(duration, 4.3) });
   }
@@ -260,6 +263,11 @@ export async function openEditor(o: EditorOptions) {
   }
   /** Relance l'analyse avec la nouvelle liste de tics, en gardant le panneau ouvert. */
   function retic() { if (words) sugs = suggest(words); body.innerHTML = ""; refresh(); body.querySelector<HTMLDetailsElement>("[data-tics]")?.setAttribute("open", ""); }
+  function rhythmCard() {
+    const r = myRhythm();
+    return `<div class="card" style="margin-bottom:10px;gap:8px"><b>Rythme</b><div class="chips">${(Object.keys(RHYTHM) as Rhythm[]).map((k) => `<button class="ib" data-a="rhythm" data-v="${k}" aria-pressed="${k === r}">${RHYTHM[k].label}</button>`).join("")}</div>
+      <p>${r === "punchy" ? "Coupes serrées façon TikTok : silences de plus de 0,35 s retirés, 0,12 s de respiration gardée." : r === "calm" ? "Pauses respectées : seuls les silences de plus de 1,2 s sont raccourcis." : "Silences de plus de 0,7 s raccourcis à 0,3 s."}</p></div>`;
+  }
   function ticsCard() {
     const l = myTics();
     return `<details class="card" data-tics style="margin-bottom:10px"><summary><b>Mes tics de langage</b> (${l.length})</summary>
@@ -268,11 +276,11 @@ export async function openEditor(o: EditorOptions) {
   }
   function renderSugs() {
     if (!words) { body.innerHTML = `<div class="card"><p>Les suggestions apparaissent après la transcription (onglet Texte).</p></div>`; return; }
-    if (!sugs.length) { body.innerHTML = coachCard() + ticsCard() + `<div class="card"><p>Aucune répétition, hésitation ni silence long détecté. 👌</p>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}</div>`; return; }
+    if (!sugs.length) { body.innerHTML = coachCard() + rhythmCard() + ticsCard() + `<div class="card"><p>Aucune répétition, hésitation ni silence long détecté. 👌</p>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}</div>`; return; }
     const open = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range));
     const all = open.filter((s) => s.confidence >= AUTO_MIN).length, sil = open.filter((s) => s.type === "long_silence").length;
     const take = takeInfo ? `<div class="card" style="margin-bottom:10px"><b>Meilleure prise</b><p>${esc(takeSummary())}</p>${takeInfo.missing.length ? `<p>Non dit : ${takeInfo.missing.map((m) => "« " + esc(m) + " »").join(", ")}</p>` : ""}</div>` : "";
-    body.innerHTML = coachCard() + take + ticsCard() + `<div class="row" style="padding:0 0 8px"><button class="ib go" data-a="clean" ${all ? "" : "disabled"}>✨ Tout supprimer (${all})</button>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}
+    body.innerHTML = coachCard() + take + rhythmCard() + ticsCard() + `<div class="row" style="padding:0 0 8px"><button class="ib go" data-a="clean" ${all ? "" : "disabled"}>✨ Tout supprimer (${all})</button>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}
       <button class="ib" data-a="sil" ${sil ? "" : "disabled"}>Couper les silences (${sil})</button></div>` +
       sugs.map((s) => { const on = covered(s.range), ign = ignored.has(s.id);
         return `<div class="sg ${on ? "on" : ""} ${ign ? "ign" : ""}" data-s="${esc(s.id)}"><div class="t"><b>${LABEL[s.type]} · ${Math.round(s.confidence * 100)} %${on ? " · coupé" : ""}</b>
@@ -549,11 +557,13 @@ export async function openEditor(o: EditorOptions) {
       else if (d.type === "done") {
         worker?.terminate(); worker = null; words = d.words; sugs = suggest(words!); sel = null; save();
         body.innerHTML = ""; refresh();
-        if (o.autoClean || autoPref()) cleanAll(); // nettoyage automatique (option, activée par défaut)
+        if (o.express) cleanAll().then(() => runExport(true)); // express : tout s’enchaîne
+        else if (o.autoClean || autoPref()) cleanAll(); // nettoyage automatique (option, activée par défaut)
         else toast(`Transcrit en ${fmt((performance.now() - t0) / 1000)} · ${sugs.length} suggestion(s).`, 4000);
       } else if (d.type === "error") {
         worker?.terminate(); worker = null; if (btn) btn.disabled = false;
         const net = /fetch|network|load/i.test(d.message);
+        if (o.express) { toast("Transcription impossible : export sans nettoyage.", 4000); runExport(true); }
         show(0, net ? "Impossible de télécharger le modèle de transcription. Vérifiez la connexion (nécessaire une seule fois), puis réessayez."
           : "Échec de la transcription : " + d.message);
       }
@@ -713,7 +723,7 @@ export async function openEditor(o: EditorOptions) {
       norm = m.querySelector<HTMLInputElement>("[data-x=norm]")!.checked; voice = m.querySelector<HTMLInputElement>("[data-x=voice]")!.checked; zooms = m.querySelector<HTMLInputElement>("[data-x=zooms]")!.checked; q720 = m.querySelector<HTMLInputElement>("[data-x=q720]")!.checked; save(); m.remove(); runExport();
     };
   }
-  async function runExport() {
+  async function runExport(auto = false) {
     const m = document.createElement("div"); m.className = "modal";
     m.innerHTML = `<div class="card"><b>Export</b><div class="bar"><i></i></div><p data-r="ep">Préparation…</p>
       <div class="row" style="padding:0"><button class="ib" data-x="cancel">Annuler</button></div></div>`;
@@ -745,6 +755,10 @@ export async function openEditor(o: EditorOptions) {
       if (sh) sh.onclick = () => (o.share ? o.share(blob, name) : navigator.share({ files: [file], title: "Green Studio" })).catch((e: any) => toast("Partage impossible : " + (e?.message ?? e), 5000));
       const sv = m.querySelector<HTMLButtonElement>("[data-x=save]");
       if (sv) sv.onclick = () => { sv.disabled = true; o.save!(blob, name).then(() => (sv.textContent = "✓ Enregistrée")).catch((e: any) => { sv.disabled = false; toast("Échec de l’enregistrement : " + (e?.message ?? e), 6000); }); };
+      if (auto) { // express : enregistrée tout de suite, il ne reste qu'à partager
+        if (sv) sv.click(); else m.querySelector<HTMLAnchorElement>("a[download]")?.click();
+        m.querySelector(".card b")!.textContent = "⚡ Vidéo prête ✓";
+      }
     } catch (e: any) {
       if (e?.name === "AbortError") { toast("Export annulé.", 2000); return; }
       m.querySelector(".card")!.innerHTML = `<b>Export impossible</b><p class="error">${esc(e?.message ?? String(e))}</p><button class="ib" data-x="ok">Fermer</button>`;
@@ -789,11 +803,13 @@ export async function openEditor(o: EditorOptions) {
       case "zooms": zooms = (t as HTMLInputElement).checked; save(); break;
       case "lang": capLang = t.closest<HTMLElement>("[data-v]")!.dataset.v as "fr" | "en"; save(); body.innerHTML = ""; refresh(); if (capLang === "en" && !enWords) translateEN(); break;
       case "retr": enWords = null; save(); body.innerHTML = ""; refresh(); translateEN(); break;
+      case "rhythm": { const v = t.closest<HTMLElement>("[data-v]")!.dataset.v!; try { localStorage.setItem("gs.rhythm", v); } catch { /* */ } if (words) sugs = suggest(words); body.innerHTML = ""; refresh();
+        toast(`Rythme ${RHYTHM[v as Rhythm].label} : touchez « Tout supprimer » pour l’appliquer.`, 2500); break; }
       case "ticAdd": { const v = prompt("Votre tic (ex. « tu vois », « en mode ») :")?.trim().toLowerCase(); if (!v) break; setTics([...new Set([...myTics(), v])]); retic(); break; }
       case "ticDel": { const v = t.closest<HTMLElement>("[data-v]")!.dataset.v!; setTics(myTics().filter((x) => x !== v)); retic(); break; }
       case "tplSave": { const name = prompt("Nom du modèle (ex. « Mon émission ») :", "Mon émission")?.trim(); if (!name) break;
         const intro = titles.find((x) => x.start < 1.5); const l = loadTpls().filter((x) => x.name !== name);
-        const tp: Template = { id: "t" + Date.now().toString(36), name, lang: capLang, style, zooms, voice, norm, q720, intro: intro ? { text: intro.text, sub: intro.sub } : undefined };
+        const tp: Template = { id: "t" + Date.now().toString(36), name, rhythm: myRhythm(), lang: capLang, style, zooms, voice, norm, q720, intro: intro ? { text: intro.text, sub: intro.sub } : undefined };
         l.push(tp); saveTpls(l); if (!autoTplId()) try { localStorage.setItem("gs.tplAuto", tp.id); } catch { /* */ }
         toast(`Modèle « ${name} » enregistré${intro ? " (avec bandeau d’ouverture)" : ""}.`, 2500); body.innerHTML = ""; renderCC(); break; }
       case "tplUse": { const tp = loadTpls().find((x) => x.id === t.closest<HTMLElement>("[data-v]")?.dataset.v); if (!tp) break;
@@ -845,6 +861,6 @@ export async function openEditor(o: EditorOptions) {
   addEventListener("keydown", onKey);
 
   refresh(); raf = requestAnimationFrame(tick);
-  if (o.autoClean) { if (words) cleanAll(); else setTimeout(() => body.querySelector<HTMLElement>("[data-a=transcribe]")?.click(), 50); }
+  if (o.autoClean || o.express) { if (words) (o.express ? cleanAll().then(() => runExport(true)) : cleanAll()); else setTimeout(() => body.querySelector<HTMLElement>("[data-a=transcribe]")?.click(), 50); }
   return { close, session, get words() { return words; } };
 }
