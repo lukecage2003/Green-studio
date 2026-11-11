@@ -90,6 +90,7 @@ public class StudioPlugin extends Plugin {
         p.br = f(d, "br", p.br); p.ct = f(d, "ct", p.ct); p.sa = f(d, "sa", p.sa); p.lo = f(d, "lo", p.lo); p.hi = f(d, "hi", p.hi);
         p.dsp = f(d, "dsp", p.dsp); p.wrap = f(d, "wrap", p.wrap); p.shd = f(d, "shd", p.shd); p.skin = f(d, "skin", p.skin); p.warm = f(d, "warm", p.warm); p.lgt = f(d, "lgt", p.lgt); p.harm = f(d, "harm", p.harm);
         if (d.has("fine")) p.fine = d.optBoolean("fine", true);
+        if (d.has("blurBg")) p.blurBg = d.optBoolean("blurBg", false);
         call.resolve();
     }
     private static float f(JSObject d, String k, float def) { return d.has(k) ? (float) d.optDouble(k, def) : def; }

@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.5)
+# Green Studio 3.1 — état réel (beta.6)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,13 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.6
+- **Habillage** (onglet du montage) : images et extraits vidéo insérés en plein écran, en incrustation ou « moi en petit » (Ken Burns, fondus), bandeaux titres en verre sombre. Aperçu identique à l'export. Testé : `tests/browser/dress.e2e.cjs`.
+- **Flou d'arrière-plan** : nouveau décor « Flou » = votre vrai fond flouté (effet portrait), moteurs web et natif. Vérifié en navigateur sur une vraie image ; shader natif compilé (GLSL ES 3.00), pas encore essayé sur S25.
+- **Modèles d'émission** : style des sous-titres, zooms, voix studio, volume et bandeau d'ouverture enregistrés et réappliqués, avec application automatique aux nouvelles vidéos. Testé (dress.e2e).
+- **Préparation Play Store** : écran d'accueil en 3 pages (autorisations expliquées), politique de confidentialité (`public/privacy.html`, aussi dans Réglages), fiche boutique FR/EN et checklist (`docs/play-store/fiche.md`), bundle AAB signé (`gradle bundleRelease`).
+- Remarque : le test `live.e2e` (prompteur avec micro simulé) échoue de temps en temps, déjà avant ces changements : le micro simulé est instable sous émulation GPU.
 
 ## 3.1.0-beta.5
 - **Contours fins (cheveux)** : filtre guidé (He et al.) sur le GPU, dans les deux moteurs — le masque de l'IA (256×256) est affiné en suivant la luminosité de l'image en pleine résolution (6 passes ≤ 960 px, textures demi-flottantes ; repli automatique). Vérifié sur la vraie scène (train, contre-jour) : bord des cheveux naturel au lieu d'un escalier de blocs. Réglage « Contours fins ».

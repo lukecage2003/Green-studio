@@ -7,6 +7,7 @@ import {
 import { kept, type Range } from "./timeline.ts";
 import { Resampler, toMono, fadeGain, softLimit } from "./audio.ts";
 import { StudioVoice, loadDenoiser } from "./voice.ts";
+import { compose, drawTitle, activeAt, type Overlay, type Title } from "./overlay.ts";
 import { lineAt, drawCaption, type CapLine, type CaptionStyle } from "./captions.ts";
 
 const FORMATS = [MP4, QTFF, WEBM, MATROSKA]; // vidéos de téléphone (dont .mov iPhone) : module plus léger que ALL_FORMATS
@@ -88,10 +89,13 @@ export interface ExportOptions {
   maxHeight?: number;                              // ex. 1280 pour un export 720p plus léger
   voice?: boolean;                                 // voix studio : débruitage, égaliseur, compresseur
   zoom?: ((t: number) => number) | null;           // zooms dynamiques : facteur de zoom selon le temps source (1 = aucun)
+  /** habillage : extraits (images / vidéos) et bandeaux titres, en temps source */
+  dress?: { overlays: Overlay[]; titles: Title[]; images: Map<string, CanvasImageSource>; videos: Map<string, Blob>; accent?: string } | null;
 }
 
 export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOptions = {}): Promise<ExportResult> {
-  const { onProgress, signal, fade = 0.012, gain = 1, captions = null, maxHeight = 0, voice = false, zoom = null } = opts;
+  const { onProgress, signal, fade = 0.012, gain = 1, captions = null, maxHeight = 0, voice = false, zoom = null, dress = null } = opts;
+  const vidSinks = new Map<string, { input: Input; sink: VideoSampleSink }>();
   const input = new Input({ source: new BlobSource(file), formats: FORMATS });
   let output: Output | null = null;
   try {
@@ -117,7 +121,16 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
 
     // Passage par un canvas seulement si nécessaire (sous-titres, redimensionnement) : sinon les images vont directement à l'encodeur.
     let cv: OffscreenCanvas | null = null, cx: OffscreenCanvasRenderingContext2D | null = null;
-    const viaCanvas = (!!captions && captions.style.preset !== "none" && captions.lines.length > 0) || maxHeight > 0 || !!zoom;
+    const viaCanvas = (!!captions && captions.style.preset !== "none" && captions.lines.length > 0) || maxHeight > 0 || !!zoom
+      || !!(dress && (dress.overlays.length || dress.titles.length));
+    /** Image de l'extrait au temps t (vidéo : lue image par image, à fermer après usage). */
+    const overlaySource = async (ov: Overlay, t: number): Promise<{ src: any; close?: () => void } | null> => {
+      if (ov.kind === "image") { const im = dress!.images.get(ov.id); return im ? { src: im } : null; }
+      const blob = dress!.videos.get(ov.id); if (!blob) return null;
+      let e = vidSinks.get(ov.id);
+      if (!e) { const input = new Input({ source: new BlobSource(blob), formats: FORMATS }); const tr = await input.getPrimaryVideoTrack(); if (!tr) return null; e = { input, sink: new VideoSampleSink(tr) }; vidSinks.set(ov.id, e); }
+      const smp = await e.sink.getSample(Math.max(0, t - ov.start)); return smp ? { src: smp, close: () => smp.close() } : null;
+    };
     const vsink = new VideoSampleSink(vt), asink = at && asrc ? new AudioSampleSink(at) : null;
     let offset = 0, lastV = -1, done_ = 0;
     /* Voix studio en flux : la sortie k correspond à l'entrée k ; l'horodatage suit donc l'entrée. Si le flux d'entrée
@@ -160,10 +173,17 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
           if (!cv) { const k = maxHeight > 0 ? Math.min(1, maxHeight / s.displayHeight) : 1;
             cv = new OffscreenCanvas(Math.round(s.displayWidth * k / 2) * 2, Math.round(s.displayHeight * k / 2) * 2); cx = cv.getContext("2d")!; }
           const z = zoom ? zoom(s.timestamp) : 1;
-          if (z > 1.001 && !s.rotation) { // zoom centré sur le haut du cadre (le visage) : on dessine une partie de l'image
-            const sw = s.displayWidth / z, sh = s.displayHeight / z;
-            s.draw(cx!, (s.displayWidth - sw) / 2, (s.displayHeight - sh) * 0.3, sw, sh, 0, 0, cv.width, cv.height);
-          } else s.drawWithFit(cx!, { fit: "fill" });
+          /** La personne (image filmée, zoom éventuel) dans le rectangle donné. */
+          const speaker = (x: number, y: number, w: number, h: number) => {
+            if (z > 1.001 && !s.rotation) { // zoom centré sur le haut du cadre (le visage) : on dessine une partie de l'image
+              const sw = s.displayWidth / z, sh = s.displayHeight / z;
+              s.draw(cx!, (s.displayWidth - sw) / 2, (s.displayHeight - sh) * 0.3, sw, sh, x, y, w, h);
+            } else if (x === 0 && y === 0 && w === cv!.width && h === cv!.height) s.drawWithFit(cx!, { fit: "fill" });
+            else s.draw(cx!, x, y, w, h);
+          };
+          const ov = dress ? activeAt(dress.overlays, s.timestamp) : null, os = ov ? await overlaySource(ov, s.timestamp) : null;
+          compose(cx!, cv.width, cv.height, s.timestamp, ov, os?.src ?? null, speaker); os?.close?.();
+          if (dress) drawTitle(cx!, cv.width, cv.height, s.timestamp, activeAt(dress.titles, s.timestamp), dress.accent);
           if (captions) drawCaption(cx!, 0, 0, cv.width, cv.height, lineAt(captions.lines, s.timestamp), s.timestamp, captions.style);
           o = new VideoSample(cv, { timestamp: t, duration: d }); s.close();
         } else { s.setTimestamp(t); s.setDuration(d); }
@@ -190,5 +210,5 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
     const mime = mp4 ? "video/mp4" : "video/webm", raw = await done();
     return { blob: raw.type === mime ? raw : new Blob([raw], { type: mime }), ext, mime, video: vcodec, audio: acodec };
   } catch (e) { await output?.cancel().catch(() => {}); throw e; }
-  finally { input.dispose?.(); }
+  finally { input.dispose?.(); for (const e of vidSinks.values()) e.input.dispose?.(); }
 }

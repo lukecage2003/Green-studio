@@ -2,6 +2,12 @@
  *  suggestions (répétitions, hésitations, silences…), annuler/rétablir, export. Tout reste sur l'appareil. */
 import { EditSession, wordsToRange, EPS, type Range, type Word } from "../core/timeline.ts";
 import { bestTakes, type TakeResult } from "../core/takes.ts";
+import { compose, drawTitle, activeAt, type Overlay, type OverlayMode, type Title } from "../core/overlay.ts";
+
+/** Fichiers insérés (images, extraits) : gardés sur le téléphone (IndexedDB), retrouvés à la réouverture du projet. */
+const mediaDb = () => new Promise<IDBDatabase>((res, rej) => { const r = indexedDB.open("gs-media", 1); r.onupgradeneeded = () => r.result.createObjectStore("files"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+async function mediaPut(id: string, b: Blob) { const db = await mediaDb(); await new Promise((res, rej) => { const t = db.transaction("files", "readwrite"); t.objectStore("files").put(b, id); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
+async function mediaGet(id: string): Promise<Blob | null> { const db = await mediaDb(); return new Promise((res) => { const q = db.transaction("files").objectStore("files").get(id); q.onsuccess = () => res(q.result ?? null); q.onerror = () => res(null); }); }
 import { analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
 import { peaks as computePeaks, loudnessGain, speechBounds } from "../core/audio.ts";
 import { buildCaptions, drawCaption, lineAt, CAPTION_DEFAULT, PRESETS, type CapLine, type CaptionStyle, type CaptionPreset } from "../core/captions.ts";
@@ -75,7 +81,7 @@ const CSS = `
 .qe .go,.lib .go{background:var(--accent);border-color:rgba(255,255,255,.3)}
 .qe .tools label{background:rgba(255,255,255,.1);border:.5px solid rgba(255,255,255,.18);box-shadow:inset 0 1px 0 rgba(255,255,255,.22)}
 .qe .tabs{background:rgba(255,255,255,.08);border:.5px solid rgba(255,255,255,.12);border-radius:16px;padding:3px}
-.qe .tabs button{border-radius:13px}.qe .tabs button[aria-selected=true]{background:rgba(255,255,255,.2);box-shadow:inset 0 1px 0 rgba(255,255,255,.25)}
+.qe .tabs button{border-radius:13px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px}.qe .tabs button[aria-selected=true]{background:rgba(255,255,255,.2);box-shadow:inset 0 1px 0 rgba(255,255,255,.25)}
 .qe .card,.qe .sg,.lib li,.lib .empty{background:rgba(255,255,255,.07);border:.5px solid rgba(255,255,255,.1)}
 .qe .card{border-radius:22px}
 .qe .vw{border-radius:24px}.qe canvas.wave{border-radius:14px;background:rgba(255,255,255,.06)}
@@ -84,7 +90,7 @@ const CSS = `
 .lib ul{margin:0 12px}.lib li:first-child{border-radius:20px 20px 0 0}.lib li:last-child{border-radius:0 0 20px 20px}.lib li:only-child{border-radius:20px}
 `;
 
-interface Saved { v: 1; duration: number; words: Word[] | null; cuts: Range[]; ignored: string[]; peaks?: number[]; style?: CaptionStyle; norm?: boolean; q720?: boolean; voice?: boolean; zooms?: boolean }
+interface Saved { overlays?: Overlay[]; titles?: Title[]; v: 1; duration: number; words: Word[] | null; cuts: Range[]; ignored: string[]; peaks?: number[]; style?: CaptionStyle; norm?: boolean; q720?: boolean; voice?: boolean; zooms?: boolean }
 
 export interface EditorOptions {
   file: Blob; key: string; name?: string; onClose?: () => void; toast?: (m: string, ms?: number) => void;
@@ -97,6 +103,11 @@ export interface EditorOptions {
 const AUTO_MIN = 0.5;
 /** Script du prompteur (s'il y en a un) : sert à « Meilleure prise ». */
 const scriptText = () => { try { return (localStorage.getItem("gs.script") || "").trim(); } catch { return ""; } };
+/** Modèle d'émission : réglages de montage réutilisables d'une vidéo à l'autre (style des sous-titres, zooms, voix, volume, bandeau d'ouverture). */
+interface Template { id: string; name: string; style: CaptionStyle; zooms: boolean; voice: boolean; norm: boolean; q720: boolean; intro?: { text: string; sub?: string } }
+const loadTpls = (): Template[] => { try { return JSON.parse(localStorage.getItem("gs.tpl") || "[]"); } catch { return []; } };
+const saveTpls = (l: Template[]) => { try { localStorage.setItem("gs.tpl", JSON.stringify(l)); } catch { /* */ } };
+const autoTplId = () => { try { return localStorage.getItem("gs.tplAuto") || ""; } catch { return ""; } };
 const autoPref = () => { try { return localStorage.getItem("gs.autoClean") !== "0"; } catch { return true; } };
 
 export async function openEditor(o: EditorOptions) {
@@ -111,12 +122,15 @@ export async function openEditor(o: EditorOptions) {
       <button class="ib icon" data-a="undo" aria-label="Annuler">↶</button><button class="ib icon" data-a="redo" aria-label="Rétablir">↷</button></div>
     <div class="tools">
       <label>Zooms <input type="checkbox" data-a="zooms"></label>
+      <button class="ib" data-a="ins" title="Insérer une image ou un extrait par-dessus la vidéo">🖼 Insérer</button>
+      <button class="ib" data-a="title" title="Ajouter un bandeau titre">🅣 Bandeau</button>
       <button class="ib" data-a="voiceAB" title="Écouter votre voix avant / après le traitement studio">🎙 Voix studio</button>
       <button class="ib" data-a="trim" title="Couper le silence avant la première et après la dernière parole">✂ Bords muets</button>
       <button class="ib" data-a="in" title="Marquer le début d'une coupe à la tête de lecture">⟦ Début</button><button class="ib" data-a="out" disabled>Couper ⟧</button>
       <label>Sauter les coupes <input type="checkbox" data-a="pv" checked></label></div>
     <div class="row" data-r="status"></div>
-    <div class="tabs" role="tablist"><button role="tab" data-tab="tx" aria-selected="true">Texte</button><button role="tab" data-tab="sg" aria-selected="false">Suggestions</button><button role="tab" data-tab="cc" aria-selected="false">Sous-titres</button></div>
+    <div class="tabs" role="tablist"><button role="tab" data-tab="tx" aria-selected="true">Texte</button><button role="tab" data-tab="sg" aria-selected="false">Suggestions</button><button role="tab" data-tab="cc" aria-selected="false">Sous-titres</button><button role="tab" data-tab="dress" aria-selected="false">Habillage</button></div>
+    <input type="file" data-r="ovFile" accept="image/*,video/*" hidden>
     <div class="body" data-r="body"></div>`;
   document.body.appendChild(root);
   const q = <T extends Element = HTMLElement>(sel: string) => root.querySelector(sel) as unknown as T;
@@ -140,12 +154,28 @@ export async function openEditor(o: EditorOptions) {
   let pcm: Float32Array | null = null, audioErr = "";
   let style: CaptionStyle = { ...CAPTION_DEFAULT, ...(saved?.style ?? {}) }, norm = saved?.norm ?? true, q720 = saved?.q720 ?? false, voice = saved?.voice ?? true, zooms = saved?.zooms ?? false, lines: CapLine[] = [];
   (root.querySelector("[data-a=zooms]") as HTMLInputElement).checked = zooms;
-  let tab: "tx" | "sg" | "cc" = "tx", sel: { anchor: number; a: number; b: number } | null = null, inPt: number | null = null, stopAt: number | null = null;
+  let overlays: Overlay[] = saved?.overlays ?? [], titles: Title[] = saved?.titles ?? [];
+  function applyTpl(tp: Template) {
+    style = { ...CAPTION_DEFAULT, ...tp.style }; zooms = tp.zooms; voice = tp.voice; norm = tp.norm; q720 = tp.q720;
+    (root.querySelector("[data-a=zooms]") as HTMLInputElement).checked = zooms;
+    if (tp.intro?.text && !titles.some((x) => x.id.startsWith("intro"))) titles.push({ id: "intro" + Date.now().toString(36), text: tp.intro.text, sub: tp.intro.sub, start: Math.min(0.3, duration / 4), end: Math.min(duration, 4.3) });
+  }
+  if (!saved) { const tp = loadTpls().find((x) => x.id === autoTplId()); if (tp) applyTpl(tp); }
+  const ovSrc = new Map<string, { blob: Blob; img?: ImageBitmap; vid?: HTMLVideoElement }>();
+  async function loadOverlay(id: string, kind: Overlay["kind"], blob?: Blob | null) {
+    blob ??= await mediaGet(id); if (!blob) return;
+    const e: { blob: Blob; img?: ImageBitmap; vid?: HTMLVideoElement } = { blob };
+    if (kind === "image") e.img = await createImageBitmap(blob).catch(() => undefined);
+    else { const v = document.createElement("video"); v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = URL.createObjectURL(blob); e.vid = v; }
+    ovSrc.set(id, e);
+  }
+  overlays.forEach((ov) => loadOverlay(ov.id, ov.kind).catch(() => {}));
+  let tab: "tx" | "sg" | "cc" | "dress" = "tx", sel: { anchor: number; a: number; b: number } | null = null, inPt: number | null = null, stopAt: number | null = null;
   let worker: Worker | null = null, raf = 0, closed = false, curWord = -1, follow = true;
   const ctl = new AbortController();
 
   const save = () => {
-    const s: Saved = { v: 1, duration, words, cuts: session.cuts, ignored: [...ignored], style, norm, q720, voice, zooms, peaks: pk ? Array.from(pk, (x) => Math.round(x * 255)) : undefined };
+    const s: Saved = { v: 1, duration, words, cuts: session.cuts, ignored: [...ignored], style, norm, q720, voice, zooms, overlays, titles, peaks: pk ? Array.from(pk, (x) => Math.round(x * 255)) : undefined };
     try { localStorage.setItem(storeKey, JSON.stringify(s)); } catch { /* quota localStorage : on garde en mémoire */ }
   };
   const covered = (r: Range) => session.cuts.some((c) => c.start <= r.start + 0.02 && c.end >= r.end - 0.02);
@@ -168,7 +198,7 @@ export async function openEditor(o: EditorOptions) {
     q("[data-tab=sg]").textContent = `Suggestions${sugs.length ? ` (${open})` : ""}`;
     root.querySelectorAll<HTMLElement>("[data-tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
     lines = words ? buildCaptions(words, session.cuts) : [];
-    if (tab === "tx") renderText(); else if (tab === "sg") renderSugs(); else renderCC();
+    if (tab === "tx") renderText(); else if (tab === "sg") renderSugs(); else if (tab === "dress") renderDress(); else renderCC();
     renderSel();
   }
 
@@ -214,10 +244,57 @@ export async function openEditor(o: EditorOptions) {
           <button class="ib" data-a="ign" aria-label="${ign ? "Rétablir la suggestion" : "Ignorer"}">${ign ? "↩" : "✕"}</button></div>`; }).join("");
   }
 
+  const MODES: [OverlayMode, string][] = [["full", "Plein écran"], ["pip", "Incrustation"], ["me", "Moi en petit"]];
+  function renderDress() {
+    const ovRows = overlays.map((ov) => `<div class="sg" data-o="${ov.id}"><div class="t"><b style="color:#64d2ff">${ov.kind === "image" ? "Image" : "Extrait vidéo"} · ${fmt(ov.start)} → ${fmt(ov.end)}</b>
+        <div class="chips" style="margin-top:6px">${MODES.map(([m, l]) => `<button class="ib" data-a="omode" data-v="${m}" aria-pressed="${ov.mode === m}">${l}</button>`).join("")}</div></div>
+        <button class="ib" data-a="ominus" aria-label="Plus court">−</button><button class="ib" data-a="oplus" aria-label="Plus long">+</button><button class="ib" data-a="ohere">Ici</button><button class="ib" data-a="odel" aria-label="Supprimer">✕</button></div>`).join("");
+    const tiRows = titles.map((ti) => `<div class="sg" data-ti="${ti.id}"><div class="t"><b style="color:#bf5af2">Bandeau · ${fmt(ti.start)} → ${fmt(ti.end)}</b>
+        <input data-a="ttext" value="${esc(ti.text)}" placeholder="Titre" style="width:100%;margin-top:6px;background:rgba(255,255,255,.08);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit">
+        <input data-a="tsub" value="${esc(ti.sub ?? "")}" placeholder="Sous-titre (facultatif)" style="width:100%;margin-top:4px;background:rgba(255,255,255,.06);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit;font-size:14px"></div>
+        <button class="ib" data-a="tminus" aria-label="Plus court">−</button><button class="ib" data-a="tplus" aria-label="Plus long">+</button><button class="ib" data-a="there">Ici</button><button class="ib" data-a="tdel" aria-label="Supprimer">✕</button></div>`).join("");
+    body.innerHTML = `<div class="row" style="padding:0 0 10px"><button class="ib go" data-a="ins">🖼 Image / extrait</button><button class="ib" data-a="title">🅣 Bandeau</button></div>
+      ${ovRows || tiRows ? ovRows + tiRows : `<div class="card"><b>Habillez votre vidéo</b><p>Insérez une case de comic, une couverture ou un extrait : il s’affiche par-dessus la vidéo au moment choisi (tête de lecture, ou les mots sélectionnés dans Texte), en plein écran, en incrustation, ou avec vous en petit dans un coin. Ajoutez un bandeau « Nom · Thème du jour ».</p></div>`}`;
+  }
+  /** Insère le fichier choisi : sur les mots sélectionnés, sinon à la tête de lecture (3,5 s pour une image). */
+  async function insertMedia(f: File) {
+    const kind: Overlay["kind"] = f.type.startsWith("video/") ? "video" : "image", id = "ov" + Date.now().toString(36);
+    let start = video.currentTime, end = start + 3.5;
+    if (sel && words) { start = words[sel.a].start; end = Math.max(words[sel.b].end, start + 1); sel = null; }
+    if (kind === "video") { try { const d = (await probe(f)).duration; if (!sel) end = start + Math.min(Math.max(1, d), 8); } catch { /* */ } }
+    end = Math.min(duration, end); if (end - start < 0.5) start = Math.max(0, end - 2);
+    await mediaPut(id, f).catch(() => toast("Fichier gardé pour cette session seulement (stockage indisponible).", 4000));
+    await loadOverlay(id, kind, f);
+    overlays.push({ id, kind, start, end, mode: "full" }); overlays.sort((a, b) => a.start - b.start);
+    tab = "dress"; body.innerHTML = ""; commit(); toast("Inséré. Choisissez son affichage dans Habillage.", 2500);
+  }
+  function addTitle() {
+    const t = prompt("Bandeau — titre (ex. « Comics News »)", "")?.trim(); if (!t) return;
+    const sub = prompt("Sous-titre (facultatif, ex. « Le nouveau Spider-Man »)", "")?.trim() || undefined;
+    const start = video.currentTime; titles.push({ id: "ti" + Date.now().toString(36), text: t, sub, start, end: Math.min(duration, start + 4) });
+    titles.sort((a, b) => a.start - b.start); tab = "dress"; body.innerHTML = ""; commit();
+  }
+  /** Image de l'extrait pour l'aperçu (extrait vidéo calé sur la lecture). */
+  function previewSrc(ov: Overlay, t: number) {
+    const e = ovSrc.get(ov.id); if (!e) return null;
+    if (e.img) return e.img;
+    const v = e.vid!; const want = Math.max(0, t - ov.start);
+    if (Math.abs(v.currentTime - want) > 0.3) v.currentTime = want;
+    if (!video.paused && v.paused) v.play().catch(() => {}); if (video.paused && !v.paused) v.pause();
+    return v.readyState >= 2 ? v : null;
+  }
+
+  function tplCard() {
+    const l = loadTpls(), au = autoTplId();
+    return `<div class="card" data-tpl style="margin-bottom:10px"><b>Modèle d’émission</b><p>Gardez votre style (sous-titres, zooms, voix, bandeau d’ouverture) et réappliquez-le en un geste.</p>
+      ${l.length ? `<div class="chips">${l.map((tp) => `<button class="ib" data-a="tplUse" data-v="${tp.id}">${tp.id === au ? "★ " : ""}${esc(tp.name)}</button>`).join("")}</div>
+      <label class="opt"><select data-a="tplAuto" style="flex:1"><option value="">Nouvelles vidéos : aucun modèle</option>${l.map((tp) => `<option value="${tp.id}" ${tp.id === au ? "selected" : ""}>Nouvelles vidéos : ${esc(tp.name)}</option>`).join("")}</select></label>` : ""}
+      <div class="row" style="padding:6px 0 0"><button class="ib go" data-a="tplSave">＋ Enregistrer ce style</button>${l.length ? `<button class="ib" data-a="tplDel">Supprimer…</button>` : ""}</div></div>`;
+  }
   function renderCC() {
-    if (!words) { body.innerHTML = `<div class="card"><p>Les sous-titres sont générés à partir de la transcription (onglet Texte).</p></div>`; return; }
+    if (!words) { body.innerHTML = tplCard() + `<div class="card"><p>Les sous-titres sont générés à partir de la transcription (onglet Texte).</p></div>`; return; }
     if (body.querySelector("[data-cc]")) return; // déjà affiché : on ne casse pas le curseur en cours de glissement
-    body.innerHTML = `<div class="card" data-cc><b>Sous-titres incrustés</b><p>Aperçu en direct sur la vidéo. Ils sont gravés dans l’export (visibles partout, même son coupé).</p>
+    body.innerHTML = tplCard() + `<div class="card" data-cc><b>Sous-titres incrustés</b><p>Aperçu en direct sur la vidéo. Ils sont gravés dans l’export (visibles partout, même son coupé).</p>
       <div class="chips">${(Object.keys(PRESETS) as CaptionPreset[]).map((k) => `<button class="ib" data-a="preset" data-v="${k}" aria-pressed="${style.preset === k}">${PRESETS[k]}</button>`).join("")}</div>
       <label class="opt">Haut <input type="range" data-a="pos" min="0.12" max="0.88" step="0.01" value="${style.pos}"> Bas</label>
       <label class="opt"><input type="checkbox" data-a="upper" ${style.upper ? "checked" : ""}> MAJUSCULES</label>
@@ -225,8 +302,11 @@ export async function openEditor(o: EditorOptions) {
       <p>Un mot mal transcrit ? Onglet Texte : touchez-le, puis ✎.</p></div>`;
   }
   const setStyle = (p: Partial<CaptionStyle>) => { style = { ...style, ...p }; save(); };
+  q<HTMLInputElement>("[data-r=ovFile]").onchange = (e) => { const f = (e.target as HTMLInputElement).files?.[0]; (e.target as HTMLInputElement).value = ""; if (f) insertMedia(f).catch((err) => toast("Insertion impossible : " + (err?.message ?? err), 5000)); };
   body.addEventListener("input", (e) => {
     const t = e.target as HTMLInputElement, a = t.dataset.a;
+    if (a === "ttext" || a === "tsub") { const ti = titles.find((x) => x.id === t.closest<HTMLElement>("[data-ti]")?.dataset.ti); if (ti) { if (a === "ttext") ti.text = t.value; else ti.sub = t.value || undefined; save(); } return; }
+    if (a === "tplAuto") { try { localStorage.setItem("gs.tplAuto", t.value); } catch { /* */ } body.innerHTML = ""; renderCC(); return; }
     if (a === "pos") setStyle({ pos: +t.value }); else if (a === "upper") setStyle({ upper: t.checked }); else if (a === "color") setStyle({ color: t.value });
   });
 
@@ -235,8 +315,16 @@ export async function openEditor(o: EditorOptions) {
     const dpr = devicePixelRatio || 1, bw = ccv.clientWidth, bh = ccv.clientHeight;
     if (ccv.width !== Math.round(bw * dpr) || ccv.height !== Math.round(bh * dpr)) { ccv.width = Math.round(bw * dpr); ccv.height = Math.round(bh * dpr); }
     const g = ccv.getContext("2d")!; g.clearRect(0, 0, ccv.width, ccv.height);
-    if (!lines.length || style.preset === "none" || !video.videoWidth) return;
-    const k = Math.min(bw / video.videoWidth, bh / video.videoHeight), w = video.videoWidth * k * dpr, h = video.videoHeight * k * dpr;
+    if (!video.videoWidth) return;
+    const k = Math.min(bw / video.videoWidth, bh / video.videoHeight), w = video.videoWidth * k * dpr, h = video.videoHeight * k * dpr, t = video.currentTime;
+    const ov = activeAt(overlays, t), ti = activeAt(titles, t);
+    for (const o of overlays) if (o !== ov) { const v = ovSrc.get(o.id)?.vid; if (v && !v.paused) v.pause(); }
+    if (ov || ti) {
+      g.save(); g.translate((ccv.width - w) / 2, (ccv.height - h) / 2);
+      compose(g, w, h, t, ov, ov ? previewSrc(ov, t) : null, (x, y, ww, hh) => { if (x || y || ww !== w || hh !== h) g.drawImage(video, x, y, ww, hh); });
+      drawTitle(g, w, h, t, ti); g.restore();
+    }
+    if (!lines.length || style.preset === "none") return;
     drawCaption(g, (ccv.width - w) / 2, (ccv.height - h) / 2, w, h, lineAt(lines, video.currentTime), video.currentTime, style);
   }
 
@@ -264,6 +352,8 @@ export async function openEditor(o: EditorOptions) {
       for (let i = 0; i < pk.length; i++) { const h = Math.max(1, pk[i] * (H - 8)); g.fillRect(i * bw, (H - h) / 2, Math.max(1, bw - 0.5), h); } }
     else { g.fillStyle = "#24332b"; g.fillRect(0, H / 2 - 1, W, 2); }
     g.fillStyle = "rgba(255,80,80,.45)"; for (const c of session.cuts) g.fillRect(X(c.start), 0, Math.max(1, X(c.end) - X(c.start)), H);
+    g.fillStyle = "rgba(100,210,255,.9)"; for (const o of overlays) g.fillRect(X(o.start), 0, Math.max(2, X(o.end) - X(o.start)), 5 * dpr);
+    g.fillStyle = "rgba(191,90,242,.9)"; for (const ti of titles) g.fillRect(X(ti.start), 6 * dpr, Math.max(2, X(ti.end) - X(ti.start)), 4 * dpr);
     g.fillStyle = "#e8c547"; for (const s of sugs) if (!ignored.has(s.id) && !covered(s.range)) g.fillRect(X(s.range.start), H - 4 * dpr, Math.max(2, X(s.range.end) - X(s.range.start)), 4 * dpr);
     if (inPt != null) { g.fillStyle = "#34e08b"; g.fillRect(X(inPt) - dpr, 0, 2 * dpr, H); }
     g.fillStyle = "#fff"; g.fillRect(X(video.currentTime) - dpr, 0, 2 * dpr, H);
@@ -462,7 +552,8 @@ export async function openEditor(o: EditorOptions) {
         if (!webCodecsAvailable()) throw new Error("WebCodecs indisponible");
         let gain = 1; if (norm) { await audioP; if (pcm) gain = loudnessGain(pcm, 16000, session.kept); }
         const captions = words && style.preset !== "none" ? { lines, style } : null;
-        const r = await exportEdited(o.file, session.cuts, { onProgress, signal: ac.signal, gain, captions, maxHeight: q720 ? 1280 : 0, voice, zoom: zooms ? zoomAt : null }); blob = r.blob; ext = r.ext; how = `${r.video.toUpperCase()}${r.audio ? " + " + r.audio.toUpperCase() : ""}`;
+        const r = await exportEdited(o.file, session.cuts, { onProgress, signal: ac.signal, gain, captions, maxHeight: q720 ? 1280 : 0, voice, zoom: zooms ? zoomAt : null,
+          dress: overlays.length || titles.length ? { overlays, titles, images: new Map([...ovSrc].filter(([, e]) => e.img).map(([id, e]) => [id, e.img!])), videos: new Map([...ovSrc].filter(([, e]) => !e.img).map(([id, e]) => [id, e.blob])) } : null }); blob = r.blob; ext = r.ext; how = `${r.video.toUpperCase()}${r.audio ? " + " + r.audio.toUpperCase() : ""}`;
       } catch (e: any) {
         if (e?.name === "AbortError") throw e;
         console.warn("Export rapide impossible, repli temps réel", e); ep.textContent = "Export en temps réel (plus lent)…";
@@ -489,7 +580,8 @@ export async function openEditor(o: EditorOptions) {
   /* ---------- Actions ---------- */
   const commit = () => { save(); refresh(); };
   function close() {
-    closed = true; ctl.abort(); cancelAnimationFrame(raf); worker?.terminate(); for (const v of [video, spare]) { v.pause(); v.removeAttribute("src"); v.load(); }
+    closed = true; ctl.abort(); cancelAnimationFrame(raf); worker?.terminate();
+    for (const e of ovSrc.values()) { e.img?.close(); if (e.vid) { e.vid.pause(); URL.revokeObjectURL(e.vid.src); } } for (const v of [video, spare]) { v.pause(); v.removeAttribute("src"); v.load(); }
     URL.revokeObjectURL(url); removeEventListener("keydown", onKey); root.remove(); o.onClose?.();
   }
   root.addEventListener("click", (e) => {
@@ -521,6 +613,33 @@ export async function openEditor(o: EditorOptions) {
       case "trim": trimEdges(); break;
       case "voiceAB": voiceAB(); break;
       case "zooms": zooms = (t as HTMLInputElement).checked; save(); break;
+      case "tplSave": { const name = prompt("Nom du modèle (ex. « Mon émission ») :", "Mon émission")?.trim(); if (!name) break;
+        const intro = titles.find((x) => x.start < 1.5); const l = loadTpls().filter((x) => x.name !== name);
+        const tp: Template = { id: "t" + Date.now().toString(36), name, style, zooms, voice, norm, q720, intro: intro ? { text: intro.text, sub: intro.sub } : undefined };
+        l.push(tp); saveTpls(l); if (!autoTplId()) try { localStorage.setItem("gs.tplAuto", tp.id); } catch { /* */ }
+        toast(`Modèle « ${name} » enregistré${intro ? " (avec bandeau d’ouverture)" : ""}.`, 2500); body.innerHTML = ""; renderCC(); break; }
+      case "tplUse": { const tp = loadTpls().find((x) => x.id === t.closest<HTMLElement>("[data-v]")?.dataset.v); if (!tp) break;
+        applyTpl(tp); commit(); body.innerHTML = ""; renderCC(); toast(`Modèle « ${tp.name} » appliqué.`, 2000); break; }
+      case "tplDel": { const l = loadTpls(); const name = prompt("Nom du modèle à supprimer :\n" + l.map((x) => "• " + x.name).join("\n"))?.trim(); if (!name) break;
+        const r = l.filter((x) => x.name !== name); if (r.length === l.length) { toast("Aucun modèle de ce nom.", 2000); break; }
+        saveTpls(r); body.innerHTML = ""; renderCC(); break; }
+      case "ins": q<HTMLInputElement>("[data-r=ovFile]").click(); break;
+      case "title": addTitle(); break;
+      case "omode": case "ominus": case "oplus": case "ohere": case "odel": {
+        const id = t.closest<HTMLElement>("[data-o]")?.dataset.o, ov = overlays.find((x) => x.id === id); if (!ov) break;
+        if (a === "omode") ov.mode = t.closest<HTMLElement>("[data-v]")!.dataset.v as OverlayMode;
+        if (a === "ominus") ov.end = Math.max(ov.start + 0.5, ov.end - 0.5);
+        if (a === "oplus") ov.end = Math.min(duration, ov.end + 0.5);
+        if (a === "ohere") { const d = ov.end - ov.start; ov.start = video.currentTime; ov.end = Math.min(duration, ov.start + d); }
+        if (a === "odel") overlays = overlays.filter((x) => x !== ov);
+        body.innerHTML = ""; commit(); break; }
+      case "tminus": case "tplus": case "there": case "tdel": {
+        const id = t.closest<HTMLElement>("[data-ti]")?.dataset.ti, ti = titles.find((x) => x.id === id); if (!ti) break;
+        if (a === "tminus") ti.end = Math.max(ti.start + 1, ti.end - 0.5);
+        if (a === "tplus") ti.end = Math.min(duration, ti.end + 0.5);
+        if (a === "there") { const d = ti.end - ti.start; ti.start = video.currentTime; ti.end = Math.min(duration, ti.start + d); }
+        if (a === "tdel") titles = titles.filter((x) => x !== ti);
+        body.innerHTML = ""; commit(); break; }
       case "retx": if (confirm("Refaire la transcription ? Vos coupes sont conservées.")) { words = null; sugs = []; sel = null; body.innerHTML = ""; refresh(); } break;
       case "cutSel": if (sel && words) { session.addCut(wordsToRange(words, sel.a, sel.b)); sel = null; commit(); } break;
       case "keepSel": if (sel && words) { session.restore({ start: sel.a > 0 ? words[sel.a - 1].end : 0, end: sel.b < words.length - 1 ? words[sel.b + 1].start : duration }); sel = null; commit(); } break;

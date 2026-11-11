@@ -197,6 +197,24 @@ html.native #out{opacity:0}
 .nativeonly{display:none!important}html.app .nativeonly{display:flex!important}
 html.native .webonly{display:none!important}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* Accueil (première ouverture) : 3 pages en verre sombre */
+#onb{z-index:60;justify-content:flex-end}
+#onb .pages{flex:1;width:100%;max-width:420px;display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none}
+#onb .pages::-webkit-scrollbar{display:none}
+#onb .pg{flex:0 0 100%;scroll-snap-align:center;display:flex;flex-direction:column;justify-content:center;gap:14px;text-align:center;padding:0 8px}
+#onb .art{font-size:64px;line-height:1;filter:drop-shadow(0 10px 30px rgba(48,209,88,.35))}
+#onb h2{margin:0;font-size:30px;font-weight:750;letter-spacing:-.03em}
+#onb .pg p{margin:0;color:var(--muted);font-size:16px;line-height:1.45}
+#onb ul{list-style:none;margin:6px 0 0;padding:14px 16px;text-align:left;border-radius:22px;background:var(--g-bg,rgba(255,255,255,.08));border:1px solid var(--g-line,rgba(255,255,255,.12));display:grid;gap:10px;font-size:15px}
+#onb ul b{display:block}
+#onb ul span{color:var(--muted);font-size:13px}
+#onb .dots{display:flex;gap:8px;justify-content:center;margin:14px 0}
+#onb .dots i{width:7px;height:7px;border-radius:4px;background:rgba(255,255,255,.3);transition:.25s}
+#onb .dots i.on{width:22px;background:var(--accent,#30d158)}
+#onb .bar{width:100%;max-width:420px;display:flex;gap:10px}
+#onb .bar .btn{flex:1}
+#onb a{color:var(--accent,#30d158)}
 </style>
 </head>
 <body>
@@ -230,6 +248,18 @@ html.native .webonly{display:none!important}
 </div>
 
 <div id="toast" hidden></div>
+
+<section class="ov" id="onb" hidden aria-label="Bienvenue">
+  <div class="pages" id="onbPages">
+    <div class="pg"><div class="art">🎬</div><h2>Votre décor, sans fond vert</h2><p>Green Studio vous détoure en direct, cheveux compris, et accorde la lumière de votre visage au décor. Filmez en 9:16, prêt pour TikTok, Reels et Shorts.</p></div>
+    <div class="pg"><div class="art">✂️</div><h2>Montez en éditant le texte</h2><p>Bégaiements, hésitations, silences et reprises sont repérés et retirés pour vous. Le prompteur suit votre voix, la meilleure prise est choisie d’après votre script.</p></div>
+    <div class="pg"><div class="art">🔒</div><h2>Tout reste sur votre téléphone</h2><p>Aucun compte, aucune publicité, aucune vidéo envoyée.</p>
+      <ul><li><b>📷 Caméra</b><span>pour filmer et détourer, image traitée sur l’appareil</span></li><li><b>🎙 Micro</b><span>pour le son, le vumètre et le prompteur qui suit votre voix</span></li><li><b>🌐 Internet</b><span>uniquement pour télécharger une fois les modèles de transcription</span></li></ul>
+      <p style="font-size:13px"><a href="privacy.html" target="_blank" rel="noopener">Politique de confidentialité</a></p></div>
+  </div>
+  <div class="dots" id="onbDots"><i class="on"></i><i></i><i></i></div>
+  <div class="bar"><button class="btn" id="onbSkip">Passer</button><button class="btn prim" id="onbNext">Suivant</button></div>
+</section>
 
 <section class="ov" id="start">
   <div class="in">
@@ -275,6 +305,7 @@ html.native .webonly{display:none!important}
   <p class="foot">Glissez sur l’image pour vous placer, pincez pour vous agrandir. Double-tap : recentrer.</p>
   <div class="gh">Assistance</div>
   <div class="group">
+    <div class="item"><span>Confidentialité<span class="sub">Rien ne quitte votre téléphone</span></span><a class="btn sm" href="privacy.html" target="_blank" rel="noopener">Lire</a></div>
     <div class="item"><span>Journal de diagnostic<span class="sub">Erreurs et événements, sur le téléphone</span></span><span style="display:flex;gap:8px"><button class="btn sm" id="logShare">Partager</button><button class="btn sm" id="logClear">Effacer</button></span></div>
   </div>
   <p class="foot" id="appVer"></p>
@@ -433,7 +464,7 @@ in vec2 p; out vec2 v;
 void main(){ v = vec2(p.x*.5+.5, .5-p.y*.5); gl_Position = vec4(p,0.,1.); }`;
 const FS = `#version 300 es
 precision highp float; in vec2 v; out vec4 o;
-uniform sampler2D uCam,uBg,uMask,uBg2,uGF; uniform float uUseGF; uniform vec4 uHarm; // harmonisation : teinte (rgb) et luminosité (a) du décor
+uniform sampler2D uCam,uBg,uMask,uBg2,uGF; uniform float uUseGF; uniform float uBlurBg; /* décor « Flou » : vrai fond flouté */ uniform vec4 uHarm; /* harmonisation : teinte (rgb), luminosité (a) */
 uniform vec2 uBS2,uBO2; uniform float uMix;
 uniform vec2 uMO,uMS;
 uniform vec2 uSL; uniform float uSkin; // retouche du sujet : (courbe de lumière, chaleur), lissage de peau // zone de l'image caméra analysée par l'IA (décalage, taille) : le masque ne couvre que cette zone // fondu enchaîné entre l'ancien et le nouveau décor
@@ -467,12 +498,14 @@ float refined(vec2 cu){
   return sm/sw;
 }
 vec2 camUV(vec2 sv){ return vec2(mix(sv.x,1.-sv.x,uMir), sv.y)*uCS+uCO; }
+vec3 camBlur(vec2 s0){ vec3 acc=vec3(0.); for(int i=0;i<12;i++){ float an=.5236*float(i)+.26; vec2 d=vec2(cos(an),sin(an)*.5625);
+  acc+=texture(uCam,camUV(s0+d*.03)).rgb+texture(uCam,camUV(s0+d*.065)).rgb; } return acc/24.; }
 float mq(vec2 sv){ vec2 c=camUV(sv); return smoothstep(uEdge.x,uEdge.y,M(c))*inside(c); }
 const vec2 R[6] = vec2[6](vec2(1.,0.),vec2(.5,.866),vec2(-.5,.866),vec2(-1.,0.),vec2(-.5,-.866),vec2(.5,-.866));
 void main(){
   vec2 s0 = v-uSub; vec2 cu = camUV(s0);
   vec3 cam = texture(uCam,cu).rgb;
-  vec3 bg = grade(texture(uBg,v*uBS+uBO).rgb);
+  vec3 bg; if (uBlurBg > .5) bg = grade(camBlur(v-uSub)*.92); else bg = grade(texture(uBg,v*uBS+uBO).rgb);
   if (uMix < .999) bg = mix(grade(texture(uBg2,v*uBS2+uBO2).rgb), bg, uMix);
   // contours fins (filtre guidé) : alpha = a·I + b, avec I la luminosité de l'image en pleine résolution → mèches, cheveux
   float base = refined(cu);
@@ -533,7 +566,7 @@ gl.linkProgram(prog); gl.useProgram(prog);
 gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
 const loc = gl.getAttribLocation(prog, "p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-const U = {}; for (const n of ["uHarm","uGF","uUseGF","uSL","uSkin","uMO","uMS","uCam","uBg","uMask","uBg2","uBS2","uBO2","uMix","uCS","uCO","uBS","uBO","uEdge","uMir","uBr","uCt","uSa","uPx","uSub","uFx"]) U[n] = gl.getUniformLocation(prog, n);
+const U = {}; for (const n of ["uBlurBg","uHarm","uGF","uUseGF","uSL","uSkin","uMO","uMS","uCam","uBg","uMask","uBg2","uBS2","uBO2","uMix","uCS","uCO","uBS","uBO","uEdge","uMir","uBr","uCt","uSa","uPx","uSub","uFx"]) U[n] = gl.getUniformLocation(prog, n);
 gl.uniform1i(U.uCam, 0); gl.uniform1i(U.uBg, 1); gl.uniform1i(U.uMask, 2); gl.uniform1i(U.uBg2, 3); gl.uniform1i(U.uGF, 4); gl.uniform1f(U.uUseGF, 0); gl.uniform1f(U.uMix, 1); gl.uniform2f(U.uMO, 0, 0); gl.uniform2f(U.uMS, 1, 1);
 function tex(unit) { const t = gl.createTexture(); gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t);
   for (const [k, val] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR],[gl.TEXTURE_MAG_FILTER, gl.LINEAR],[gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, val);
@@ -648,7 +681,7 @@ function render(frame) {
   gl.uniform1f(U.uMir, S.mirror ? 1 : 0); gl.uniform1f(U.uBr, S.br); gl.uniform1f(U.uCt, S.ct); gl.uniform1f(U.uSa, S.sa);
   gl.uniform2f(U.uSL, lightG, S.warm); gl.uniform1f(U.uSkin, S.skin);
   if (bgCur.video && performance.now() - meanT > 1000) { meanT = performance.now(); bgCur.mean = bgMean(bgCur.src); } // décor vidéo : couleur suivie
-  gl.uniform4fv(U.uHarm, harmony());
+  gl.uniform4fv(U.uHarm, harmony()); gl.uniform1f(U.uBlurBg, bgCur?.id === "blur" ? 1 : 0);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 
@@ -945,7 +978,7 @@ $("go").onclick = async () => {
 
 /* ---------- Moteur natif ---------- */
 const nativeParams = () => ({ mirror: S.mirror, autoLight: S.autoLight, cz: S.cz, sx: S.sx, sy: S.sy, zoom: S.zoom, px: S.px, py: S.py, br: S.br, ct: S.ct, sa: S.sa,
-  lo: S.lo, hi: S.hi, dsp: S.dsp, wrap: S.wrap, shd: S.shd, skin: S.skin, warm: S.warm, lgt: S.lgt, harm: S.harm, fine: S.fine });
+  lo: S.lo, hi: S.hi, dsp: S.dsp, wrap: S.wrap, shd: S.shd, skin: S.skin, warm: S.warm, lgt: S.lgt, harm: S.harm, fine: S.fine, blurBg: bgCur?.id === "blur" });
 let lastParams = "", lastSusp = false, nativeFacing = "user", nativeStats = null;
 function sendViewport() {
   if (!nativeOn) return; const r = $("out").getBoundingClientRect();
@@ -1375,7 +1408,7 @@ const pickLens = (m) => { lens = m; try { localStorage.setItem("gs.lens", m); } 
 $("czFit").onclick = () => pickLens("wide"); $("czFill").onclick = () => pickLens("fill");
 /* ---------- Bibliothèque de décors ---------- */
 const GEN = [['#0f2a1d', '#1c6b46'], ['#1a1033', '#6a3cc2'], ['#0b1f33', '#1f7ab8'], ['#2a0f0f', '#c2573c']];
-const lib = GEN.map((g, i) => ({ id: 'g' + i, kind: 'gen', g }));
+const lib = [...GEN.map((g, i) => ({ id: 'g' + i, kind: 'gen', g })), { id: 'blur', kind: 'blur' }]; // « Flou » : votre vrai fond, flouté
 let bi = 0, swTok = 0; const cache = new Map();
 function genCanvas(g) { const c = document.createElement('canvas'); c.width = 720; c.height = 1280; const x = c.getContext('2d'); const gr = x.createLinearGradient(0, 0, 0, 1280); gr.addColorStop(0, g[0]); gr.addColorStop(1, g[1]); x.fillStyle = gr; x.fillRect(0, 0, 720, 1280); return c; }
 const idb = new Promise((res, rej) => { try { const r = indexedDB.open('greenstudio', 1); r.onupgradeneeded = () => r.result.createObjectStore('bgs', { keyPath: 'id' }); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); } catch (e) { rej(e); } });
@@ -1398,6 +1431,7 @@ async function srcFor(i) {
   const it = lib[i]; if (!it) return null; if (cache.has(it.id)) return cache.get(it.id);
   let s;
   if (it.kind === 'gen') s = genCanvas(it.g);
+  else if (it.kind === 'blur') s = genCanvas(['#2c3036', '#4a5058']); // texture de secours (le fond réel est calculé par le GPU)
   else if (it.kind === 'img') {
     const bmp = await createImageBitmap(it.blob); const k = Math.min(1, 1920 / Math.max(bmp.width, bmp.height));
     const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
@@ -1432,7 +1466,8 @@ function renderStrip() {
   const add = document.createElement('button'); add.className = 'th add'; add.textContent = '+'; add.setAttribute('aria-label', 'Ajouter des décors'); add.onclick = () => $('file').click(); st.appendChild(add);
   lib.forEach((it, i) => {
     const b = document.createElement('button'); b.className = 'th'; b.setAttribute('aria-label', 'Décor ' + (i + 1));
-    b.style.background = it.kind === 'gen' ? `linear-gradient(${it.g[0]},${it.g[1]})` : `center/cover url(${it.thumb})`;
+    b.style.background = it.kind === 'gen' ? `linear-gradient(${it.g[0]},${it.g[1]})` : it.kind === 'blur' ? 'radial-gradient(circle at 50% 38%,#b8c2cc 0,#59616b 45%,#2a2f35 100%)' : `center/cover url(${it.thumb})`;
+    if (it.kind === 'blur') { b.textContent = 'Flou'; b.style.fontSize = '11px'; b.style.fontWeight = '700'; b.setAttribute('aria-label', 'Fond flouté'); }
     b.onclick = () => setBg(i); b.addEventListener('pointerdown', () => prefetch(i)); // le décor se prépare pendant l'appui
     if (it.blob) { let tm; b.onpointerdown = () => (tm = setTimeout(() => delBg(i), 700)); b.onpointerup = b.onpointerleave = () => clearTimeout(tm); }
     st.appendChild(b);
@@ -1552,6 +1587,19 @@ $("qSel").onchange = (e) => { quality = e.target.value; try { localStorage.setIt
   setModel(quality === "fast" ? "fast" : "hq"); toast(quality === "fast" ? "Détourage Rapide." : "Détourage Précis : chargement du modèle…", 2500); };
 $('advBtn').onclick = () => $('panel').classList.toggle('adv');
 $('ai').onclick = () => ($('perf').hidden = !$('perf').hidden);
+
+/* Accueil de première ouverture (ignoré par les tests automatisés) */
+(() => {
+  const o = $("onb"), pg = $("onbPages"), dots = [...$("onbDots").children], next = $("onbNext");
+  let seen = true; try { seen = !!localStorage.getItem("gs.onb") || navigator.webdriver; } catch { /* */ }
+  if (seen) return; o.hidden = false;
+  let cur = 0, tgt = -1; const idx = () => (tgt >= 0 ? tgt : cur);
+  const upd = () => { cur = Math.round(pg.scrollLeft / Math.max(1, pg.clientWidth)); if (cur === tgt) tgt = -1; const i = idx(); dots.forEach((d, k) => d.classList.toggle("on", k === i)); next.textContent = i >= dots.length - 1 ? "C’est parti" : "Suivant"; };
+  const done = () => { try { localStorage.setItem("gs.onb", "1"); } catch { /* */ } o.hidden = true; };
+  pg.addEventListener("scroll", upd, { passive: true });
+  next.onclick = () => { const i = idx(); if (i >= dots.length - 1) done(); else { tgt = i + 1; pg.scrollTo({ left: tgt * pg.clientWidth, behavior: "smooth" }); upd(); } };
+  $("onbSkip").onclick = done;
+})();
 </script>
 </body>
 </html>

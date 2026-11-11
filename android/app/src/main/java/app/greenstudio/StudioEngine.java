@@ -83,6 +83,7 @@ public class StudioEngine {
         public volatile float cz = 1, sx = 0, sy = 0, zoom = 1, px = 0, py = 0, br = 0, ct = 1, sa = 1;
         public volatile float lo = .35f, hi = .65f, dsp = .6f, wrap = .3f, shd = .25f, skin = .25f, warm = 0, lgt = 0, harm = .5f;
         public volatile boolean fine = true; // contours fins (filtre guidé)
+        public volatile boolean blurBg; // décor « Flou » : vrai fond de la caméra, flouté
         public volatile int vx, vy, vw, vh; // zone du viseur dans la surface (pixels physiques)
     }
 
@@ -266,7 +267,7 @@ public class StudioEngine {
 
     // Même composition que la version web (contours affinés, anti-halo, ombre, lumière, peau, décor), caméra lue en YUV.
     private static final String FS = "#version 300 es\nprecision highp float; in vec2 v; out vec4 o;\n"
-        + "uniform sampler2D uY,uU,uV,uMask,uBg,uBg2,uGF; uniform int uRot; uniform float uUseGF; uniform vec4 uHarm;\n"
+        + "uniform sampler2D uY,uU,uV,uMask,uBg,uBg2,uGF; uniform int uRot; uniform float uUseGF; uniform vec4 uHarm; uniform float uBlurBg;\n"
         + "uniform vec2 uCS,uCO,uBS,uBO,uBS2,uBO2,uEdge,uPx,uSub,uSL; uniform float uMir,uBr,uCt,uSa,uMix,uSkin; uniform vec3 uFx;\n"
         + "vec2 sensor(vec2 c){ if(uRot==90) return vec2(c.y,1.-c.x); if(uRot==270) return vec2(1.-c.y,c.x); if(uRot==180) return 1.-c; return c; }\n"
         + "vec3 cam(vec2 c){ vec2 s=sensor(clamp(c,0.,1.)); float y=texture(uY,s).r, u=texture(uU,s).r-.5, w=texture(uV,s).r-.5;\n"
@@ -280,11 +281,12 @@ public class StudioEngine {
         + "  for(int i=0;i<8;i++){ float an=.7853982*float(i); vec2 d=vec2(cos(an),sin(an)); for(int k=0;k<2;k++){ vec2 off=d*uPx*(k==0?6.:14.); vec3 df=cam(cu+off)-c0; float w=exp(-dot(df,df)*30.); sw+=w; sm+=w*M(cu+off);} }\n"
         + "  return sm/sw; }\n"
         + "vec2 camUV(vec2 sv){ return vec2(mix(sv.x,1.-sv.x,uMir),sv.y)*uCS+uCO; }\n"
+        + "vec3 camBlur(vec2 s0){ vec3 acc=vec3(0.); for(int i=0;i<12;i++){ float an=.5236*float(i)+.26; vec2 d=vec2(cos(an),sin(an)*.5625); acc+=cam(camUV(s0+d*.03))+cam(camUV(s0+d*.065)); } return acc/24.; }\n"
         + "float mq(vec2 sv){ vec2 c=camUV(sv); return smoothstep(uEdge.x,uEdge.y,M(c))*inside(c); }\n"
         + "const vec2 R[6]=vec2[6](vec2(1.,0.),vec2(.5,.866),vec2(-.5,.866),vec2(-1.,0.),vec2(-.5,-.866),vec2(.5,-.866));\n"
         + "void main(){\n"
         + "  vec2 s0=v-uSub; vec2 cu=camUV(s0); vec3 c=cam(cu);\n"
-        + "  vec3 bg=grade(texture(uBg,v*uBS+uBO).rgb); if(uMix<.999) bg=mix(grade(texture(uBg2,v*uBS2+uBO2).rgb),bg,uMix);\n"
+        + "  vec3 bg; if(uBlurBg>.5) bg=grade(camBlur(s0)*.92); else bg=grade(texture(uBg,v*uBS+uBO).rgb); if(uBlurBg<.5&&uMix<.999) bg=mix(grade(texture(uBg2,v*uBS2+uBO2).rgb),bg,uMix);\n"
         + "  float base=refined(cu); if(uUseGF>.5){ vec2 ab=texture(uGF,cu).rg; base=clamp(ab.x*texture(uY,sensor(clamp(cu,0.,1.))).r+ab.y,0.,1.); }\n"
         + "  float a=smoothstep(uEdge.x,uEdge.y,base)*inside(cu); vec2 asp=vec2(1.,1.7778);\n"
         + "  if(uFx.z>.001&&a<.999){ float sh=mq(s0-vec2(.012,.008)*asp)*.25; for(int i=0;i<6;i++) sh+=mq(s0-vec2(.012,.008)*asp+R[i]*.02*asp)*.125; bg*=1.-uFx.z*.65*sh; }\n"
@@ -338,7 +340,7 @@ public class StudioEngine {
             for (int x = 0; x < 9; x++) g.setPixel(x, y, 0xff000000 | (r << 16) | (gg << 8) | bb); }
         uploadBitmap(tex[4], g); bgW = 9; bgH = 16; g.recycle();
         GLES30.glUseProgram(prog);
-        String[] names = { "uGF", "uUseGF", "uHarm", "uY", "uU", "uV", "uMask", "uBg", "uBg2", "uRot", "uCS", "uCO", "uBS", "uBO", "uBS2", "uBO2", "uEdge", "uPx", "uSub", "uSL", "uMir", "uBr", "uCt", "uSa", "uMix", "uSkin", "uFx" };
+        String[] names = { "uBlurBg", "uGF", "uUseGF", "uHarm", "uY", "uU", "uV", "uMask", "uBg", "uBg2", "uRot", "uCS", "uCO", "uBS", "uBO", "uBS2", "uBO2", "uEdge", "uPx", "uSub", "uSL", "uMir", "uBr", "uCt", "uSa", "uMix", "uSkin", "uFx" };
         for (String nm : names) U.put(nm, GLES30.glGetUniformLocation(prog, nm));
         for (int i = 0; i < 6; i++) GLES30.glUniform1i(U.get(new String[]{ "uY", "uU", "uV", "uMask", "uBg", "uBg2" }[i]), i);
         GLES30.glUniform1i(U.get("uGF"), 7);
@@ -548,7 +550,7 @@ public class StudioEngine {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE5); GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, tex[5]);
         boolean gf = runGuided(rot);
         setUniforms(rot);
-        GLES30.glUniform1f(U.get("uUseGF"), gf ? 1 : 0);
+        GLES30.glUniform1f(U.get("uUseGF"), gf ? 1 : 0); GLES30.glUniform1f(U.get("uBlurBg"), p.blurBg ? 1 : 0);
         float[] hm = harmony(); GLES30.glUniform4f(U.get("uHarm"), hm[0], hm[1], hm[2], hm[3]);
         if (win != EGL14.EGL_NO_SURFACE) {
             GLES30.glViewport(0, 0, winW, winH); GLES30.glClearColor(0, 0, 0, 1); GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT);
