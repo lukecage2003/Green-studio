@@ -5,7 +5,7 @@ export type IssueType = "retake" | "filler_word" | "repetition" | "stutter" | "f
 export interface Suggestion { id: string; type: IssueType; range: Range; firstWord: number; lastWord: number; excerpt: string; confidence: number }
 
 /** Tics de langage par défaut (modifiables par l'utilisateur). */
-export const TICS = ["du coup", "en fait", "tu vois", "tu sais", "vous voyez", "je veux dire", "j'veux dire", "en gros", "genre", "voila", "bref", "quoi", "hein", "style", "disons", "enfin bref", "bon ben", "ben voila"];
+export const TICS = ["donc", "bon", "alors", "enfin", "mais bon", "du coup", "en fait", "tu vois", "tu sais", "vous voyez", "je veux dire", "j'veux dire", "en gros", "genre", "voila", "bref", "quoi", "hein", "style", "disons", "enfin bref", "bon ben", "ben voila"];
 export interface AnalysisOptions {
   maxRepeatGap: number;      // s entre deux occurrences d'un mot répété
   longSilence: number;       // s
@@ -36,12 +36,78 @@ function retakeAt(n: string[], i: number): number {
   return 0;
 }
 
+/** Whisper découpe les élisions : « j » + « 'ai », « excusez » + « -moi ». On recolle (comptage des répétitions, tics, affichage). */
+export function mergeElisions(words: Word[]): Word[] {
+  const out: Word[] = [];
+  for (const w of words) {
+    const t = w.text.trim(), prev = out[out.length - 1];
+    if (prev && /^['’\-]\p{L}/u.test(t) && w.start - prev.end < 0.3) { out[out.length - 1] = { ...prev, text: prev.text + t, end: Math.max(prev.end, w.end) }; continue; }
+    if (prev && /['’]$/.test(prev.text) && w.start - prev.end < 0.3) { out[out.length - 1] = { ...prev, text: prev.text + t, end: Math.max(prev.end, w.end) }; continue; }
+    out.push({ ...w, text: t });
+  }
+  return out;
+}
+
+/** Phrases que Whisper invente sur du silence ou de la musique (génériques de sous-titres). */
+const HALLU = ["sous titres realises par la communaute d'amara org", "sous titres realises para la communaute d'amara org", "sous titrage st' 501", "sous titrage societe radio canada",
+  "sous titres par", "sous titrage fr", "amara org", "abonnez vous a la chaine pour ne rien rater", "subtitles by the amara org community"];
+/**
+ * Nettoie la sortie de Whisper : génériques inventés, boucles (même groupe de mots répété ≥ 4 fois d'affilée), et queue
+ * dégénérée en fin d'audio (mêmes mots courts répétés jusqu'à la fin).
+ */
+export function cleanTranscript(words: Word[]): Word[] {
+  let w = mergeElisions(words);
+  const n = w.map((x) => norm(x.text.replace(/[-.]/g, " ")).replace(/\s+/g, ""));
+  const keys = HALLU.map((h) => h.split(" ").map(norm).filter(Boolean));
+  const drop = new Set<number>();
+  for (let i = 0; i < w.length; i++) for (const k of keys) {
+    // correspondance sur la suite des mots normalisés (les découpages de Whisper varient : on compare les caractères)
+    let j = i, acc = ""; const target = k.join("");
+    while (j < w.length && acc.length < target.length) acc += n[j++];
+    if (acc === target) { for (let q = i; q < j; q++) drop.add(q); }
+  }
+  w = w.filter((_, i) => !drop.has(i));
+  // boucles : un groupe de 1 à 6 mots répété au moins 4 fois → une seule fois
+  const m = w.map((x) => norm(x.text)); const keep: Word[] = [];
+  for (let i = 0; i < w.length; ) {
+    let skipped = false;
+    for (let L = 6; L >= 1 && !skipped; L--) {
+      let reps = 1; while (i + (reps + 1) * L <= w.length && m.slice(i, i + L).every((x, k) => x && x === m[i + reps * L + k])) reps++;
+      if (reps >= 4) { keep.push(...w.slice(i, i + L)); i += reps * L; skipped = true; }
+    }
+    if (!skipped) keep.push(w[i++]);
+  }
+  return keep;
+}
+
+/**
+ * Bords de coupe au plus juste : chaque bord est déplacé (± 80 ms) sur l'instant le plus silencieux du son (trames de 10 ms),
+ * pour que la coupe tombe entre deux sons et pas au milieu d'une syllabe. Les coupes restent ordonnées et non vides.
+ */
+/** out : hésitation isolée (s'étend vers le silence) ; pre : coupe qui finit juste avant un mot gardé (sa fin ne s'en approche jamais). */
+export type SnapMode = "both" | "out" | "pre";
+export function snapToQuiet(ranges: (Range & { mode?: SnapMode })[], pcm: Float32Array, rate: number, win = 0.08): Range[] {
+  const fr = Math.max(1, Math.round(rate * 0.01)), n = Math.floor(pcm.length / fr), e = new Float32Array(n);
+  for (let k = 0; k < n; k++) { let a = 0; for (let i = k * fr; i < (k + 1) * fr; i++) a += pcm[i] * pcm[i]; e[k] = a; }
+  const quiet = (t: number, lo: number, hi: number, before = win, after = win) => {
+    const a = Math.max(0, Math.floor((Math.max(lo, t - before)) / 0.01)), b = Math.min(n - 1, Math.ceil((Math.min(hi, t + after)) / 0.01));
+    if (b <= a) return t; let best = Math.min(n - 1, Math.max(0, Math.round(t / 0.01))), bv = Infinity;
+    for (let k = a; k <= b; k++) { const v = e[k] * (1 + 0.15 * Math.abs(k * 0.01 - t) / win); if (v < bv) { bv = v; best = k; } } // à énergie égale, le plus proche
+    return best * 0.01 + 0.005;
+  };
+  return ranges.map((r) => {
+    const s = r.mode === "out" ? quiet(r.start, 0, r.end - 0.03, win * 1.5, 0.01) : quiet(r.start, 0, r.end - 0.03);
+    const en = r.mode === "out" ? quiet(r.end, s + 0.03, Infinity, 0.01, win * 1.5) : r.mode === "pre" ? Math.min(r.end, quiet(r.end, s + 0.03, Infinity, win, 0)) : quiet(r.end, s + 0.03, Infinity);
+    return en - s >= 0.03 ? { start: s, end: en } : { start: r.start, end: r.end };
+  });
+}
+
 /** Rythme du montage : quels silences retirer et quelle pause garder (inspiré d'auto-editor : seuil + marge). */
 export type Rhythm = "calm" | "natural" | "punchy";
 export const RHYTHM: Record<Rhythm, { label: string; longSilence: number; keepPause: number }> = {
   calm: { label: "Posé", longSilence: 1.2, keepPause: 0.5 },
   natural: { label: "Naturel", longSilence: 0.7, keepPause: 0.3 },
-  punchy: { label: "Dynamique", longSilence: 0.35, keepPause: 0.12 },
+  punchy: { label: "Dynamique", longSilence: 0.3, keepPause: 0.1 },
 };
 
 export function analyze(words: Word[], opt: Partial<AnalysisOptions> = {}): Suggestion[] {
@@ -154,7 +220,7 @@ export function steadyRuns(pcm: Float32Array, rate: number, minDur = 0.25): { st
 
 export function analyzeAudio(words: Word[], pcm: Float32Array, rate: number, taken: Suggestion[] = []): Suggestion[] {
   if (!words.length || !pcm.length) return [];
-  const { on, dt } = voiceFrames(pcm, rate), out: Suggestion[] = [];
+  const { on, dt } = voiceFrames(pcm, rate), fr = Math.max(1, Math.round(rate * dt)), out: Suggestion[] = [];
   const busy = (a: number, b: number) => taken.some((s) => s.range.start < b && s.range.end > a);
   const voicedIn = (a: number, b: number) => { let v = 0; for (let k = Math.max(0, Math.floor(a / dt)); k < Math.min(on.length, Math.ceil(b / dt)); k++) v += on[k]; return v * dt; };
 
@@ -172,17 +238,49 @@ export function analyzeAudio(words: Word[], pcm: Float32Array, rate: number, tak
     }
     if (!best) continue;
     const st = best[0] * dt, en = best[1] * dt, d = en - st;
-    if (d < 0.12 || d > 2.5 || busy(st, en)) continue;
+    // déjà couvert entièrement (ex. coupe de silence) : rien à ajouter ; s'il déborde (début de « donc »…), on complète
+    const fully = taken.some((t) => t.range.start <= st + 0.02 && t.range.end >= en - 0.02);
+    if (d < 0.12 || d > 2.5 || fully) continue;
     const next = words[i + 1], lo = i >= 0 ? words[i].end : 0, hi = next ? next.start : pcm.length / rate;
     const eu = isEuh(st, en);
     out.push({ id: `untranscribed-${i + 1}`, type: eu ? "hesitation" : "untranscribed", firstWord: Math.max(0, i + 1 < words.length ? i + 1 : i), lastWord: Math.max(0, i + 1 < words.length ? i + 1 : i),
       range: { start: Math.max(lo, st - 0.03), end: Math.min(hi, en + 0.03) }, confidence: eu ? 0.85 : Math.min(0.85, 0.55 + d * 0.4),
       excerpt: eu ? `[« euh » ${d.toFixed(1).replace(".", ",")} s]${next ? ` avant « ${next.text} »` : ""}` : `[son non transcrit ${d.toFixed(1).replace(".", ",")} s]${next ? ` avant « ${next.text} »` : ""}` });
   }
-  // 2. Mot anormalement long avec une coupure interne près du début : « p… présenter », « je… je » fusionnés en un mot
+  // 2. Parole avalée : Whisper étire le mot qui SUIT une hésitation, une répétition ou un faux départ pour la couvrir
+  //    (« voilà, voilà, ici » → « ici » de 1,1 s). Le vrai mot est à la fin : on coupe jusqu'à la dernière vraie pause du son.
+  const expectedLen = (w: Word) => 0.065 * (w.text.replace(/[^\p{L}\p{N}]/gu, "").length || 1) + 0.18;
+  const swallowed = new Set<number>();
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i], len = w.end - w.start, ex = expectedLen(w);
+    if (len < ex + 0.3 || busy(w.start, w.end)) continue;
+    if (runs.some((r) => r.end >= w.end - 0.1 && r.start < w.end - 0.15)) continue; // « et… euh » : le surplus est APRÈS le mot (règle 3)
+    // dernière plage sans voix (≥ 60 ms) laissant au moins ~la moitié de la durée normale du mot après elle
+    const kA = Math.floor((w.start + 0.06) / dt), kB = Math.min(on.length, Math.floor((w.end - Math.max(0.12, ex * 0.5)) / dt));
+    let gapEnd = -1, run = 0;
+    for (let k = kA; k < kB; k++) { if (!on[k]) run++; else { if (run * dt >= 0.06) gapEnd = k; run = 0; } }
+    if (run * dt >= 0.06) gapEnd = kB;
+    let end = gapEnd >= 0 ? gapEnd * dt - 0.03 : -1;
+    if (gapEnd >= 0 && w.end - end <= ex + 0.12) { /* le reste a la durée du mot : coupe sur la pause */ }
+    else if (len >= ex + 0.45 || gapEnd >= 0) { // enchaîné sans pause (ou reste encore trop long) : creux d'énergie juste avant le vrai mot
+      const a = Math.max(gapEnd >= 0 ? gapEnd : kA, Math.floor((w.end - ex - 0.2) / dt)), b2 = Math.min(on.length - 1, Math.floor((w.end - 0.15) / dt)); let kb = -1, lv = Infinity;
+      const dB = (k: number) => { let e = 0; const q0 = Math.max(0, k * fr), q1 = Math.min(pcm.length, (k + 1) * fr); for (let q = q0; q < q1; q++) e += pcm[q] * pcm[q]; return 10 * Math.log10(e / Math.max(1, q1 - q0) + 1e-12); };
+      // le DERNIER creux marqué (≥ 5 dB sous le son avant et après, sur 60 ms) : la frontière juste avant le vrai mot
+      for (let k = b2; k >= a && kb < 0; k--) { const e = dB(k); if (e > dB(k - 1) || e > dB(k + 1)) continue;
+        const before = Math.max(dB(k - 1), dB(k - 2), dB(k - 3)), after = Math.max(dB(k + 1), dB(k + 2), dB(k + 3)); if (Math.min(before, after) - e >= 5) kb = k; }
+      if (kb < 0) for (let k = a; k <= b2; k++) { const e = Math.pow(10, dB(k) / 10) * (1 + 0.6 * (b2 - k) / Math.max(1, b2 - a)); if (e < lv) { lv = e; kb = k; } } // sinon : le plus bas, de préférence tardif
+      if (kb >= 0) end = kb * dt; else if (gapEnd < 0) continue;
+    } else continue;
+    const v = voicedIn(w.start, end);
+    if (end - w.start < 0.15) continue;
+    swallowed.add(i);
+    out.push({ id: `swallowed-${i}`, type: v >= 0.15 ? "false_start" : "long_silence", firstWord: i, lastWord: i, range: { start: w.start, end },
+      confidence: v >= 0.15 ? 0.75 : 0.6, excerpt: v >= 0.15 ? `[parole avalée ${(end - w.start).toFixed(1).replace(".", ",")} s] avant « ${w.text} »` : `[blanc ${(end - w.start).toFixed(1).replace(".", ",")} s] avant « ${w.text} »` });
+  }
+  // 2 bis. Mot anormalement long avec une coupure interne près du début : « p… présenter » — proposé seulement (un mot lent n'est pas un défaut)
   for (let i = 0; i < words.length; i++) {
     const w = words[i], len = w.end - w.start, chars = w.text.replace(/[^\p{L}\p{N}]/gu, "").length || 1;
-    if (len < Math.max(0.45, 0.065 * chars + 0.2) || busy(w.start, w.end)) continue;
+    if (swallowed.has(i) || len < Math.max(0.45, 0.065 * chars + 0.2) || busy(w.start, w.end)) continue;
     let k0 = -1, run = 0, cut = -1;
     const kA = Math.floor((w.start + 0.06) / dt), kB = Math.floor((w.end - Math.min(0.25, len * 0.35)) / dt);
     for (let k = kA; k < kB && k < on.length; k++) {
@@ -190,7 +288,7 @@ export function analyzeAudio(words: Word[], pcm: Float32Array, rate: number, tak
     }
     if (cut < 0) continue;
     out.push({ id: `stutter-in-${i}`, type: "stutter", firstWord: i, lastWord: i, range: { start: w.start, end: cut * dt - 0.01 },
-      confidence: 0.6, excerpt: `« ${w.text} » : début répété` });
+      confidence: 0.45, excerpt: `« ${w.text} » : début répété ?` });
   }
   // 3. « Euh » que Whisper a effacé : voyelle tenue dans un blanc, ou collée au début / à la fin d'un mot anormalement long
   const expected = (w: Word) => 0.065 * (w.text.replace(/[^\p{L}\p{N}]/gu, "").length || 1) + 0.18;

@@ -293,7 +293,7 @@ test("« euh » effacé par Whisper : voyelle tenue entre deux mots ou collée �
   const tw = mk([["Alors,", 0], ["du", 0.3], ["coup,", 0.05], ["on", 0.4], ["part", 0.05], ["demain", 0.05], ["quoi.", 0.05], ["C'est", 0.6], ["genre", 0.05], ["incroyable", 0.05]]);
   const f = analyze(tw).filter((x) => x.type === "filler_word");
   const strong = f.filter((x) => x.confidence >= 0.5).map((x) => x.excerpt), weak = f.filter((x) => x.confidence < 0.5).map((x) => x.excerpt);
-  assert.deepEqual(strong, ["du coup,", "quoi."], "isolés : retirés"); assert.deepEqual(weak, [], "« genre » collé dans la phrase : laissé tranquille");
+  assert.deepEqual(strong, ["Alors,", "du coup,", "quoi."], "isolés : retirés"); assert.deepEqual(weak, [], "« genre » collé dans la phrase : laissé tranquille");
 });
 
 test("vrai fond vert : détection stable (vert, bleu, mur ordinaire) et couleur de référence", async () => {
@@ -318,4 +318,35 @@ test("rythme : Dynamique coupe les pauses moyennes, Posé les garde", async () =
   assert.equal(sil("calm").length, 0, "pause de 0,8 s gardée");
   const n = sil("natural"); assert.equal(n.length, 1); assert.ok(Math.abs(n[0].range.end - n[0].range.start - 0.5) < 1e-9, "0,8 s → 0,3 s");
   const p = sil("punchy"); assert.equal(p.length, 2, "la pause de 0,5 s aussi"); assert.ok(p.every((s) => s.confidence >= 0.5));
+});
+
+test("transcription nettoyée : élisions recollées, génériques inventés et boucles retirés", async () => {
+  const { mergeElisions, cleanTranscript } = await import("../src/core/speech-analysis.ts");
+  const W2 = (text: string, start: number, end: number) => ({ text, start, end });
+  const m = mergeElisions([W2("j", 1, 1.1), W2("'ai", 1.1, 1.3), W2("excusez", 2, 2.4), W2("-moi,", 2.4, 2.6), W2("l'", 3, 3.05), W2("étoile", 3.05, 3.4)]);
+  assert.deepEqual(m.map((w) => w.text), ["j'ai", "excusez-moi,", "l'étoile"]); assert.equal(m[0].end, 1.3);
+  const h = cleanTranscript([W2("Merci.", 0, 0.5), W2("Sous", 5, 5.2), W2("-titres", 5.2, 5.5), W2("réalisés", 5.5, 5.8), W2("par", 5.8, 5.9), W2("la", 5.9, 6), W2("communauté", 6, 6.4), W2("d'Amara", 6.4, 6.8), W2(".org", 6.8, 7)]);
+  assert.deepEqual(h.map((w) => w.text), ["Merci."], "générique Amara retiré");
+  const loop = cleanTranscript(Array.from({ length: 10 }, (_, i) => W2(i % 2 ? "tout" : "merci", i, i + 0.5)));
+  assert.equal(loop.length, 2, "boucle « merci tout » ×5 → une fois");
+  const real = cleanTranscript([W2("non", 0, 0.2), W2("non", 0.3, 0.5), W2("non", 0.6, 0.8)]);
+  assert.equal(real.length, 3, "« non non non » (3 fois) gardé : c'est au montage d'en décider");
+});
+
+test("parole avalée par Whisper (mot étiré) : on coupe jusqu'au vrai mot, sans le toucher ; bords recalés sur le silence", async () => {
+  const { analyzeAudio, snapToQuiet } = await import("../src/core/speech-analysis.ts");
+  const rate = 16000, pcm = new Float32Array(rate * 5);
+  for (let i = 0; i < pcm.length; i++) pcm[i] = (Math.random() - 0.5) * 0.002;
+  const speech = (a: number, b: number) => { let ph = 0; for (let i = Math.round(a * rate); i < Math.round(b * rate); i++) { const t = i / rate, f = 140 + 60 * Math.sin(t * 23) + 300 * ((Math.floor(t * 7) % 3) / 2);
+    ph += (2 * Math.PI * f) / rate; pcm[i] = (0.18 + 0.12 * Math.abs(Math.sin(t * Math.PI * 7))) * (Math.sin(ph) + 0.4 * Math.sin(3 * ph + t * 40)); } };
+  // « voilà » 0,3–0,7 ; [voilà avalé 1,0–1,4] pause [ici 1,6–1,85] — Whisper donne « ici » 1,0–1,85
+  speech(0.3, 0.7); speech(1.0, 1.4); speech(1.6, 1.85); speech(2.4, 2.9);
+  const words = [{ text: "voilà", start: 0.3, end: 0.7 }, { text: "ici", start: 1.0, end: 1.85 }, { text: "demain", start: 2.4, end: 2.9 }];
+  const s = analyzeAudio(words, pcm, rate).find((x) => x.id.startsWith("swallowed-"));
+  assert.ok(s, "parole avalée trouvée"); assert.equal(s!.type, "false_start"); assert.ok(s!.confidence >= 0.5);
+  assert.ok(Math.abs(s!.range.start - 1.0) < 0.01 && s!.range.end > 1.38 && s!.range.end < 1.6, JSON.stringify(s!.range));
+  assert.ok(!analyzeAudio(words, pcm, rate).some((x) => x.confidence >= 0.5 && x.range.start < 0.7 && x.range.end > 0.3), "« voilà » intact");
+  // recalage : une coupe qui finit juste avant un mot ne s'en approche jamais ; une hésitation s'étend vers le silence
+  const [pre] = snapToQuiet([{ start: 1.0, end: 1.55, mode: "pre" }], pcm, rate); assert.ok(pre.end <= 1.55 + 1e-9 && pre.end > 1.4, JSON.stringify(pre));
+  const [out] = snapToQuiet([{ start: 1.05, end: 1.35, mode: "out" }], pcm, rate); assert.ok(out.start <= 1.05 && out.end >= 1.35 && out.end <= 1.6, JSON.stringify(out));
 });

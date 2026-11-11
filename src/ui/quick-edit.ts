@@ -10,7 +10,7 @@ const mediaDb = () => new Promise<IDBDatabase>((res, rej) => { const r = indexed
 async function mediaPut(id: string, b: Blob) { const db = await mediaDb(); await new Promise((res, rej) => { const t = db.transaction("files", "readwrite"); t.objectStore("files").put(b, id); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
 async function mediaGet(id: string): Promise<Blob | null> { const db = await mediaDb(); return new Promise((res) => { const q = db.transaction("files").objectStore("files").get(id); q.onsuccess = () => res(q.result ?? null); q.onerror = () => res(null); }); }
 import { takeReport } from "../core/coach.ts";
-import { TICS, RHYTHM, type Rhythm, analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
+import { TICS, RHYTHM, type Rhythm, type SnapMode, snapToQuiet, cleanTranscript, analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
 import { peaks as computePeaks, loudnessGain, speechBounds } from "../core/audio.ts";
 import { buildCaptions, drawCaption, lineAt, CAPTION_DEFAULT, PRESETS, type CapLine, type CaptionStyle, type CaptionPreset } from "../core/captions.ts";
 import { probe, extractAudio, exportEdited, webCodecsAvailable, extractClip } from "../core/media.ts";
@@ -117,7 +117,7 @@ const autoTplId = () => { try { return localStorage.getItem("gs.tplAuto") || "";
 /** Tics de langage de l'utilisateur (modifiables dans Suggestions). */
 const myTics = (): string[] => { try { const v = JSON.parse(localStorage.getItem("gs.tics") || "null"); return Array.isArray(v) ? v : TICS; } catch { return TICS; } };
 const setTics = (l: string[]) => { try { localStorage.setItem("gs.tics", JSON.stringify(l)); } catch { /* */ } };
-const myRhythm = (): Rhythm => { try { const v = localStorage.getItem("gs.rhythm") as Rhythm; return v && v in RHYTHM ? v : "natural"; } catch { return "natural"; } };
+const myRhythm = (): Rhythm => { try { const v = localStorage.getItem("gs.rhythm") as Rhythm; return v && v in RHYTHM ? v : "punchy"; } catch { return "punchy"; } }; // Dynamique par défaut : le plus rythmé
 const autoPref = () => { try { return localStorage.getItem("gs.autoClean") !== "0"; } catch { return true; } };
 
 export async function openEditor(o: EditorOptions) {
@@ -160,7 +160,7 @@ export async function openEditor(o: EditorOptions) {
   try { duration = (await probe(o.file)).duration || duration; } catch { /* repli : métadonnées du lecteur */ }
   if (!duration || !isFinite(duration)) { await new Promise((r) => (video.onloadedmetadata = r)); duration = isFinite(video.duration) ? video.duration : 0; }
   const session = new EditSession(duration, saved?.cuts ?? []);
-  let words: Word[] | null = saved?.words ?? null, sugs: Suggestion[] = words ? analyze(words, { tics: myTics(), longSilence: RHYTHM[myRhythm()].longSilence, keepPause: RHYTHM[myRhythm()].keepPause }) : [];
+  let words: Word[] | null = saved?.words ? cleanTranscript(saved.words) : null, sugs: Suggestion[] = words ? analyze(words, { tics: myTics(), longSilence: RHYTHM[myRhythm()].longSilence, keepPause: RHYTHM[myRhythm()].keepPause }) : [];
   /** Suggestions du texte + du son (bégaiements et hésitations que Whisper n'a pas écrits). */
   const suggest = (w: Word[]) => { const R = RHYTHM[myRhythm()]; const t = analyze(w, { tics: myTics(), longSilence: R.longSilence, keepPause: R.keepPause }); return pcm ? [...t, ...analyzeAudio(w, pcm, 16000, t)].sort((a, b) => a.range.start - b.range.start) : t; };
   const ignored = new Set(saved?.ignored ?? []);
@@ -266,7 +266,7 @@ export async function openEditor(o: EditorOptions) {
   function rhythmCard() {
     const r = myRhythm();
     return `<div class="card" style="margin-bottom:10px;gap:8px"><b>Rythme</b><div class="chips">${(Object.keys(RHYTHM) as Rhythm[]).map((k) => `<button class="ib" data-a="rhythm" data-v="${k}" aria-pressed="${k === r}">${RHYTHM[k].label}</button>`).join("")}</div>
-      <p>${r === "punchy" ? "Coupes serrées façon TikTok : silences de plus de 0,35 s retirés, 0,12 s de respiration gardée." : r === "calm" ? "Pauses respectées : seuls les silences de plus de 1,2 s sont raccourcis." : "Silences de plus de 0,7 s raccourcis à 0,3 s."}</p></div>`;
+      <p>${r === "punchy" ? "Coupes serrées façon TikTok : silences de plus de 0,3 s retirés, 0,1 s de respiration gardée ; hésitations, répétitions et faux départs coupés au plus près du son." : r === "calm" ? "Pauses respectées : seuls les silences de plus de 1,2 s sont raccourcis." : "Silences de plus de 0,7 s raccourcis à 0,3 s."}</p></div>`;
   }
   function ticsCard() {
     const l = myTics();
@@ -555,7 +555,7 @@ export async function openEditor(o: EditorOptions) {
       else if (d.type === "loaded") show(0, `Transcription en cours (modèle ${d.model}, ${d.device === "webgpu" ? "GPU" : "processeur"})…`);
       else if (d.type === "progress") show(d.p, `Transcription ${Math.round(d.p * 100)} %${d.eta > 1 ? ` · reste ~${fmt(d.eta)}` : ""}`);
       else if (d.type === "done") {
-        worker?.terminate(); worker = null; words = d.words; sugs = suggest(words!); sel = null; save();
+        worker?.terminate(); worker = null; words = cleanTranscript(d.words); sugs = suggest(words!); // élisions recollées, génériques inventés retirés sel = null; save();
         body.innerHTML = ""; refresh();
         if (o.express) cleanAll().then(() => runExport(true)); // express : tout s’enchaîne
         else if (o.autoClean || autoPref()) cleanAll(); // nettoyage automatique (option, activée par défaut)
@@ -617,9 +617,12 @@ export async function openEditor(o: EditorOptions) {
     if (r.length) { session.addCuts(r); commit(); } else refresh();
     toast(takeSummary() + " · ↶ pour annuler.", 6000);
   }
+  /** Comment caler les bords d'une coupe : vers le silence autour (hésitation isolée), sans approcher le mot suivant (parole avalée, blanc), ou au plus près. */
+  const snapMode = (s: Suggestion): SnapMode => s.id.startsWith("swallowed-") || /avant «/.test(s.excerpt) && s.type === "long_silence" ? "pre" : s.type === "long_silence" ? "both" : "out";
   async function cleanAll() {
     await audioP; if (words) sugs = suggest(words);
-    const r = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range) && s.confidence >= AUTO_MIN).map((s) => s.range);
+    let r: Range[] = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range) && s.confidence >= AUTO_MIN).map((s) => ({ ...s.range, mode: snapMode(s) }));
+    if (pcm) r = snapToQuiet(r, pcm, 16000); // bords de coupe sur le silence le plus proche (au centième de seconde)
     r.push(...takeCuts()); // reprises et hors-script retirés si la prise suit le script
     r.push(...((await edgeCuts()) ?? []));
     if (!r.length) { refresh(); return toast("Aucun défaut à supprimer. 👌", 3000); }

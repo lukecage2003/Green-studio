@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.10)
+# Green Studio 3.1 — état réel (beta.11)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,16 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.11
+- **Montage au plus près, vérifié sur de vraies prises.** Banc d'essai : transcription Whisper small (mêmes poids que l'app, via faster-whisper) de deux vraies prises, détection, application des coupes, puis retranscription mot pour mot de l'audio monté.
+  - Whisper « avale » les hésitations, répétitions et faux départs en étirant le mot suivant (« j'ai » de 0,9 s, « ici » de 1,1 s) : nouvelle détection de la **parole avalée** (le vrai mot est en fin de plage, coupe sur la dernière pause ou le dernier creux marqué d'énergie). Résultat : « et si l'étoil, bon » et « voilà, voilà » retirés.
+  - **Bords de coupe recalés sur le silence** (trames de 10 ms) : une coupe qui finit avant un mot ne s'en approche jamais, une hésitation s'étend vers le silence qui l'entoure.
+  - Élisions recollées (« j » + « 'ai »), génériques inventés par Whisper (« Sous-titres réalisés par la communauté d'Amara.org ») et boucles retirés.
+  - Tics isolés ajoutés : donc, bon, alors, enfin, mais bon.
+  - Moins de coupes à tort : « début de mot répété » n'est plus qu'une suggestion (coupait « je comprends », « Si »).
+  - Rythme **Dynamique par défaut** : silences > 0,3 s retirés, 0,1 s de respiration gardée (comme Rescript).
+  - L'amorce « verbatim » de Whisper a été évaluée puis écartée : avec transformers.js, elle fait dérailler le décodage des segments courts (mesures publiées par le projet Rescript).
 
 ## 3.1.0-beta.10
 - **Vrai fond vert / bleu** (Réglages › Vrai fond vert : Auto / Toujours / Jamais, et Tolérance) : incrustation par la couleur sur le principe du filtre Chroma Key d'[OBS Studio](https://obsproject.com/kb/chroma-key-filter) (distance de chrominance moyennée 3×3, bord adouci, retrait du reflet vert sur la peau), avec le détourage IA comme garde-fou autour de la personne. Fond uni vert ou bleu détecté automatiquement (≈ 1 s), couleur suivie en continu (éclairage inégal). Moteurs web et natif. Vérifié en navigateur sur une image de test réaliste (fond vert éclairé de façon inégale + grain) ; shader natif validé (GLSL ES 3.00) ; tests unitaires de la détection.
