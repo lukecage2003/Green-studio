@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.1)
+# Green Studio 3.1 — état réel (beta.2)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -46,13 +46,17 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
 
+## 3.1.0-beta.2
+- **Nettoyage automatique** : « ✨ Nettoyer automatiquement » (aperçu) = transcription + suppression de tous les défauts détectés (bégaiements, y compris ceux effacés par Whisper ; « euh » ; répétitions ; faux départs ; silences longs ; bords muets). Option « Supprimer automatiquement les défauts » (activée par défaut) à la fin de chaque transcription ; « ✨ Tout supprimer » dans Suggestions. Une seule action : ↶ annule tout. Seuil de confiance 0,5 (les suggestions plus incertaines restent proposées). Testé (app.e2e).
+- **Moteur natif** (compilé, non testé sur appareil) : décors vidéo animés (MediaPlayer → texture externe → décor, avec fondu) ; réduction du bruit (source micro « communication » d'Android) ; micro branché/débranché détecté et utilisé automatiquement.
+
 ## 3.1.0-beta.1 — moteur vidéo natif Android (compilé, NON testé sur appareil : pas d'émulateur ici)
 - `android/…/StudioEngine.java` : caméra **CameraX** (16:9, 1080×1920 portrait) → détourage **ML Kit Selfie Segmentation** (sur l'appareil, mode flux) → composition **OpenGL ES 3** (même rendu que la version web : contours affinés, anti-halo, ombre, lumière, peau, chaleur, décor avec fondu) → aperçu sur une `SurfaceView` sous la page (transparente sur le viseur) et enregistrement **MP4 matériel** (MediaRecorder, entrée Surface, H.264 + AAC, micro choisi).
 - Image et masque issus de la MÊME image caméra (aucun décalage) ; lumière auto (contre-jour) avec exposition CameraX ; vumètre et prompteur « suit ma voix » alimentés par le micro natif.
 - `StudioPlugin.java` : pont avec la page (démarrage, réglages, zone du viseur, décor, micros, enregistrement). La prise MP4 est copiée par morceaux dans « Mes prises » ; montage et export inchangés.
 - Sécurité : erreurs natives interceptées (l'app ne se ferme pas) → bascule automatique sur le moteur web pour la session ; choix « Moteur : Natif / Web » dans Réglages.
 - Shader natif vérifié par compilation GLSL ES 3.00 (WebGL2) ; APK limité à ARM 64 bits (56 Mo).
-- Limites v1 : décors vidéo affichés en image fixe ; volume et réduction du bruit non appliqués ; « Suit mes mots » indisponible.
+- Limites : volume du micro non appliqué en natif (« Volume optimisé » à l'export) ; « Suit mes mots » indisponible.
 
 ## Correctif alpha.10 (d'après la vidéo alpha.9 : plus aucun gel, 27,9 i/s — mais masque corrompu sur le S25)
 - **Masque corrompu** (fond du train conservé, rayures horizontales) : préchauffage sur image factice 256×256 supprimé (ajouté en alpha.8 ; sur le GPU du téléphone, le modèle restait calé sur ce format).

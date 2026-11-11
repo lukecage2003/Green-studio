@@ -13,10 +13,10 @@ const CHUNK = 3 * 1024 * 1024; // multiple de 3 : chaque morceau s'encode en bas
 const b64 = (b: Blob) => new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1] ?? ""); r.onerror = () => rej(r.error); r.readAsDataURL(b); });
 
 /** Copie la vidéo (Blob adossé au disque) dans le cache de l'app, par morceaux : pas de chargement complet en mémoire. */
-async function toCache(blob: Blob, name: string, onProgress?: (p: number) => void): Promise<string> {
-  await Filesystem.rmdir({ path: "out", directory: Directory.Cache, recursive: true }).catch(() => {}); // une seule copie à la fois
-  await Filesystem.mkdir({ path: "out", directory: Directory.Cache, recursive: true }).catch(() => {});
-  const path = "out/" + name;
+async function toCache(blob: Blob, name: string, onProgress?: (p: number) => void, dir = "out", clear = true): Promise<string> {
+  if (clear) await Filesystem.rmdir({ path: dir, directory: Directory.Cache, recursive: true }).catch(() => {}); // une seule copie à la fois
+  await Filesystem.mkdir({ path: dir, directory: Directory.Cache, recursive: true }).catch(() => {});
+  const path = dir + "/" + name;
   for (let off = 0; off < blob.size || off === 0; off += CHUNK) {
     const data = await b64(blob.slice(off, off + CHUNK));
     if (off === 0) await Filesystem.writeFile({ path, directory: Directory.Cache, data });
@@ -26,6 +26,9 @@ async function toCache(blob: Blob, name: string, onProgress?: (p: number) => voi
   }
   return (await Filesystem.getUri({ path, directory: Directory.Cache })).uri;
 }
+
+/** Fichier de décor vidéo pour le moteur natif (gardé dans le cache, chemin renvoyé). */
+export const cacheDecor = (blob: Blob, name: string) => toCache(blob, name, undefined, "decor", false);
 
 /** Enregistre dans la Galerie (Movies/Green Studio). */
 export async function saveToGallery(blob: Blob, name: string, onProgress?: (p: number) => void) {

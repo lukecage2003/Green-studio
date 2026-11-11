@@ -74,7 +74,12 @@ export interface EditorOptions {
   file: Blob; key: string; name?: string; onClose?: () => void; toast?: (m: string, ms?: number) => void;
   /** App Android : enregistrer dans la Galerie / partager (sinon : lien de téléchargement et partage web). */
   save?: (b: Blob, name: string) => Promise<void>; share?: (b: Blob, name: string) => Promise<void>;
+  /** Nettoyage en un geste : transcrire si besoin, puis supprimer tous les défauts détectés. */
+  autoClean?: boolean;
 }
+/** Seuil de confiance du nettoyage automatique (les suggestions plus incertaines restent proposées). */
+const AUTO_MIN = 0.5;
+const autoPref = () => { try { return localStorage.getItem("gs.autoClean") !== "0"; } catch { return true; } };
 
 export async function openEditor(o: EditorOptions) {
   if (!document.getElementById("qe-css")) { const st = document.createElement("style"); st.id = "qe-css"; st.textContent = CSS; document.head.appendChild(st); }
@@ -153,6 +158,7 @@ export async function openEditor(o: EditorOptions) {
         <p>Whisper tourne dans le téléphone : rien n’est envoyé en ligne. Premier usage : téléchargement du modèle (~80 à 300 Mo selon le choix), ensuite hors ligne.</p>
         ${audioErr ? `<p class="error">${esc(audioErr)}</p>` : ""}
         <label class="row" style="padding:0">Qualité <select data-a="model"><option value="auto">Auto (la plus précise possible)</option><option value="small">Très précise (~250 Mo)</option><option value="base">Précise (~80 Mo)</option><option value="tiny">Rapide (~40 Mo)</option></select></label>
+        <label class="row" style="padding:0;justify-content:space-between">Supprimer automatiquement les défauts<input type="checkbox" data-a="autoPref" ${autoPref() ? "checked" : ""}></label>
         <button class="ib go" data-a="transcribe" ${can ? "" : "disabled"}>Transcrire</button>
         <div class="bar" hidden><i></i></div><p data-r="tp"></p>
         <p>Sans transcription, vous pouvez couper avec ⟦ Début / Couper ⟧ sur la timeline.</p></div>`;
@@ -176,8 +182,8 @@ export async function openEditor(o: EditorOptions) {
     if (!words) { body.innerHTML = `<div class="card"><p>Les suggestions apparaissent après la transcription (onglet Texte).</p></div>`; return; }
     if (!sugs.length) { body.innerHTML = `<div class="card"><p>Aucune répétition, hésitation ni silence long détecté. 👌</p></div>`; return; }
     const open = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range));
-    const safe = open.filter((s) => s.confidence >= SAFE).length, sil = open.filter((s) => s.type === "long_silence").length;
-    body.innerHTML = `<div class="row" style="padding:0 0 8px"><button class="ib go" data-a="safe" ${safe ? "" : "disabled"}>Appliquer les sûres (${safe})</button>
+    const all = open.filter((s) => s.confidence >= AUTO_MIN).length, sil = open.filter((s) => s.type === "long_silence").length;
+    body.innerHTML = `<div class="row" style="padding:0 0 8px"><button class="ib go" data-a="clean" ${all ? "" : "disabled"}>✨ Tout supprimer (${all})</button>
       <button class="ib" data-a="sil" ${sil ? "" : "disabled"}>Couper les silences (${sil})</button></div>` +
       sugs.map((s) => { const on = covered(s.range), ign = ignored.has(s.id);
         return `<div class="sg ${on ? "on" : ""} ${ign ? "ign" : ""}" data-s="${esc(s.id)}"><div class="t"><b>${LABEL[s.type]} · ${Math.round(s.confidence * 100)} %${on ? " · coupé" : ""}</b>
@@ -308,7 +314,8 @@ export async function openEditor(o: EditorOptions) {
       else if (d.type === "done") {
         worker?.terminate(); worker = null; words = d.words; sugs = suggest(words!); sel = null; save();
         body.innerHTML = ""; refresh();
-        toast(`Transcrit en ${fmt((performance.now() - t0) / 1000)} · ${sugs.length} suggestion(s).`, 4000);
+        if (o.autoClean || autoPref()) cleanAll(); // nettoyage automatique (option, activée par défaut)
+        else toast(`Transcrit en ${fmt((performance.now() - t0) / 1000)} · ${sugs.length} suggestion(s).`, 4000);
       } else if (d.type === "error") {
         worker?.terminate(); worker = null; if (btn) btn.disabled = false;
         const net = /fetch|network|load/i.test(d.message);
@@ -320,14 +327,29 @@ export async function openEditor(o: EditorOptions) {
   }
 
   /** Coupe le silence avant la première parole et après la dernière (mots si transcrits, sinon énergie audio). */
-  async function trimEdges() {
+  async function edgeCuts(): Promise<Range[] | null> {
     let b: { start: number; end: number } | null = null;
     if (words?.length) b = { start: words[0].start, end: words[words.length - 1].end };
     else { await audioP; if (pcm) b = speechBounds(pcm, 16000); }
-    if (!b) return toast("Aucune parole détectée.", 2500);
+    if (!b) return null;
     const r: Range[] = []; if (b.start - 0.25 > 0.1) r.push({ start: 0, end: b.start - 0.25 }); if (duration - (b.end + 0.4) > 0.1) r.push({ start: b.end + 0.4, end: duration });
+    return r.filter((x) => !covered(x));
+  }
+  async function trimEdges() {
+    const r = await edgeCuts();
+    if (!r) return toast("Aucune parole détectée.", 2500);
     if (!r.length) return toast("Pas de silence à couper au début ni à la fin.", 2500);
     session.addCuts(r); commit(); toast(`Bords coupés (−${r.reduce((s, x) => s + x.end - x.start, 0).toFixed(1)} s). ↶ pour annuler.`, 3000);
+  }
+  /** Supprime d'un coup tous les défauts détectés (bégaiements, « euh », répétitions, faux départs, silences, bords muets).
+   *  Une seule action : ↶ annule tout ; chaque coupe reste visible et réversible dans Suggestions. */
+  async function cleanAll() {
+    await audioP; if (words) sugs = suggest(words);
+    const r = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range) && s.confidence >= AUTO_MIN).map((s) => s.range);
+    r.push(...((await edgeCuts()) ?? []));
+    if (!r.length) { refresh(); return toast("Aucun défaut à supprimer. 👌", 3000); }
+    const before = session.editedDuration; session.addCuts(r); commit();
+    toast(`✨ ${r.length} défaut(s) supprimé(s) (−${(before - session.editedDuration).toFixed(1)} s). ↶ pour annuler.`, 5000);
   }
 
   /* ---------- Export ---------- */
@@ -429,6 +451,8 @@ export async function openEditor(o: EditorOptions) {
       case "ign": if (sg) { ignored.has(sg.id) ? ignored.delete(sg.id) : ignored.add(sg.id); commit(); } break;
       case "hear": if (sg) playRange(sg.range.start - 1, sg.range.end + 1); break;
       case "safe": { const r = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range) && s.confidence >= SAFE).map((s) => s.range); if (r.length) { session.addCuts(r); commit(); toast(`${r.length} coupe(s) appliquée(s). ↶ pour annuler.`, 3000); } break; }
+      case "clean": cleanAll(); break;
+      case "autoPref": { const c = (t as HTMLInputElement).checked; try { localStorage.setItem("gs.autoClean", c ? "1" : "0"); } catch { /* */ } break; }
       case "sil": { const r = sugs.filter((s) => s.type === "long_silence" && !ignored.has(s.id) && !covered(s.range)).map((s) => s.range); if (r.length) { session.addCuts(r); commit(); } break; }
     }
   });
@@ -443,5 +467,6 @@ export async function openEditor(o: EditorOptions) {
   addEventListener("keydown", onKey);
 
   refresh(); raf = requestAnimationFrame(tick);
+  if (o.autoClean) { if (words) cleanAll(); else setTimeout(() => body.querySelector<HTMLElement>("[data-a=transcribe]")?.click(), 50); }
   return { close, session, get words() { return words; } };
 }

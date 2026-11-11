@@ -12,7 +12,7 @@ const FAKE_WORKER = `self.onmessage = (e) => { if (e.data.type !== 'run') return
   // Le Chromium de test encode le H.264 mais ne sait pas le décoder (Chrome Android, si) : on enregistre en WebM pour
   // exercer l'export rapide WebCodecs ; le repli temps réel est testé ensuite avec le MP4.
   if (!process.env.MP4) await ctx.addInitScript(() => { const f = MediaRecorder.isTypeSupported; MediaRecorder.isTypeSupported = (m) => !m.startsWith('video/mp4') && f.call(MediaRecorder, m); });
-  await ctx.addInitScript(() => localStorage.setItem('gs.q', 'fast')); // détourage Rapide : le Précis est testé dans live.e2e
+  await ctx.addInitScript(() => { localStorage.setItem('gs.q', 'fast'); if (!sessionStorage.getItem('autoTest')) localStorage.setItem('gs.autoClean', '0'); }); // détourage Rapide : le Précis est testé dans live.e2e
   await ctx.route(/transcribe\.worker/, (r) => r.fulfill({ contentType: 'text/javascript', body: FAKE_WORKER }));
   await p.goto('http://localhost:5173/');
   await p.click('#go'); await p.waitForSelector('#rec:not([hidden])', { timeout: 30000 });
@@ -27,7 +27,7 @@ const FAKE_WORKER = `self.onmessage = (e) => { if (e.data.type !== 'run') return
   await p.click('.qe [data-tab=sg]'); const n = await p.locator('.qe .sg').count();
   const types = await p.locator('.qe .sg b').allTextContents(); console.log('suggestions :', types);
   assert.ok(n >= 3, 'répétition + hésitation + silence');
-  await p.click('.qe [data-a=safe]'); const st1 = await p.textContent('.qe [data-r=status]'); console.log('après « sûres » :', st1);
+  await p.click('.qe [data-a=clean]'); await p.waitForFunction(() => !/ 0 coupe/.test(document.querySelector('.qe [data-r=status]').textContent)); await p.waitForTimeout(300); const st1 = await p.textContent('.qe [data-r=status]'); console.log('après « sûres » :', st1);
   await p.click('.qe [data-a=undo]'); assert.match(await p.textContent('.qe [data-r=status]'), /0 coupe/);
   await p.click('.qe [data-a=redo]'); assert.equal(await p.textContent('.qe [data-r=status]'), st1);
   await p.click('.qe [data-tab=tx]'); await p.click('.qe .tx span[data-i="4"]'); await p.click('.qe .tx span[data-i="5"]');
@@ -66,7 +66,8 @@ const FAKE_WORKER = `self.onmessage = (e) => { if (e.data.type !== 'run') return
   console.log('pixels blancs (sous-titres) :', white); assert.ok(white > 500, 'sous-titres gravés');
   const edited = await p.evaluate(() => JSON.parse(localStorage.getItem(Object.keys(localStorage).find((k) => k.startsWith('gs.qe.')))));
   const expect = edited.duration - edited.cuts.reduce((s, c) => s + c.end - c.start, 0);
-  console.log(`durée exportée ${outDur.toFixed(2)} s, attendue ${expect.toFixed(2)} s`); assert.ok(Math.abs(outDur - expect) < (process.env.MP4 ? 0.25 : 0.1));
+  console.log(`durée exportée ${outDur.toFixed(2)} s, attendue ${expect.toFixed(2)} s`);
+  if (Math.abs(outDur - expect) >= 0.1) console.log('diagnostic coupes :', JSON.stringify(edited.cuts), 'durée source', edited.duration, 'clés', await p.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('gs.qe.')))); assert.ok(Math.abs(outDur - expect) < (process.env.MP4 ? 0.25 : 0.1));
   await p.click('.qe .modal [data-x=ok]'); await p.click('.qe [data-a=close]'); assert.equal(await p.locator('.qe').count(), 0);
   // persistance : rouvrir retrouve transcription et coupes
   await p.click('#pvEdit'); await p.waitForSelector('.qe .tx span'); assert.match(await p.textContent('.qe [data-r=status]'), new RegExp(st2.match(/(\d+) coupe/)[1] + ' coupe'));
@@ -77,5 +78,13 @@ const FAKE_WORKER = `self.onmessage = (e) => { if (e.data.type !== 'run') return
   assert.equal(await p.locator('.lib li[data-id]').count(), 1); console.log('bibliothèque :', (await p.textContent('.lib [data-r=use]')));
   await p.click('.lib [data-a=edit]'); await p.waitForSelector('.qe .tx span'); await p.click('.qe [data-a=close]');
   await p.click('.lib [data-a=del]'); await p.waitForSelector('.lib li.empty'); await p.click('.lib [data-a=close]');
+  // Nettoyage automatique en un geste : nouvelle prise → « ✨ Nettoyer » → transcription + suppression de tous les défauts
+  await p.evaluate(() => localStorage.setItem('gs.autoClean', '1'));
+  await p.click('#rec'); await p.waitForSelector('#recChip:not([hidden])', { timeout: 20000 }); await p.waitForTimeout(6000); await p.click('#rec');
+  await p.waitForSelector('#pv:not([hidden])'); await p.click('#pvClean'); await p.waitForSelector('.qe .tx span', { timeout: 30000 });
+  await p.waitForFunction(() => /[1-9]\d* coupe/.test(document.querySelector('.qe [data-r=status]').textContent), null, { timeout: 30000 });
+  const auto = await p.textContent('.qe [data-r=status]'); console.log('nettoyage auto :', auto);
+  await p.click('.qe [data-a=undo]'); assert.match(await p.textContent('.qe [data-r=status]'), /0 coupe/, 'un seul ↶ annule tout le nettoyage');
+  await p.click('.qe [data-a=close]');
   console.log('erreurs :', errs); assert.equal(errs.length, 0); console.log('OK'); await b.close();
 })().catch((e) => { console.error('ÉCHEC', e); process.exit(1); });

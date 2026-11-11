@@ -3,7 +3,12 @@ package app.greenstudio;
 import android.Manifest;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.content.Context;
+import android.media.AudioDeviceCallback;
 import android.media.AudioDeviceInfo;
+import android.media.AudioManager;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Base64;
 import android.view.SurfaceView;
 
@@ -94,6 +99,12 @@ public class StudioPlugin extends Plugin {
         engine().setBackground(bmp); call.resolve();
     }
 
+    /** Décor vidéo : fichier local (copié par la page dans le cache de l'app). */
+    @PluginMethod public void setBackgroundVideo(PluginCall call) {
+        String p = call.getString("path"); if (p == null) { call.reject("Fichier manquant"); return; }
+        engine().setBackgroundVideo(p); call.resolve();
+    }
+
     @PluginMethod public void startRecording(PluginCall call) {
         try {
             String path = engine().startRecording(getContext().getCacheDir(), call.getInt("width", 1080), call.getInt("height", 1920), call.getInt("bitrate", 14000000));
@@ -114,6 +125,8 @@ public class StudioPlugin extends Plugin {
         call.resolve();
     }
 
+    @PluginMethod public void setAudio(PluginCall call) { engine().setNoiseSuppression(call.getBoolean("noiseSuppression", false)); call.resolve(); }
+
     @PluginMethod public void listMics(PluginCall call) {
         JSArray a = new JSArray();
         for (AudioDeviceInfo d : engine().mics()) { JSObject o = new JSObject(); o.put("id", String.valueOf(d.getId())); o.put("label", label(d)); a.put(o); }
@@ -132,6 +145,23 @@ public class StudioPlugin extends Plugin {
             case AudioDeviceInfo.TYPE_WIRED_HEADSET: return "Micro filaire";
             default: return String.valueOf(d.getProductName());
         }
+    }
+
+    /** Micro branché / débranché : la page en est informée (elle bascule automatiquement, comme en version web). */
+    @Override public void load() {
+        AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+        am.registerAudioDeviceCallback(new AudioDeviceCallback() {
+            @Override public void onAudioDevicesAdded(AudioDeviceInfo[] ds) { report("added", ds); }
+            @Override public void onAudioDevicesRemoved(AudioDeviceInfo[] ds) { report("removed", ds); }
+        }, new Handler(Looper.getMainLooper()));
+    }
+    private void report(String kind, AudioDeviceInfo[] ds) {
+        JSArray a = new JSArray();
+        for (AudioDeviceInfo d : ds) if (d.isSource() && d.getType() != AudioDeviceInfo.TYPE_BUILTIN_MIC && d.getType() != AudioDeviceInfo.TYPE_TELEPHONY && d.getType() != AudioDeviceInfo.TYPE_REMOTE_SUBMIX) {
+            JSObject o = new JSObject(); o.put("id", String.valueOf(d.getId())); o.put("label", label(d)); a.put(o);
+        }
+        if (a.length() == 0) return;
+        JSObject o = new JSObject(); o.put("kind", kind); o.put("mics", a); notifyListeners("mics", o);
     }
 
     @Override protected void handleOnDestroy() { if (engine != null) engine.release(); engine = null; }

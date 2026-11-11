@@ -4,6 +4,10 @@ import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.SurfaceTexture;
+import android.media.MediaPlayer;
+import android.net.Uri;
+import android.opengl.GLES11Ext;
 import android.media.AudioDeviceInfo;
 import android.media.AudioFormat;
 import android.media.AudioManager;
@@ -115,6 +119,10 @@ public class StudioEngine {
     // Enregistrement / audio
     private MediaRecorder recorder; private File recFile; private long recT0;
     private volatile AudioDeviceInfo mic;
+    /** Réduction du bruit : source « communication » d'Android (réduction de bruit matérielle) au lieu de la source vidéo. */
+    public volatile boolean noiseSuppression;
+    private int audioSource() { return noiseSuppression ? MediaRecorder.AudioSource.VOICE_COMMUNICATION : MediaRecorder.AudioSource.CAMCORDER; }
+    public void setNoiseSuppression(boolean on) { noiseSuppression = on; if (meter != null) { stopMeter(); startMeter(); } }
     private AudioRecord meter; private volatile boolean metering;
     private final Handler main = new Handler(Looper.getMainLooper());
 
@@ -333,6 +341,73 @@ public class StudioEngine {
         for (int i = 0; i < 6; i++) GLES30.glUniform1i(U.get(new String[]{ "uY", "uU", "uV", "uMask", "uBg", "uBg2" }[i]), i);
     }
 
+    /* ---------- Décor vidéo : MediaPlayer → SurfaceTexture (texture externe) → copiée dans la texture du décor ---------- */
+    private static final String FS_COPY = "#version 300 es\n#extension GL_OES_EGL_image_external_essl3 : require\nprecision mediump float;\n"
+        + "uniform samplerExternalOES uTex; uniform mat4 uM; in vec2 v; out vec4 o;\n"
+        + "void main(){ vec2 t = (uM * vec4(v.x, v.y, 0., 1.)).xy; o = texture(uTex, t); }";
+    private int copyProg, oesTex, fbo, vidW, vidH;
+    private SurfaceTexture vidST; private Surface vidSurface; private MediaPlayer player;
+    private volatile boolean vidFrame; private boolean videoBg; private final float[] stM = new float[16];
+
+    /** Décor vidéo (fichier local) : lu en boucle, sans son, avec fondu enchaîné. */
+    public void setBackgroundVideo(String path) {
+        gl.post(() -> {
+            try {
+                if (ctx == EGL14.EGL_NO_CONTEXT) return;
+                EGL14.eglMakeCurrent(dpy, pbuf, pbuf, ctx);
+                stopVideoBg();
+                if (copyProg == 0) copyProg = program(VS, FS_COPY);
+                int[] t = new int[1]; GLES30.glGenTextures(1, t, 0); oesTex = t[0];
+                GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTex);
+                GLES30.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR);
+                GLES30.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR);
+                GLES30.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE);
+                GLES30.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE);
+                vidST = new SurfaceTexture(oesTex); vidST.setOnFrameAvailableListener(s -> vidFrame = true);
+                vidSurface = new Surface(vidST);
+                MediaPlayer mp = new MediaPlayer();
+                String p = path.startsWith("file:") ? Uri.parse(path).getPath() : path;
+                mp.setDataSource(p); mp.setSurface(vidSurface); mp.setLooping(true); mp.setVolume(0, 0);
+                mp.setOnPreparedListener(MediaPlayer::start);
+                mp.setOnErrorListener((m, what, extra) -> { Log.w(TAG, "décor vidéo " + what + "/" + extra); return true; });
+                mp.prepareAsync(); player = mp;
+                int tt = tex[5]; tex[5] = tex[4]; tex[4] = tt; bg2W = bgW; bg2H = bgH; vidW = 0; vidH = 0;
+                mixT0 = SystemClock.uptimeMillis(); videoBg = true;
+            } catch (Exception e) { Log.w(TAG, "décor vidéo", e); stopVideoBg(); }
+        });
+    }
+    private void stopVideoBg() {
+        videoBg = false;
+        if (player != null) { try { player.release(); } catch (Exception ignored) { } player = null; }
+        if (vidSurface != null) { vidSurface.release(); vidSurface = null; }
+        if (vidST != null) { vidST.release(); vidST = null; }
+        if (oesTex != 0) { GLES30.glDeleteTextures(1, new int[]{ oesTex }, 0); oesTex = 0; }
+    }
+    /** Sur le fil GPU, contexte courant : copie la dernière image du décor vidéo dans la texture du décor. */
+    private void updateVideoBg() {
+        if (!videoBg || vidST == null || player == null || !vidFrame) return;
+        vidFrame = false;
+        vidST.updateTexImage(); vidST.getTransformMatrix(stM);
+        int w = player.getVideoWidth(), h = player.getVideoHeight(); if (w <= 0 || h <= 0) return;
+        float k = Math.min(1f, 1280f / Math.max(w, h)); int tw = Math.round(w * k), th = Math.round(h * k);
+        if (tw != vidW || th != vidH) {
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, tex[4]);
+            GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA, tw, th, 0, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, null);
+            vidW = tw; vidH = th; bgW = tw; bgH = th;
+        }
+        if (fbo == 0) { int[] f = new int[1]; GLES30.glGenFramebuffers(1, f, 0); fbo = f[0]; }
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo);
+        GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_TEXTURE_2D, tex[4], 0);
+        GLES30.glViewport(0, 0, tw, th);
+        GLES30.glUseProgram(copyProg);
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE6); GLES30.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTex);
+        GLES30.glUniform1i(GLES30.glGetUniformLocation(copyProg, "uTex"), 6);
+        GLES30.glUniformMatrix4fv(GLES30.glGetUniformLocation(copyProg, "uM"), 1, false, stM, 0);
+        draw();
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0);
+        GLES30.glUseProgram(prog);
+    }
+
     private static int shader(int type, String src) {
         int s = GLES30.glCreateShader(type); GLES30.glShaderSource(s, src); GLES30.glCompileShader(s);
         int[] ok = new int[1]; GLES30.glGetShaderiv(s, GLES30.GL_COMPILE_STATUS, ok, 0);
@@ -381,6 +456,7 @@ public class StudioEngine {
         if (ctx == EGL14.EGL_NO_CONTEXT || (win == EGL14.EGL_NO_SURFACE && recSurf == EGL14.EGL_NO_SURFACE)) return;
         EGLSurface first = win != EGL14.EGL_NO_SURFACE ? win : recSurf;
         EGL14.eglMakeCurrent(dpy, first, first, ctx);
+        updateVideoBg();
         GLES30.glUseProgram(prog);
         int w = img.getWidth(), h = img.getHeight(), w2 = (w + 1) / 2, h2 = (h + 1) / 2;
         ImageProxy.PlaneProxy[] pl = img.getPlanes();
@@ -453,6 +529,7 @@ public class StudioEngine {
         gl.post(() -> {
             if (ctx == EGL14.EGL_NO_CONTEXT) { bmp.recycle(); return; }
             EGL14.eglMakeCurrent(dpy, pbuf, pbuf, ctx);
+            stopVideoBg();
             int t = tex[5]; tex[5] = tex[4]; tex[4] = t; bg2W = bgW; bg2H = bgH;
             uploadBitmap(tex[4], bmp); bgW = bmp.getWidth(); bgH = bmp.getHeight(); bmp.recycle();
             mixT0 = SystemClock.uptimeMillis();
@@ -470,7 +547,7 @@ public class StudioEngine {
         outW = w; outH = h;
         recFile = new File(dir, "green-studio-" + System.currentTimeMillis() + ".mp4");
         MediaRecorder r = Build.VERSION.SDK_INT >= 31 ? new MediaRecorder(act) : new MediaRecorder();
-        if (audio) r.setAudioSource(MediaRecorder.AudioSource.CAMCORDER);
+        if (audio) r.setAudioSource(audioSource());
         r.setVideoSource(MediaRecorder.VideoSource.SURFACE);
         r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
         r.setOutputFile(recFile.getAbsolutePath());
@@ -531,7 +608,7 @@ public class StudioEngine {
         if (ContextCompat.checkSelfPermission(act, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return;
         int sr = 48000, n = Math.max(AudioRecord.getMinBufferSize(sr, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT), 4096);
         try {
-            AudioRecord ar = new AudioRecord(MediaRecorder.AudioSource.CAMCORDER, sr, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, n);
+            AudioRecord ar = new AudioRecord(audioSource(), sr, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, n);
             if (mic != null) ar.setPreferredDevice(mic);
             ar.startRecording(); meter = ar; metering = true;
             new Thread(() -> {

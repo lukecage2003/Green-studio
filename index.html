@@ -293,7 +293,7 @@ html.native .webonly{display:none!important}
     <label class="webonly">Volume <input type="range" id="gain" min="0" max="2" step="0.01" value="1"></label>
   </div>
   <div class="group" style="margin-top:12px">
-    <label class="webonly">Réduction du bruit <input type="checkbox" id="ns"></label>
+    <label>Réduction du bruit <input type="checkbox" id="ns"></label>
     <label class="webonly">Écoute au casque <input type="checkbox" id="mon"></label>
   </div>
   <p class="foot">Un micro branché (USB, Bluetooth, cravate) est utilisé automatiquement. Le niveau devient rouge en cas de saturation. N’activez l’écoute qu’avec un casque.</p>
@@ -303,6 +303,7 @@ html.native .webonly{display:none!important}
   <div class="nav"><button class="l" id="pvClose">Fermer</button><strong>Aperçu</strong><button class="r" id="pvEdit">Monter</button></div>
   <video id="pvVid" controls playsinline></video>
   <p class="info" id="pvInfo"></p>
+  <div class="btns" style="margin-bottom:10px"><button class="btn" id="pvClean" style="color:var(--accent)">✨ Nettoyer automatiquement</button></div>
   <div class="btns"><a id="dl" class="btn prim">Télécharger</a><button class="btn" id="pvShare" hidden>Partager</button></div>
 </section>
 
@@ -819,9 +820,17 @@ function nativeTick() { // réglages poussés vers le moteur dès qu'ils changen
   if (suspended !== lastSusp) { lastSusp = suspended; if (suspended) St.stop().catch(() => {}); else St.start({ facing: nativeFacing }).then(sendViewport).catch(() => {}); }
   requestAnimationFrame(nativeTick);
 }
-const bgData = new Map();
-function sendBgNative(e) { // décor envoyé une fois en JPEG (les décors vidéo passent en image fixe dans le moteur natif)
+const bgData = new Map(), bgVid = new Map();
+async function sendBgNative(e) { // image : envoyée une fois en JPEG ; vidéo : fichier copié une fois puis lu par Android (animé)
   if (!nativeOn || !e) return;
+  const it = lib.find((x) => x.id === e.id);
+  if (e.video && it?.blob) {
+    try {
+      let path = bgVid.get(e.id);
+      if (!path) { path = await (await nativeP).cacheDecor(it.blob, e.id + ".mp4"); bgVid.set(e.id, path); }
+      if (bgCur === e) return St.setBackgroundVideo({ path });
+    } catch (err) { console.warn("décor vidéo natif", err); }
+  }
   let d = bgData.get(e.id);
   if (!d) {
     const src = e.src, w = src.videoWidth || src.width, h = src.videoHeight || src.height; if (!w || !h) return;
@@ -843,6 +852,15 @@ async function startNative(facing) {
       if (running) $("perf").textContent = `Natif · ${s.fps} i/s · IA ${Math.round(s.inferMs)} ms · caméra ${s.width}×${s.height}${s.expo != null ? " · expo " + s.expo : ""}`; });
     St.addListener("level", (l) => { vad?.update(l.rms, performance.now()); $("meter").firstElementChild.style.width = Math.min(100, l.rms * 300) + "%"; });
     addEventListener("resize", () => setTimeout(sendViewport, 50));
+    St.addListener("mics", async (ev) => { // micro externe branché : utilisé tout de suite ; débranché : retour au micro du téléphone
+      try {
+        const before = $("micSel").value, { mics } = await St.listMics(); $("micSel").replaceChildren(...mics.map((m) => new Option(m.label, m.id)));
+        const pick = ev.kind === "added" ? mics.find((m) => m.id === ev.mics[0].id) : mics.find((m) => m.id === before) ?? mics[0];
+        if (!pick) return; $("micSel").value = pick.id; await St.setMic({ id: pick.id }); if (ev.kind === "added") rememberMic(pick.id);
+        $("micChip").lastChild.textContent = pick.label;
+        toast(ev.kind === "added" ? `Micro branché : ${pick.label} — utilisé.` : "Micro débranché : micro du téléphone utilisé.", 4000);
+      } catch {}
+    });
     St.addListener("error", (e) => { // erreur grave du moteur natif : on repasse sur le moteur web, sans perdre la prise en cours
       try { sessionStorage.setItem("gs.nativeFailed", e?.message || "erreur"); } catch {}
       if (rec) { toast("Moteur natif en erreur : arrêtez la prise, l’app basculera sur le moteur web.", 8000); return; }
@@ -856,6 +874,7 @@ async function startNative(facing) {
     if (pick) { $("micSel").value = pick.id; await St.setMic({ id: pick.id }); $("micChip").innerHTML = MIC_SVG + "<span></span>"; $("micChip").lastChild.textContent = pick.label; $("micChip").hidden = false; }
     hasMic = mics.length > 0;
   } catch {}
+  St.setAudio({ noiseSuppression: $("ns").checked }).catch(() => {});
   $("micSel").onchange = (e) => { rememberMic(e.target.value); St.setMic({ id: e.target.value }); $("micChip").lastChild.textContent = e.target.selectedOptions[0]?.textContent ?? ""; };
   $("start").hidden = true; $("bar").hidden = false; $("rec").hidden = false; $("strip").hidden = false; keepAwake();
   running = true; lastParams = ""; lastSusp = false;
@@ -921,7 +940,7 @@ navigator.mediaDevices?.addEventListener?.("devicechange", async () => {
   else { knownMics = new Set(devs.map((d) => d.deviceId)); }
 });
 $("micChip").onclick = () => openP("pAudio");
-$("ns").onchange = () => initMic($("micSel").value);
+$("ns").onchange = () => (nativeOn ? St.setAudio({ noiseSuppression: $("ns").checked }).catch(() => {}) : initMic($("micSel").value));
 $("gain").oninput = (e) => gainN && (gainN.gain.value = +e.target.value);
 $("mon").onchange = (e) => { if (!gainN) return; if (e.target.checked) gainN.connect(actx.destination); else gainN.disconnect(actx.destination); };
 const abuf = new Float32Array(1024);
@@ -1058,13 +1077,15 @@ $("pvClose").onclick = async () => {
   pvId = null; pvBlob = null; showPending();
 };
 /* ---------- Montage (Quick Edit) ---------- */
-async function edit(file, key, fromLib = false) {
+async function edit(file, key, fromLib = false, autoClean = false) {
   $("pvVid").pause(); suspended = true;
-  try { const { openEditor } = await import("/src/ui/quick-edit.ts"); await openEditor({ file, key, toast, ...(NATIVE ? { save: saveBlob, share: shareBlob } : {}), onClose: () => (suspended = fromLib || !!libRefresh) }); }
+  try { const { openEditor } = await import("/src/ui/quick-edit.ts"); await openEditor({ file, key, toast, autoClean, ...(NATIVE ? { save: saveBlob, share: shareBlob } : {}), onClose: () => (suspended = fromLib || !!libRefresh) }); }
   catch (e) { suspended = false; toast("Montage indisponible : " + (e?.message ?? e), 6000); }
 }
 // La prise reste dans le stockage tant que l'aperçu est ouvert : le montage lit le fichier sur disque, sans copie.
 $("pvEdit").onclick = () => pvBlob && edit(pvBlob, pvId ?? `mem-${pvBlob.size}`);
+// Un geste : transcription + suppression de tous les défauts détectés (bégaiements, « euh », répétitions, silences, bords muets)
+$("pvClean").onclick = () => pvBlob && edit(pvBlob, pvId ?? `mem-${pvBlob.size}`, false, true);
 $("openEdit").onclick = () => $("editFile").click();
 /* Miniature de la dernière prise sur le bouton « Mes prises » (comme l'appareil photo du téléphone). */
 function setLibThumb(d) { const b = $("bLib"); if (!d) { b.classList.remove("has"); b.style.backgroundImage = ""; return; } b.style.backgroundImage = `url(${d})`; b.classList.add("has"); }
