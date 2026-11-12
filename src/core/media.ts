@@ -89,12 +89,13 @@ export interface ExportOptions {
   maxHeight?: number;                              // ex. 1280 pour un export 720p plus léger
   voice?: boolean;                                 // voix studio : débruitage, égaliseur, compresseur
   zoom?: ((t: number) => number) | null;           // zooms dynamiques : facteur de zoom selon le temps source (1 = aucun)
+  intro?: Range | null;                            // accroche : passage rejoué en ouverture, avant le montage
   /** habillage : extraits (images / vidéos) et bandeaux titres, en temps source */
   dress?: { overlays: Overlay[]; titles: Title[]; images: Map<string, CanvasImageSource>; videos: Map<string, Blob>; accent?: string } | null;
 }
 
 export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOptions = {}): Promise<ExportResult> {
-  const { onProgress, signal, fade = 0.012, gain = 1, captions = null, maxHeight = 0, voice = false, zoom = null, dress = null } = opts;
+  const { onProgress, signal, fade = 0.012, gain = 1, captions = null, maxHeight = 0, voice = false, zoom = null, dress = null, intro = null } = opts;
   const vidSinks = new Map<string, { input: Input; sink: VideoSampleSink }>();
   const input = new Input({ source: new BlobSource(file), formats: FORMATS });
   let output: Output | null = null;
@@ -102,6 +103,7 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
     const vt = await input.getPrimaryVideoTrack(), at = await input.getPrimaryAudioTrack();
     if (!vt) throw new Error("Aucune piste vidéo.");
     const duration = await input.computeDuration(), segs = kept(duration, cuts);
+    if (intro && intro.end - intro.start > 0.3) segs.unshift({ start: Math.max(0, intro.start), end: Math.min(duration, intro.end) });
     const total = segs.reduce((s, k) => s + k.end - k.start, 0) || 1;
     // MP4/H.264 en priorité (compatible partout : TikTok, Instagram, YouTube), sinon WebM/VP9.
     let vcodec = await getFirstEncodableVideoCodec(["avc"]), mp4 = !!vcodec;

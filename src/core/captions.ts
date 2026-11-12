@@ -3,11 +3,11 @@
 import type { Range, Word } from "./timeline.ts";
 
 export type CaptionPreset = "none" | "karaoke" | "box" | "word" | "simple";
-export interface CaptionStyle { preset: CaptionPreset; pos: number; upper: boolean; color: string }
+export interface CaptionStyle { preset: CaptionPreset; pos: number; upper: boolean; color: string; strong?: boolean } // strong : mots forts en couleur
 export const CAPTION_DEFAULT: CaptionStyle = { preset: "karaoke", pos: 0.72, upper: false, color: "#34e08b" };
 export const PRESETS: Record<CaptionPreset, string> = { none: "Aucun", karaoke: "Karaoké", word: "Mot par mot", box: "Encadré", simple: "Simple" };
 
-export interface CapLine { start: number; end: number; words: Word[] }
+export interface CapLine { start: number; end: number; words: (Word & { em?: boolean })[] } // em : mot fort (nom propre, chiffre, mot du dictionnaire)
 
 /** Segment traduit (temps de début/fin seulement) → mots horodatés : chaque mot reçoit une part du segment proportionnelle à sa longueur. */
 export function spreadSegment(text: string, start: number, end: number): Word[] {
@@ -17,15 +17,19 @@ export function spreadSegment(text: string, start: number, end: number): Word[] 
 }
 
 /** Lignes de ≤ maxWords mots / maxChars caractères ; nouvelle ligne après une pause ou une fin de phrase. Les mots coupés sont exclus. */
-export function buildCaptions(words: Word[], cuts: Range[], o: { maxWords?: number; maxChars?: number; maxGap?: number; hold?: number } = {}): CapLine[] {
+export function buildCaptions(words: Word[], cuts: Range[], o: { maxWords?: number; maxChars?: number; maxGap?: number; hold?: number; strong?: string[] } = {}): CapLine[] {
   const { maxWords = 4, maxChars = 22, maxGap = 0.6, hold = 0.5 } = o;
   const isCut = (w: Word) => { const m = (w.start + w.end) / 2; return cuts.some((c) => m >= c.start && m < c.end); };
-  const lines: CapLine[] = []; let cur: Word[] = [], chars = 0;
+  const fold = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const strong = new Set((o.strong ?? []).map(fold).filter(Boolean));
+  const lines: CapLine[] = []; let cur: (Word & { em?: boolean })[] = [], chars = 0;
   const flush = () => { if (cur.length) lines.push({ start: cur[0].start, end: cur[cur.length - 1].end, words: cur }); cur = []; chars = 0; };
   let prev: Word | null = null;
   for (const w0 of words) {
     if (isCut(w0) || !/[\p{L}\p{N}]/u.test(w0.text)) continue; // « … » et ponctuation seule : rien à afficher
-    const w = /,+$/.test(w0.text) ? { ...w0, text: w0.text.replace(/,+$/, "") } : w0; // virgules de fin retirées (lecture plus nette à l'écran)
+    const bare = w0.text.replace(/[^\p{L}\p{N}' -]/gu, "").trim(), sentStart: boolean = !prev || /[.!?…]$/.test(prev.text);
+    const em: boolean = /\d/.test(bare) || strong.has(fold(bare)) || (!sentStart && bare.length >= 3 && /^\p{Lu}[\p{Ll}\p{Lu}]/u.test(bare)); // chiffre, « Mes mots », nom propre
+    const w: Word & { em?: boolean } = { ...w0, text: w0.text.replace(/,+$/, ""), em }; // virgules de fin retirées (lecture plus nette à l'écran)
     const len = w.text.length + (cur.length ? 1 : 0);
     if (cur.length && (cur.length >= maxWords || chars + len > maxChars || (prev && w.start - prev.end > maxGap) || /[.!?…]$/.test(prev!.text))) flush();
     cur.push(w); chars += len; prev = w;
@@ -55,7 +59,7 @@ export function drawCaption(ctx: Ctx, x: number, y: number, W: number, H: number
   const cy = y + H * st.pos;
 
   if (st.preset === "word") { // un mot à la fois, gros, qui « pop »
-    const w = line.words[Math.max(0, k)], fs = W * 0.11, age = Math.max(0, t - w.start), sc = 1 + 0.18 * Math.max(0, 1 - age / 0.12);
+    const w = line.words[Math.max(0, k)], fs = W * (st.strong !== false && w.em ? 0.128 : 0.11), age = Math.max(0, t - w.start), sc = 1 + 0.18 * Math.max(0, 1 - age / 0.12);
     ctx.font = `900 ${fs}px ${FONT}`; ctx.textAlign = "center"; ctx.translate(x + W / 2, cy); ctx.scale(sc, sc);
     ctx.lineWidth = fs * 0.2; ctx.strokeStyle = "#000"; ctx.strokeText(txt(w.text), 0, 0); ctx.fillStyle = st.color; ctx.fillText(txt(w.text), 0, 0);
     ctx.restore(); return;
@@ -78,7 +82,8 @@ export function drawCaption(ctx: Ctx, x: number, y: number, W: number, H: number
       if (active && st.preset === "karaoke") { const age = Math.max(0, t - line.words[i].start), sc = 1 + 0.1 * Math.min(1, age / 0.08); ctx.translate(cx + ws[i] / 2, ry); ctx.scale(sc, sc); ctx.translate(-(cx + ws[i] / 2), -ry); }
       if (st.preset === "simple") { ctx.shadowColor = "rgba(0,0,0,.85)"; ctx.shadowBlur = fs * 0.25; }
       else if (st.preset === "karaoke") { ctx.lineWidth = fs * 0.18; ctx.strokeStyle = "#000"; ctx.strokeText(words[i], cx, ry); }
-      ctx.fillStyle = active ? (st.preset === "box" ? "#ffd23f" : st.color) : "#fff"; ctx.fillText(words[i], cx, ry);
+      const em = st.strong !== false && line.words[i].em; // mot fort : en couleur même quand il n'est pas le mot actif
+      ctx.fillStyle = active ? (st.preset === "box" ? "#ffd23f" : st.color) : em ? (st.preset === "box" ? st.color : "#ffd23f") : "#fff"; ctx.fillText(words[i], cx, ry);
       ctx.restore(); cx += ws[i] + sp;
     }
   });

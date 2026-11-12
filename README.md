@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.13)
+# Green Studio 3.1 — état réel (beta.14)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,16 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.14
+- **Mes mots** (onglet Texte) : dictionnaire personnel (un ou plusieurs mots → bonne écriture), appliqué après chaque transcription et aux sous-titres ; corriger un mot avec ✎ propose de l'y ajouter. Testé (`tools.e2e`, unitaires).
+- **Boucles de Whisper** : mesuré sur une vraie prise, une amorce à peine différente (ou enrichie du vocabulaire personnel) fait boucler le décodage (« voilà » ×200, 40 s perdues). Le vocabulaire n'est donc PAS ajouté à l'amorce ; le décodage s'arrête dès qu'une boucle démarre (`guardLoops`, transformers.js ne transmettant pas `stopping_criteria` pour Whisper) et le passage est retranscrit en classique.
+- **Express plus rapide** : le modèle de transcription est préchargé dès l'aperçu de la prise (seulement s'il est déjà sur le téléphone ; mémoire rendue après 2 min sans usage) ; le worker traite ses messages un par un.
+- **Faux départs jugés par l'IA du téléphone** : avant « Tout supprimer », Gemini Nano (s'il est disponible) confirme ou non jusqu'à 5 débuts de phrase abandonnés (8 s au plus) ; sans lui, ils restent de simples suggestions. Question et lecture de la réponse testées ; l'appel lui-même n'est pas testable hors téléphone.
+- **Accroche en ouverture** (✍️ Publication › 🎣) : la phrase d'accroche est rejouée au tout début de la vidéo exportée (`intro` dans `exportEdited`). Testé : durée exportée = montage + accroche.
+- **Sous-titres : mots forts en couleur** (noms propres hors début de phrase, chiffres, « Mes mots »), option dans l'onglet Sous-titres.
+- **Banque d'images** (Habillage) : une image ou un extrait par mot-clé, placé en incrustation quand le mot est dit (bouton, et automatiquement en Express). Testé.
+- **Sauvegarde des réglages** (Réglages › Assistance) : profils, modèles d'émission, tics, « Mes mots »… dans un fichier JSON ; restauration. Les vidéos, décors et images de la banque ne sont pas inclus.
 
 ## 3.1.0-beta.13
 - **Vérifié avec Whisper small** (le modèle utilisé sur le téléphone) dans l'app, sur deux vraies prises, mot pour mot + « Tout supprimer » : 25 s → 19 s (10 coupes) et 14 s → 6 s (4 coupes), tous les vrais mots gardés dans le texte.

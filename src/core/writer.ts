@@ -61,3 +61,10 @@ export function localDraft(transcript: string): Draft {
   const description = ss.slice(0, 2).join(" ").slice(0, 220);
   return { titles, description, hashtags, hook, by: "local" };
 }
+
+/** Question posée à l'IA du téléphone : ce début de phrase a-t-il été abandonné puis repris autrement ? (réponse OUI / NON) */
+export function judgePrompt(before: string, fragment: string, after: string): string {
+  return `Transcription orale en français : "${before} [${fragment}] ${after}"
+Le passage entre crochets est-il un début de phrase abandonné, que la personne recommence autrement juste après ? Réponds par un seul mot : OUI ou NON.`;
+}
+export const parseYes = (out: string) => /^\W*oui\b/i.test(out.trim());

@@ -10,6 +10,7 @@ const mediaDb = () => new Promise<IDBDatabase>((res, rej) => { const r = indexed
 async function mediaPut(id: string, b: Blob) { const db = await mediaDb(); await new Promise((res, rej) => { const t = db.transaction("files", "readwrite"); t.objectStore("files").put(b, id); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
 async function mediaGet(id: string): Promise<Blob | null> { const db = await mediaDb(); return new Promise((res) => { const q = db.transaction("files").objectStore("files").get(id); q.onsuccess = () => res(q.result ?? null); q.onerror = () => res(null); }); }
 import { takeReport } from "../core/coach.ts";
+import { applyDictionary, findPhrase, type DictEntry } from "../core/dictionary.ts";
 import { TICS, RHYTHM, type Rhythm, type SnapMode, snapToQuiet, withBounds, tightenWords, dropCrumbs, cleanTranscript, analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
 import { peaks as computePeaks, loudnessGain, speechBounds } from "../core/audio.ts";
 import { buildCaptions, drawCaption, lineAt, CAPTION_DEFAULT, PRESETS, type CapLine, type CaptionStyle, type CaptionPreset } from "../core/captions.ts";
@@ -94,7 +95,7 @@ const CSS = `
 .lib ul{margin:0 12px}.lib li:first-child{border-radius:20px 20px 0 0}.lib li:last-child{border-radius:0 0 20px 20px}.lib li:only-child{border-radius:20px}
 `;
 
-interface Saved { tight?: boolean; splits?: number[]; enWords?: Word[] | null; capLang?: "fr" | "en"; overlays?: Overlay[]; titles?: Title[]; v: 1; duration: number; words: Word[] | null; cuts: Range[]; ignored: string[]; peaks?: number[]; style?: CaptionStyle; norm?: boolean; q720?: boolean; voice?: boolean; zooms?: boolean }
+interface Saved { hook?: Range | null; tight?: boolean; splits?: number[]; enWords?: Word[] | null; capLang?: "fr" | "en"; overlays?: Overlay[]; titles?: Title[]; v: 1; duration: number; words: Word[] | null; cuts: Range[]; ignored: string[]; peaks?: number[]; style?: CaptionStyle; norm?: boolean; q720?: boolean; voice?: boolean; zooms?: boolean }
 
 export interface EditorOptions {
   file: Blob; key: string; name?: string; onClose?: () => void; toast?: (m: string, ms?: number) => void;
@@ -118,6 +119,26 @@ const autoTplId = () => { try { return localStorage.getItem("gs.tplAuto") || "";
 const myTics = (): string[] => { try { const v = JSON.parse(localStorage.getItem("gs.tics") || "null"); return Array.isArray(v) ? v : TICS; } catch { return TICS; } };
 const setTics = (l: string[]) => { try { localStorage.setItem("gs.tics", JSON.stringify(l)); } catch { /* */ } };
 const myRhythm = (): Rhythm => { try { const v = localStorage.getItem("gs.rhythm") as Rhythm; return v && v in RHYTHM ? v : "punchy"; } catch { return "punchy"; } }; // Dynamique par défaut : le plus rythmé
+/* Modèle de transcription préchargé dès la fin d'une prise : quand on ouvre le montage, il est déjà prêt (ou presque). */
+let warm: Worker | null = null, warmT = 0;
+const newAsrWorker = () => new Worker(new URL("../workers/transcribe.worker.ts", import.meta.url), { type: "module" });
+export function prewarmASR() {
+  clearTimeout(warmT); warmT = window.setTimeout(() => { warm?.terminate(); warm = null; }, 120000); // pas utilisé au bout de 2 min : mémoire rendue
+  if (warm) return;
+  // seulement si le modèle est déjà sur le téléphone : jamais de téléchargement de 250 Mo sans que vous l'ayez demandé
+  caches.open("transformers-cache").then((c) => c.keys()).then((k) => {
+    if (warm || !k.some((r) => /whisper-.*\.onnx/.test(r.url))) return;
+    warm = newAsrWorker(); warm.postMessage({ type: "warm", model: "auto", language: "fr", host: asrHost() });
+  }).catch(() => {});
+}
+const takeWarm = () => { const w = warm; warm = null; clearTimeout(warmT); return w; };
+/** Banque d'images : une image (ou un extrait) par mot-clé, placée automatiquement quand le mot est dit. */
+interface BankItem { id: string; key: string; kind: Overlay["kind"] }
+const myBank = (): BankItem[] => { try { const v = JSON.parse(localStorage.getItem("gs.bank") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } };
+const setBank = (l: BankItem[]) => { try { localStorage.setItem("gs.bank", JSON.stringify(l)); } catch { /* */ } };
+/** Dictionnaire personnel (noms propres, titres…). */
+const myDict = (): DictEntry[] => { try { const v = JSON.parse(localStorage.getItem("gs.dict") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } };
+const setDict = (l: DictEntry[]) => { try { localStorage.setItem("gs.dict", JSON.stringify(l)); } catch { /* */ } };
 const asrHost = () => { try { return localStorage.getItem("gs.asrHost") || ""; } catch { return ""; } };
 const verbPref = () => { try { return localStorage.getItem("gs.verbatim") !== "0"; } catch { return true; } };
 const autoPref = () => { try { return localStorage.getItem("gs.autoClean") !== "0"; } catch { return true; } };
@@ -146,7 +167,7 @@ export async function openEditor(o: EditorOptions) {
       <label>Sauter les coupes <input type="checkbox" data-a="pv" checked></label></div>
     <div class="row" data-r="status"></div>
     <div class="tabs" role="tablist"><button role="tab" data-tab="tx" aria-selected="true">Texte</button><button role="tab" data-tab="sg" aria-selected="false">Suggestions</button><button role="tab" data-tab="cc" aria-selected="false">Sous-titres</button><button role="tab" data-tab="dress" aria-selected="false">Habillage</button></div>
-    <input type="file" data-r="ovFile" accept="image/*,video/*" hidden>
+    <input type="file" data-r="ovFile" accept="image/*,video/*" hidden><input type="file" data-r="bankFile" accept="image/*,video/*" hidden>
     <div class="body" data-r="body"></div>`;
   document.body.appendChild(root);
   const q = <T extends Element = HTMLElement>(sel: string) => root.querySelector(sel) as unknown as T;
@@ -164,7 +185,8 @@ export async function openEditor(o: EditorOptions) {
   const session = new EditSession(duration, saved?.cuts ?? []);
   let words: Word[] | null = saved?.words ? cleanTranscript(saved.words) : null, sugs: Suggestion[] = words ? analyze(words, { tics: myTics(), longSilence: RHYTHM[myRhythm()].longSilence, keepPause: RHYTHM[myRhythm()].keepPause }) : [];
   /** Suggestions du texte + du son (bégaiements et hésitations que Whisper n'a pas écrits). */
-  const suggest = (w: Word[]) => { const R = RHYTHM[myRhythm()]; const t = analyze(w, { tics: myTics(), longSilence: R.longSilence, keepPause: R.keepPause }); return pcm ? [...t, ...analyzeAudio(w, pcm, 16000, t)].sort((a, b) => a.range.start - b.range.start) : t; };
+  const suggest = (w: Word[]) => { const R = RHYTHM[myRhythm()]; const t = analyze(w, { tics: myTics(), longSilence: R.longSilence, keepPause: R.keepPause }); const l = pcm ? [...t, ...analyzeAudio(w, pcm, 16000, t)].sort((a, b) => a.range.start - b.range.start) : t;
+    for (const s of l) if (aiYes.has(s.id)) s.confidence = Math.max(s.confidence, 0.72); return l; };
   const ignored = new Set(saved?.ignored ?? []);
   let pk: Float32Array | null = saved?.peaks ? Float32Array.from(saved.peaks, (x) => x / 255) : null;
   let pcm: Float32Array | null = null, audioErr = "";
@@ -172,6 +194,8 @@ export async function openEditor(o: EditorOptions) {
   (root.querySelector("[data-a=zooms]") as HTMLInputElement).checked = zooms;
   let overlays: Overlay[] = saved?.overlays ?? [], titles: Title[] = saved?.titles ?? [];
   let splits: number[] = saved?.splits ?? [], tight = saved?.tight ?? false; // tight : débuts de mots déjà recalés sur le son
+  let hook: Range | null = saved?.hook ?? null; // accroche : passage rejoué en ouverture de la vidéo exportée
+  const aiYes = new Set<string>(); // faux départs confirmés par l'IA du téléphone
   let enWords: Word[] | null = saved?.enWords ?? null, capLang: "fr" | "en" = saved?.capLang ?? "fr";
   function applyTpl(tp: Template) {
     style = { ...CAPTION_DEFAULT, ...tp.style }; capLang = tp.lang ?? "fr"; if (tp.rhythm) try { localStorage.setItem("gs.rhythm", tp.rhythm); } catch { /* */ } zooms = tp.zooms; voice = tp.voice; norm = tp.norm; q720 = tp.q720;
@@ -193,7 +217,7 @@ export async function openEditor(o: EditorOptions) {
   const ctl = new AbortController();
 
   const save = () => {
-    const s: Saved = { v: 1, tight, splits, enWords, capLang, duration, words, cuts: session.cuts, ignored: [...ignored], style, norm, q720, voice, zooms, overlays, titles, peaks: pk ? Array.from(pk, (x) => Math.round(x * 255)) : undefined };
+    const s: Saved = { v: 1, hook, tight, splits, enWords, capLang, duration, words, cuts: session.cuts, ignored: [...ignored], style, norm, q720, voice, zooms, overlays, titles, peaks: pk ? Array.from(pk, (x) => Math.round(x * 255)) : undefined };
     try { localStorage.setItem(storeKey, JSON.stringify(s)); } catch { /* quota localStorage : on garde en mémoire */ }
   };
   const covered = (r: Range) => session.cuts.some((c) => c.start <= r.start + 0.02 && c.end >= r.end - 0.02);
@@ -211,15 +235,23 @@ export async function openEditor(o: EditorOptions) {
     (q("[data-a=undo]") as HTMLButtonElement).disabled = !session.canUndo;
     (q("[data-a=redo]") as HTMLButtonElement).disabled = !session.canRedo;
     const ed = session.editedDuration, removed = duration - ed;
-    setStatus(`Montage ${fmt(ed)} / ${fmt(duration)} · ${session.cuts.length} coupe(s)${removed > 0.5 ? ` · −${Math.round(removed)} s` : ""}`);
+    setStatus(`Montage ${fmt(ed)} / ${fmt(duration)} · ${session.cuts.length} coupe(s)${removed > 0.5 ? ` · −${Math.round(removed)} s` : ""}${hook ? " · accroche en ouverture" : ""}`);
     const open = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range)).length;
     q("[data-tab=sg]").textContent = `Suggestions${sugs.length ? ` (${open})` : ""}`;
     root.querySelectorAll<HTMLElement>("[data-tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
-    { const cw = capLang === "en" && enWords ? enWords : words; lines = cw ? buildCaptions(cw, session.cuts) : []; }
+    { const cw = capLang === "en" && enWords ? enWords : words; lines = cw ? buildCaptions(cw, session.cuts, { strong: myDict().map((d) => d.to) }) : []; }
     if (tab === "tx") renderText(); else if (tab === "sg") renderSugs(); else if (tab === "dress") renderDress(); else renderCC();
     renderSel();
   }
 
+  function dictCard() {
+    const l = myDict();
+    return `<details class="card" data-dict style="margin-top:12px"><summary><b>Mes mots</b> (${l.length})</summary>
+      <p>Noms propres et titres que la transcription écorche : corrigés automatiquement à chaque vidéo, sous-titres compris. Corriger un mot avec ✎ propose de l’ajouter.</p>
+      <div class="chips">${l.map((d, i) => `<button class="ib" data-a="dictDel" data-v="${i}">${esc(d.from)} → ${esc(d.to)} ✕</button>`).join("")}<button class="ib go" data-a="dictAdd">＋ Ajouter</button></div></details>`;
+  }
+  /** Applique le dictionnaire au texte courant et rafraîchit. */
+  function redict(open = true) { if (words) { words = applyDictionary(words, myDict()); sugs = suggest(words); } sel = null; save(); body.innerHTML = ""; refresh(); if (open) body.querySelector<HTMLDetailsElement>("[data-dict]")?.setAttribute("open", ""); }
   function renderText() {
     if (!words) {
       const can = !audioErr;
@@ -236,7 +268,7 @@ export async function openEditor(o: EditorOptions) {
     }
     if (!body.querySelector(".tx")) {
       body.innerHTML = `<div class="tx">${words.map((w, i) => `<span data-i="${i}">${esc(w.text)}</span>`).join(" ")}</div>
-        <p style="color:var(--muted);font-size:12px;margin-top:18px">Touchez un mot pour vous y placer, touchez-en un autre pour étendre la sélection. <button class="ib" data-a="retx">Retranscrire</button></p>`;
+        <p style="color:var(--muted);font-size:12px;margin-top:18px">Touchez un mot pour vous y placer, touchez-en un autre pour étendre la sélection. <button class="ib" data-a="retx">Retranscrire</button></p>` + dictCard();
       curWord = -1;
     }
     const inSug = new Set<number>();
@@ -293,6 +325,12 @@ export async function openEditor(o: EditorOptions) {
   }
 
   const MODES: [OverlayMode, string][] = [["full", "Plein écran"], ["pip", "Incrustation"], ["me", "Moi en petit"]];
+  function bankCard() {
+    const l = myBank();
+    return `<details class="card" data-bank style="margin-top:10px" ${l.length ? "open" : ""}><summary><b>Banque d’images</b> (${l.length})</summary>
+      <p>Associez une image à un mot (« Iron Man », « Batman »…) : elle s’affiche toute seule quand vous le dites. L’Express les place aussi.</p>
+      <div class="chips">${l.map((b) => `<button class="ib" data-a="bankDel" data-v="${b.id}">${esc(b.key)} ✕</button>`).join("")}<button class="ib go" data-a="bankAdd">＋ Ajouter</button>${l.length ? `<button class="ib" data-a="bankAuto">✨ Placer dans cette vidéo</button>` : ""}</div></details>`;
+  }
   function renderDress() {
     const ovRows = overlays.map((ov) => `<div class="sg" data-o="${ov.id}"><div class="t"><b style="color:#64d2ff">${ov.kind === "image" ? "Image" : "Extrait vidéo"} · ${fmt(ov.start)} → ${fmt(ov.end)}</b>
         <div class="chips" style="margin-top:6px">${MODES.map(([m, l]) => `<button class="ib" data-a="omode" data-v="${m}" aria-pressed="${ov.mode === m}">${l}</button>`).join("")}</div></div>
@@ -302,7 +340,7 @@ export async function openEditor(o: EditorOptions) {
         <input data-a="tsub" value="${esc(ti.sub ?? "")}" placeholder="Sous-titre (facultatif)" style="width:100%;margin-top:4px;background:rgba(255,255,255,.06);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit;font-size:14px"></div>
         <button class="ib" data-a="tminus" aria-label="Plus court">−</button><button class="ib" data-a="tplus" aria-label="Plus long">+</button><button class="ib" data-a="there">Ici</button><button class="ib" data-a="tdel" aria-label="Supprimer">✕</button></div>`).join("");
     body.innerHTML = `<div class="row" style="padding:0 0 10px"><button class="ib go" data-a="ins">🖼 Image / extrait</button><button class="ib" data-a="title">🅣 Bandeau</button></div>
-      ${ovRows || tiRows ? ovRows + tiRows : `<div class="card"><b>Habillez votre vidéo</b><p>Insérez une case de comic, une couverture ou un extrait : il s’affiche par-dessus la vidéo au moment choisi (tête de lecture, ou les mots sélectionnés dans Texte), en plein écran, en incrustation, ou avec vous en petit dans un coin. Ajoutez un bandeau « Nom · Thème du jour ».</p></div>`}`;
+      ${ovRows || tiRows ? ovRows + tiRows : `<div class="card"><b>Habillez votre vidéo</b><p>Insérez une case de comic, une couverture ou un extrait : il s’affiche par-dessus la vidéo au moment choisi (tête de lecture, ou les mots sélectionnés dans Texte), en plein écran, en incrustation, ou avec vous en petit dans un coin. Ajoutez un bandeau « Nom · Thème du jour ».</p></div>`}` + bankCard();
   }
   /** Insère le fichier choisi : sur les mots sélectionnés, sinon à la tête de lecture (3,5 s pour une image). */
   async function insertMedia(f: File) {
@@ -348,16 +386,24 @@ export async function openEditor(o: EditorOptions) {
       <div class="chips">${(Object.keys(PRESETS) as CaptionPreset[]).map((k) => `<button class="ib" data-a="preset" data-v="${k}" aria-pressed="${style.preset === k}">${PRESETS[k]}</button>`).join("")}</div>
       <label class="opt">Haut <input type="range" data-a="pos" min="0.12" max="0.88" step="0.01" value="${style.pos}"> Bas</label>
       <label class="opt"><input type="checkbox" data-a="upper" ${style.upper ? "checked" : ""}> MAJUSCULES</label>
+      <label class="opt"><input type="checkbox" data-a="strong" ${style.strong !== false ? "checked" : ""}> Mots forts en couleur (noms propres, chiffres, « Mes mots »)</label>
       <label class="opt">Couleur du mot actif <input type="color" data-a="color" value="${style.color}"></label>
       <p>Un mot mal transcrit ? Onglet Texte : touchez-le, puis ✎.</p></div>`;
   }
   const setStyle = (p: Partial<CaptionStyle>) => { style = { ...style, ...p }; save(); };
+  q<HTMLInputElement>("[data-r=bankFile]").onchange = async (e) => {
+    const f = (e.target as HTMLInputElement).files?.[0]; (e.target as HTMLInputElement).value = ""; if (!f) return;
+    const key = prompt("Quel mot fait apparaître cette image ? (ex. « Iron Man »)", f.name.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " "))?.trim(); if (!key) return;
+    const id = "bank" + Date.now().toString(36);
+    try { await mediaPut(id, f); } catch { toast("Stockage indisponible : image non gardée.", 4000); return; }
+    setBank([...myBank(), { id, key, kind: f.type.startsWith("video/") ? "video" : "image" }]); body.innerHTML = ""; refresh();
+  };
   q<HTMLInputElement>("[data-r=ovFile]").onchange = (e) => { const f = (e.target as HTMLInputElement).files?.[0]; (e.target as HTMLInputElement).value = ""; if (f) insertMedia(f).catch((err) => toast("Insertion impossible : " + (err?.message ?? err), 5000)); };
   body.addEventListener("input", (e) => {
     const t = e.target as HTMLInputElement, a = t.dataset.a;
     if (a === "ttext" || a === "tsub") { const ti = titles.find((x) => x.id === t.closest<HTMLElement>("[data-ti]")?.dataset.ti); if (ti) { if (a === "ttext") ti.text = t.value; else ti.sub = t.value || undefined; save(); } return; }
     if (a === "tplAuto") { try { localStorage.setItem("gs.tplAuto", t.value); } catch { /* */ } body.innerHTML = ""; renderCC(); return; }
-    if (a === "pos") setStyle({ pos: +t.value }); else if (a === "upper") setStyle({ upper: t.checked }); else if (a === "color") setStyle({ color: t.value });
+    if (a === "pos") setStyle({ pos: +t.value }); else if (a === "upper") setStyle({ upper: t.checked }); else if (a === "strong") setStyle({ strong: t.checked }); else if (a === "color") setStyle({ color: t.value });
   });
 
   /** Sous-titres en surimpression sur le lecteur (même rendu que l'export). */
@@ -550,7 +596,8 @@ export async function openEditor(o: EditorOptions) {
     show(0, "Préparation de l’audio…");
     await audioP; if (!pcm) { show(0, audioErr || "Audio indisponible."); if (btn) btn.disabled = false; return; }
     worker?.terminate();
-    worker = new Worker(new URL("../workers/transcribe.worker.ts", import.meta.url), { type: "module" });
+    const m0 = body.querySelector<HTMLSelectElement>("[data-a=model]")?.value ?? "auto";
+    worker = (m0 === "auto" ? takeWarm() : null) ?? newAsrWorker(); // modèle déjà préchargé si la prise vient d'être filmée
     const t0 = performance.now();
     worker.onmessage = (e) => {
       const d = e.data;
@@ -558,9 +605,9 @@ export async function openEditor(o: EditorOptions) {
       else if (d.type === "loaded") show(0, `Transcription en cours (modèle ${d.model}, ${d.device === "webgpu" ? "GPU" : "processeur"})…`);
       else if (d.type === "progress") show(d.p, `Transcription ${Math.round(d.p * 100)} %${d.eta > 1 ? ` · reste ~${fmt(d.eta)}` : ""}`);
       else if (d.type === "done") {
-        worker?.terminate(); worker = null; words = cleanTranscript(d.words); if (pcm) { words = tightenWords(words, pcm, 16000); tight = true; } else tight = false; sugs = suggest(words!); // élisions recollées, génériques inventés retirés sel = null; save();
+        worker?.terminate(); worker = null; words = applyDictionary(cleanTranscript(d.words), myDict()); if (pcm) { words = tightenWords(words, pcm, 16000); tight = true; } else tight = false; sugs = suggest(words!); // élisions recollées, génériques inventés retirés sel = null; save();
         body.innerHTML = ""; refresh();
-        if (o.express) cleanAll().then(() => runExport(true)); // express : tout s’enchaîne
+        if (o.express) express(); // express : tout s’enchaîne
         else if (o.autoClean || autoPref()) cleanAll(); // nettoyage automatique (option, activée par défaut)
         else toast(`Transcrit en ${fmt((performance.now() - t0) / 1000)} · ${sugs.length} suggestion(s).`, 4000);
       } else if (d.type === "error") {
@@ -622,8 +669,41 @@ export async function openEditor(o: EditorOptions) {
   }
   /** Comment caler les bords d'une coupe : vers le silence autour (hésitation isolée), sans approcher le mot suivant (parole avalée, blanc), ou au plus près. */
   const snapMode = (s: Suggestion): SnapMode => s.id.startsWith("swallowed-") || /avant «/.test(s.excerpt) && s.type === "long_silence" ? "pre" : s.type === "long_silence" ? "both" : "out";
+  /** Gemini Nano (sur le téléphone) confirme ou non les débuts de phrase abandonnés ; 8 s au plus, sans effet s'il est absent. */
+  async function aiJudge() {
+    if (!words) return;
+    const cand = sugs.filter((s) => s.type === "false_start" && s.confidence < AUTO_MIN && !ignored.has(s.id) && !aiYes.has(s.id)).slice(0, 5);
+    if (!cand.length) return;
+    const work = (async () => {
+      const N = await import("../native.ts"); if (!N.isNative() || (await N.Writer.status()).status !== 3) return;
+      const W = await import("../core/writer.ts"), txt = (a: number, b: number) => words!.slice(Math.max(0, a), Math.max(0, b)).map((w) => w.text).join(" ");
+      for (const s of cand) {
+        const r = await N.Writer.generate({ prompt: W.judgePrompt(txt(s.firstWord - 8, s.firstWord), txt(s.firstWord, s.lastWord + 1), txt(s.lastWord + 1, s.lastWord + 9)), temperature: 0.1, maxTokens: 4 });
+        if (W.parseYes(r.text || "")) { aiYes.add(s.id); s.confidence = Math.max(s.confidence, 0.72); }
+      }
+    })().catch((e) => console.warn("IA du téléphone", e?.message ?? e));
+    await Promise.race([work, new Promise((r) => setTimeout(r, 8000))]);
+  }
+  /** Banque d'images : place chaque image au moment où son mot-clé est dit (incrustation de 2,8 s, pas deux fois en 6 s). */
+  async function autoPlace(): Promise<number> {
+    if (!words) return 0; let n = 0;
+    for (const it of myBank()) {
+      const blob = await mediaGet(it.id); if (!blob) continue; let last = -1e9;
+      for (const [a, b] of findPhrase(words, it.key)) {
+        const start = words[a].start, end = Math.min(duration, start + 2.8);
+        if (inCut((words[a].start + words[b].end) / 2) || start - last < 6 || end - start < 1 || overlays.some((o) => o.start < end && o.end > start)) continue;
+        const id = "ov" + Date.now().toString(36) + n; await mediaPut(id, blob).catch(() => {}); await loadOverlay(id, it.kind, blob);
+        overlays.push({ id, kind: it.kind, start, end, mode: "pip" }); last = start; n++;
+      }
+    }
+    if (n) { overlays.sort((a, b) => a.start - b.start); commit(); }
+    return n;
+  }
+  /** Express : nettoyage, images de la banque, export. */
+  const express = () => cleanAll().then(() => (myBank().length ? autoPlace() : 0)).catch(() => 0).then(() => runExport(true));
   async function cleanAll() {
     await audioP; if (words) sugs = suggest(words);
+    await aiJudge(); // phrases abandonnées : l'IA du téléphone tranche (si disponible), sinon elles restent de simples suggestions
     let r: Range[] = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range) && s.confidence >= AUTO_MIN).map((s) => ({ ...s.range, mode: snapMode(s) }));
     if (pcm) r = snapToQuiet(withBounds(r, words), pcm, 16000); // bords de coupe sur le silence le plus proche (au centième de seconde)
     r.push(...takeCuts()); // reprises et hors-script retirés si la prise suit le script
@@ -671,6 +751,7 @@ export async function openEditor(o: EditorOptions) {
       st.textContent = d.by === "ia" ? "Rédigé par Gemini Nano, sur votre téléphone." : "Version simple (l’IA de Google n’est pas disponible sur cet appareil).";
       res.innerHTML = d.titles.map((t, i) => row(`Titre ${i + 1}`, t)).join("") + row("Description", d.description) + row("Hashtags", d.hashtags.join(" "))
         + row("Accroche (à dire en premier)", d.hook)
+        + (d.hook && findPhrase(words!, d.hook).length ? `<div class="row" style="padding:0 0 6px"><button class="ib ${hook ? "go" : ""}" data-x="hook" data-v="${esc(d.hook)}">${hook ? "✓ Accroche en ouverture (toucher pour retirer)" : "🎣 Rejouer cette phrase en ouverture"}</button></div>` : "")
         + `<div class="row" style="padding:6px 0 0"><button class="ib go" data-copy="${esc(all)}">Copier titre + description + hashtags</button>${N.isNative() ? `<button class="ib" data-x="share" data-v="${esc(all)}">Partager</button>` : ""}</div>`;
       m.querySelector<HTMLElement>("[data-x=again]")!.hidden = d.by !== "ia";
     };
@@ -686,6 +767,11 @@ export async function openEditor(o: EditorOptions) {
       const t = e.target as HTMLElement, c = t.closest<HTMLElement>("[data-copy]"), x = t.closest<HTMLElement>("[data-x]")?.dataset.x;
       if (c) { try { await navigator.clipboard.writeText(c.dataset.copy!); toast("Copié.", 1200); } catch { toast("Copie impossible.", 2000); } }
       else if (x === "ok") m.remove();
+      else if (x === "hook") {
+        const b = t.closest<HTMLElement>("[data-x]")!, f = findPhrase(words!, b.dataset.v!)[0];
+        if (hook) hook = null; else if (f) hook = { start: Math.max(0, words![f[0]].start - 0.05), end: Math.min(duration, words![f[1]].end + 0.2) };
+        b.classList.toggle("go", !!hook); b.textContent = hook ? "✓ Accroche en ouverture (toucher pour retirer)" : "🎣 Rejouer cette phrase en ouverture"; commit();
+      }
       else if (x === "again") { temp = Math.min(1, temp + 0.2); res.innerHTML = ""; run(); }
       else if (x === "share") N.shareCaption(t.closest<HTMLElement>("[data-x]")!.dataset.v!).catch(() => {});
     });
@@ -752,7 +838,7 @@ export async function openEditor(o: EditorOptions) {
         if (!webCodecsAvailable()) throw new Error("WebCodecs indisponible");
         let gain = 1; if (norm) { await audioP; if (pcm) gain = loudnessGain(pcm, 16000, session.kept); }
         const captions = words && style.preset !== "none" ? { lines, style } : null;
-        const r = await exportEdited(o.file, session.cuts, { onProgress, signal: ac.signal, gain, captions, maxHeight: q720 ? 1280 : 0, voice, zoom: zooms ? zoomAt : null,
+        const r = await exportEdited(o.file, session.cuts, { onProgress, signal: ac.signal, gain, captions, maxHeight: q720 ? 1280 : 0, voice, zoom: zooms ? zoomAt : null, intro: hook && !inCut((hook.start + hook.end) / 2) ? hook : null,
           dress: overlays.length || titles.length ? { overlays, titles, images: new Map([...ovSrc].filter(([, e]) => e.img).map(([id, e]) => [id, e.img!])), videos: new Map([...ovSrc].filter(([, e]) => !e.img).map(([id, e]) => [id, e.blob])) } : null }); blob = r.blob; ext = r.ext; how = `${r.video.toUpperCase()}${r.audio ? " + " + r.audio.toUpperCase() : ""}`;
       } catch (e: any) {
         if (e?.name === "AbortError") throw e;
@@ -811,13 +897,23 @@ export async function openEditor(o: EditorOptions) {
       case "preset": style = { ...style, preset: t.closest<HTMLElement>("[data-v]")!.dataset.v as CaptionPreset }; save();
         root.querySelectorAll<HTMLElement>("[data-a=preset]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === style.preset))); break;
       case "fixSel": if (sel && words && sel.a === sel.b) { const v = prompt("Corriger le mot :", words[sel.a].text)?.trim();
-        if (v) { words[sel.a] = { ...words[sel.a], text: v }; const sp = body.querySelector<HTMLElement>(`.tx span[data-i="${sel.a}"]`); if (sp) sp.textContent = v; sugs = suggest(words); sel = null; commit(); } } break;
+        if (v) { const old = words[sel.a].text.replace(/[.,!?…;:]+$/, ""), nv = v.replace(/[.,!?…;:]+$/, "");
+          if (old.length >= 3 && nv && old.toLowerCase() !== nv.toLowerCase() && confirm(`Toujours corriger « ${old} » en « ${nv} » dans vos prochaines vidéos ?`)) setDict([...myDict().filter((d) => d.from.toLowerCase() !== old.toLowerCase()), { from: old, to: nv }]);
+          words[sel.a] = { ...words[sel.a], text: v }; const sp = body.querySelector<HTMLElement>(`.tx span[data-i="${sel.a}"]`); if (sp) sp.textContent = v; sugs = suggest(words); sel = null; commit(); } } break;
       case "trim": trimEdges(); break;
       case "voiceAB": voiceAB(); break;
       case "pub": publishText(); break;
       case "zooms": zooms = (t as HTMLInputElement).checked; save(); break;
       case "lang": capLang = t.closest<HTMLElement>("[data-v]")!.dataset.v as "fr" | "en"; save(); body.innerHTML = ""; refresh(); if (capLang === "en" && !enWords) translateEN(); break;
       case "retr": enWords = null; save(); body.innerHTML = ""; refresh(); translateEN(); break;
+      case "bankAdd": q<HTMLInputElement>("[data-r=bankFile]").click(); break;
+      case "bankDel": { const id = t.closest<HTMLElement>("[data-v]")!.dataset.v!; setBank(myBank().filter((b) => b.id !== id)); body.innerHTML = ""; refresh(); break; }
+      case "bankAuto": if (!words) toast("Transcrivez d’abord la vidéo (onglet Texte).", 3000);
+        else autoPlace().then((n) => { body.innerHTML = ""; refresh(); toast(n ? `${n} image(s) placée(s).` : "Aucun de vos mots-clés n’est dit dans cette vidéo.", 3000); }); break;
+      case "dictAdd": { const from = prompt("Mot ou expression mal écrit par la transcription (ex. « korvak ») :")?.trim(); if (!from) break;
+        const to = prompt(`Bonne écriture de « ${from} » :`)?.trim(); if (!to) break;
+        setDict([...myDict().filter((d) => d.from.toLowerCase() !== from.toLowerCase()), { from, to }]); redict(); break; }
+      case "dictDel": { const l = myDict(); l.splice(+t.closest<HTMLElement>("[data-v]")!.dataset.v!, 1); setDict(l); redict(); break; }
       case "rhythm": { const v = t.closest<HTMLElement>("[data-v]")!.dataset.v!; try { localStorage.setItem("gs.rhythm", v); } catch { /* */ } if (words) sugs = suggest(words); body.innerHTML = ""; refresh();
         toast(`Rythme ${RHYTHM[v as Rhythm].label} : touchez « Tout supprimer » pour l’appliquer.`, 2500); break; }
       case "ticAdd": { const v = prompt("Votre tic (ex. « tu vois », « en mode ») :")?.trim().toLowerCase(); if (!v) break; setTics([...new Set([...myTics(), v])]); retic(); break; }
@@ -877,6 +973,6 @@ export async function openEditor(o: EditorOptions) {
   addEventListener("keydown", onKey);
 
   refresh(); raf = requestAnimationFrame(tick);
-  if (o.autoClean || o.express) { if (words) (o.express ? cleanAll().then(() => runExport(true)) : cleanAll()); else setTimeout(() => body.querySelector<HTMLElement>("[data-a=transcribe]")?.click(), 50); }
+  if (o.autoClean || o.express) { if (words) (o.express ? express() : cleanAll()); else setTimeout(() => body.querySelector<HTMLElement>("[data-a=transcribe]")?.click(), 50); }
   return { close, session, get words() { return words; } };
 }

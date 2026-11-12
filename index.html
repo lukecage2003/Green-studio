@@ -335,6 +335,7 @@ html.native .webonly{display:none!important}
   <div class="group">
     <div class="item"><span>Check studio<span class="sub">Lumière, bruit et cadrage en 3 secondes</span></span><button class="btn sm" id="checkRun">Vérifier</button></div>
     <div class="item"><span>Confidentialité<span class="sub">Rien ne quitte votre téléphone</span></span><a class="btn sm" href="privacy.html" target="_blank" rel="noopener">Lire</a></div>
+    <div class="item"><span>Mes réglages<span class="sub">Profils, modèles, tics, « Mes mots » : à garder en lieu sûr</span></span><span style="display:flex;gap:8px"><button class="btn sm" id="cfgSave">Sauvegarder</button><button class="btn sm" id="cfgLoad">Restaurer</button></span><input type="file" id="cfgFile" accept="application/json,.json" hidden></div>
     <div class="item"><span>Journal de diagnostic<span class="sub">Erreurs et événements, sur le téléphone</span></span><span style="display:flex;gap:8px"><button class="btn sm" id="logShare">Partager</button><button class="btn sm" id="logClear">Effacer</button></span></div>
   </div>
   <p class="foot" id="appVer"></p>
@@ -1290,6 +1291,7 @@ function openPreview(blob, id, info) {
   const url = URL.createObjectURL(blob), ext = blob.type === "video/mp4" ? "mp4" : "webm";
   pvId = id; pvBlob = blob; pvSaved = false; $("pvVid").src = url; const a = $("dl"); a.href = url; a.download = `green-studio-${Date.now()}.${ext}`;
   $("pvInfo").textContent = info; $("pv").hidden = false;
+  import("/src/ui/quick-edit.ts").then((m) => m.prewarmASR?.()).catch(() => {}); // modèle de transcription chargé pendant que l'on regarde la prise
 }
 async function showPending() {
   const m = pendingRecs.shift(); if (!m || !$("pv").hidden) return;
@@ -1688,6 +1690,24 @@ $("autoLight").onchange = (e) => {
   if (!S.autoLight && expo) { expo.v = 0; expo.tr.applyConstraints({ advanced: [{ exposureCompensation: 0 }] }).catch(() => {}); }
 };
 $("appVer").textContent = `Green Studio ${APP_VERSION} · moteur ${ENGINE === "native" ? "natif" : "web"}`;
+/* ---------- Sauvegarde / restauration des réglages (pas les vidéos ni les décors) ---------- */
+const cfgKey = (k) => (k.startsWith("gs.") || k === "gsHint") && !/^gs\.(log|qe\.|th\.|coach|asrHost|bgOrder|bgHidden|bank)/.test(k);
+$("cfgSave").onclick = async () => {
+  const data = {}; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (cfgKey(k)) data[k] = localStorage.getItem(k); }
+  const txt = JSON.stringify({ app: "green-studio", version: APP_VERSION, date: new Date().toISOString(), data }, null, 1), name = `green-studio-reglages-${new Date().toISOString().slice(0, 10)}.json`;
+  try {
+    if (NATIVE) await (await nativeP).shareText(txt, name, "Réglages Green Studio");
+    else { const u = URL.createObjectURL(new Blob([txt], { type: "application/json" })), a = document.createElement("a"); a.href = u; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(u), 30000); }
+  } catch (e) { toast("Sauvegarde impossible : " + (e?.message ?? e), 5000); }
+};
+$("cfgLoad").onclick = () => $("cfgFile").click();
+$("cfgFile").onchange = async (e) => {
+  const f = e.target.files?.[0]; e.target.value = ""; if (!f) return;
+  try { const j = JSON.parse(await f.text()); if (j?.app !== "green-studio" || typeof j.data !== "object") throw new Error("ce n’est pas une sauvegarde Green Studio");
+    const keys = Object.keys(j.data).filter(cfgKey); if (!confirm(`Restaurer ${keys.length} réglage(s) du ${String(j.date).slice(0, 10)} ? Les réglages actuels seront remplacés.`)) return;
+    for (const k of keys) localStorage.setItem(k, String(j.data[k])); toast("Réglages restaurés.", 1500); setTimeout(() => location.reload(), 1200);
+  } catch (err) { toast("Restauration impossible : " + (err?.message ?? err), 5000); }
+};
 $("logShare").onclick = async () => {
   const txt = logReport(), name = `green-studio-journal-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.txt`;
   try {

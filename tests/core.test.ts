@@ -394,3 +394,38 @@ test("sous-titres : virgules de fin retirées, « … » ignoré, points d'inter
   const l = buildCaptions([{ text: "Alors,", start: 0, end: 0.3 }, { text: "…", start: 0.3, end: 0.5 }, { text: "ça", start: 0.5, end: 0.7 }, { text: "marche ?", start: 0.7, end: 1 }], []);
   assert.deepEqual(l.flatMap((x) => x.words.map((w) => w.text)), ["Alors", "ça", "marche ?"]);
 });
+
+test("dictionnaire personnel : corrections (un ou plusieurs mots), indices pour Whisper, recherche d'expression", async () => {
+  const { applyDictionary, vocabHints, findPhrase } = await import("../src/core/dictionary.ts");
+  const W2 = (text: string, start: number) => ({ text, start, end: start + 0.3 });
+  const w = [W2("contre", 0), W2("Korvak,", 0.4), W2("la", 1), W2("ta", 1.3), W2("oblivienne", 1.6), W2("et", 2.2), W2("korvak.", 2.5)];
+  const d = [{ from: "korvak", to: "Korvac" }, { from: "la ta oblivienne", to: "Oblivion" }];
+  const r = applyDictionary(w, d);
+  assert.deepEqual(r.map((x) => x.text), ["contre", "Korvac,", "Oblivion", "et", "Korvac."]);
+  assert.equal(r[2].start, 1); assert.ok(Math.abs(r[2].end - 1.9) < 1e-9, "les mots fusionnés gardent la durée totale");
+  assert.deepEqual(applyDictionary(r, d).map((x) => x.text), r.map((x) => x.text), "réappliquer ne change rien");
+  assert.deepEqual(vocabHints([...d, { from: "x", to: "Korvac" }]), ["Korvac", "Oblivion"]);
+  assert.deepEqual(findPhrase(r, "korvac"), [[1, 1], [4, 4]]); assert.deepEqual(findPhrase(w, "La ta"), [[2, 3]]);
+});
+
+test("IA du téléphone : question sur un faux départ, réponse OUI / NON lue", async () => {
+  const { judgePrompt, parseYes } = await import("../src/core/writer.ts");
+  assert.ok(judgePrompt("ça marche.", "Et si je le dirais,", "bon, j'ai pas trop de lumière").includes("[Et si je le dirais,]"));
+  assert.equal(parseYes(" OUI."), true); assert.equal(parseYes("**Oui**, c'est un faux départ"), true); assert.equal(parseYes("NON"), false); assert.equal(parseYes("Je ne sais pas, oui peut-être"), false);
+});
+
+test("boucles de Whisper : détectées en fin de suite (motif de 1 à 4 éléments), pas sur une répétition normale", async () => {
+  const { tailLoop, verbatimFailed } = await import("../src/core/verbatim.ts");
+  assert.equal(tailLoop([7, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2], 5), true); assert.equal(tailLoop([1, 1, 1, 1], 5), false); assert.equal(tailLoop([3, 9, 9, 9, 9, 9], 5), true);
+  assert.equal(tailLoop("non non non merci".split(" "), 5), false);
+  const loop = ["mais", ...Array(8).fill("voilà,")].map((text, i) => ({ text, start: i * 0.3, end: i * 0.3 + 0.2 }));
+  assert.equal(verbatimFailed(loop, ["euh"], 2.7), true, "« voilà » ×8 : passage à refaire");
+});
+
+test("sous-titres : mots forts (nom propre hors début de phrase, chiffre, « Mes mots »)", async () => {
+  const { buildCaptions } = await import("../src/core/captions.ts");
+  const W2 = (text: string, i: number) => ({ text, start: i * 0.3, end: i * 0.3 + 0.25 });
+  const l = buildCaptions(["Alors", "voici", "Iron", "Man", "contre", "korvac", "en", "2025."].map(W2), [], { strong: ["Korvac"] });
+  const em = l.flatMap((x) => x.words).filter((w) => w.em).map((w) => w.text);
+  assert.deepEqual(em, ["Iron", "Man", "korvac", "2025."]);
+});

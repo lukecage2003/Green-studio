@@ -37,11 +37,11 @@ export async function saveToGallery(blob: Blob, name: string, onProgress?: (p: n
 }
 
 /** Partage un texte (journal de diagnostic) sous forme de fichier .txt. */
-export async function shareText(text: string, name: string) {
+export async function shareText(text: string, name: string, title = "Journal Green Studio") {
   const { Encoding } = await import("@capacitor/filesystem");
   await Filesystem.writeFile({ path: "logs/" + name, directory: Directory.Cache, data: text, encoding: Encoding.UTF8, recursive: true });
   const { uri } = await Filesystem.getUri({ path: "logs/" + name, directory: Directory.Cache });
-  await Share.share({ title: "Journal Green Studio", files: [uri], dialogTitle: "Envoyer le journal" });
+  await Share.share({ title, files: [uri], dialogTitle: title });
 }
 
 /** Partage d'un texte (titre, description, hashtags) vers une autre app. */

@@ -1,9 +1,9 @@
 /** TranscriptionEngine (worker) : Whisper via transformers.js, sur l'appareil (WebGPU, sinon WASM). Rien n'est envoyé sur internet
  *  hormis le téléchargement du modèle au premier usage (ensuite en cache). Horodatage par mot : modèle « _timestamped ». */
-import { pipeline, env } from "@huggingface/transformers";
+import { pipeline, env, StoppingCriteria } from "@huggingface/transformers";
 import { splitAtSilences } from "../core/audio.ts";
 import { spreadSegment } from "../core/captions.ts";
-import { verbatimPrompt, verbatimFailed } from "../core/verbatim.ts";
+import { verbatimPrompt, verbatimFailed, guardLoops } from "../core/verbatim.ts";
 env.allowLocalModels = false; env.useBrowserCache = true;
 
 export const MODELS = {
@@ -24,10 +24,13 @@ function lastVoice(x: Float32Array): number {
   return 0;
 }
 
-self.onmessage = async (e: MessageEvent) => {
-  const { type, audio, language = "fr", model = "auto", translate = false, verbatim = true, host = "" } = e.data as { type: "run"; audio: Float32Array; language?: string; model?: ModelKey; translate?: boolean; verbatim?: boolean; host?: string };
+// Messages traités un par un : un « warm » (préchargement du modèle) suivi d'un « run » ne charge pas le modèle deux fois.
+let chain: Promise<void> = Promise.resolve();
+self.onmessage = (e: MessageEvent) => { chain = chain.then(() => handle(e)); };
+async function handle(e: MessageEvent) {
+  const { type, audio, language = "fr", model = "auto", translate = false, verbatim = true, host = "" } = e.data as { type: "run" | "warm"; audio: Float32Array; language?: string; model?: ModelKey; translate?: boolean; verbatim?: boolean; host?: string };
   if (host) env.remoteHost = host; // autre source pour les modèles (miroir local, tests)
-  if (type !== "run") return;
+  if (type !== "run" && type !== "warm") return;
   try {
     const adapter = (navigator as any).gpu ? await (navigator as any).gpu.requestAdapter().catch(() => null) : null, webgpu = !!adapter;
     const f16 = !!adapter?.features?.has?.("shader-f16");
@@ -50,9 +53,11 @@ self.onmessage = async (e: MessageEvent) => {
         if (!asr) throw err;
       }
       loaded = used; resolved[id] = used;
+      try { guardLoops(asr, { StoppingCriteria }); } catch { /* garde-fou facultatif */ }
       try { vp = verbatimPrompt(asr, language); } catch { vp = null; } // mot pour mot (amorce) si le modèle le permet
       post({ type: "loaded", device: webgpu ? "webgpu" : "wasm", model: loaded.replace(/^.*whisper-|_timestamped$/g, "") });
     }
+    if (type === "warm") { post({ type: "warmed" }); return; }
     const total = audio.length / 16000, t0 = performance.now();
     // Lots de ≤ 28 s coupés aux silences : progression réelle, aucun mot coupé en deux.
     const words: { text: string; start: number; end: number }[] = []; const b = splitAtSilences(audio, 16000);
