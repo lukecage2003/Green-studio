@@ -358,3 +358,39 @@ test("recalage borné : une coupe ne mange jamais le mot gardé voisin (« bon, 
   const [r] = snapToQuiet(withBounds([{ start: 0.5, end: 0.7, mode: "out" as const }], words), pcm, rate);
   assert.ok(r.end <= 0.72 + 1e-9, JSON.stringify(r));
 });
+
+test("mots étirés par Whisper : début recalé sur le son (le mot reste dans le texte), miettes entre coupes supprimées", async () => {
+  const { tightenWords, analyzeAudio, analyze, dropCrumbs } = await import("../src/core/speech-analysis.ts");
+  const rate = 16000, pcm = new Float32Array(rate * 5);
+  for (let i = 0; i < pcm.length; i++) pcm[i] = (Math.random() - 0.5) * 0.002;
+  const speech = (a: number, b: number) => { let ph = 0; for (let i = Math.round(a * rate); i < Math.round(b * rate); i++) { const t = i / rate, f = 140 + 60 * Math.sin(t * 23) + 300 * ((Math.floor(t * 7) % 3) / 2);
+    ph += (2 * Math.PI * f) / rate; pcm[i] = (0.18 + 0.12 * Math.abs(Math.sin(t * Math.PI * 7))) * (Math.sin(ph) + 0.4 * Math.sin(3 * ph + t * 40)); } };
+  speech(0.3, 0.7); speech(1.0, 1.4); speech(1.6, 1.85); speech(2.4, 2.9);
+  const raw = [{ text: "voilà", start: 0.3, end: 0.7 }, { text: "ici", start: 1.0, end: 1.85 }, { text: "demain", start: 2.4, end: 2.9 }];
+  const w = tightenWords(raw, pcm, rate);
+  assert.equal(w[1].pre, 1.0); assert.ok(w[1].start > 1.38 && w[1].start < 1.6, String(w[1].start)); assert.equal(w[0].pre, undefined);
+  assert.deepEqual(tightenWords(w, pcm, rate), w, "déjà recalé : inchangé");
+  const t = analyze(w, { longSilence: 0.3, keepPause: 0.1 }), a = analyzeAudio(w, pcm, rate, t), s = a.find((x) => x.id === "swallowed-1")!;
+  assert.ok(s && s.range.start === 1.0 && s.range.end === w[1].start, "la parole avalée va de l'ancien au vrai début");
+  const mid = (w[1].start + w[1].end) / 2; assert.ok(!(mid >= s.range.start && mid < s.range.end), "le mot « ici » n'est plus dans la coupe");
+  assert.ok(!a.some((x) => x.type === "untranscribed" && x.range.start < w[1].start && x.range.end > 1.0), "pas de doublon avec « son non transcrit »");
+  // miettes
+  assert.deepEqual(dropCrumbs([{ start: 1, end: 2 }, { start: 2.05, end: 3 }, { start: 3.5, end: 4 }], null, 10), [{ start: 1, end: 3 }, { start: 3.5, end: 4 }]);
+  assert.deepEqual(dropCrumbs([{ start: 1, end: 2 }, { start: 2.1, end: 3 }], [{ text: "a", start: 2.0, end: 2.1 }], 10), [{ start: 1, end: 2 }, { start: 2.1, end: 3 }], "un mot court gardé n'est pas une miette");
+  assert.deepEqual(dropCrumbs([{ start: 0.08, end: 2 }], null, 10), [{ start: 0, end: 2 }]);
+});
+
+test("mot pour mot : décrochage de l'amorce détecté (écho, arrêt avant la fin de la parole)", async () => {
+  const { verbatimFailed } = await import("../src/core/verbatim.ts");
+  const pw = ["euh", "bon", "du", "coup", "voilà"];
+  assert.equal(verbatimFailed([{ text: "Euh,", start: 0, end: 0.3 }, { text: "bon.", start: 0.3, end: 0.6 }], pw, 5), true, "écho de l'amorce");
+  assert.equal(verbatimFailed([{ text: "Nice.", start: 0, end: 0.5 }, { text: "How", start: 0.6, end: 0.8 }], pw, 6), true, "s'arrête 5 s avant la fin de la parole");
+  assert.equal(verbatimFailed([{ text: "Bon,", start: 0, end: 0.3 }, { text: "on", start: 0.4, end: 0.5 }, { text: "y", start: 0.5, end: 0.6 }, { text: "va.", start: 0.6, end: 4.6 }], pw, 5), false);
+  assert.equal(verbatimFailed([], pw, 3), true); assert.equal(verbatimFailed([], pw, 0.2), false, "silence : rien à transcrire");
+});
+
+test("sous-titres : virgules de fin retirées, « … » ignoré, points d'interrogation gardés", async () => {
+  const { buildCaptions } = await import("../src/core/captions.ts");
+  const l = buildCaptions([{ text: "Alors,", start: 0, end: 0.3 }, { text: "…", start: 0.3, end: 0.5 }, { text: "ça", start: 0.5, end: 0.7 }, { text: "marche ?", start: 0.7, end: 1 }], []);
+  assert.deepEqual(l.flatMap((x) => x.words.map((w) => w.text)), ["Alors", "ça", "marche ?"]);
+});

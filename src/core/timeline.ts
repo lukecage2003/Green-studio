@@ -1,6 +1,7 @@
 /** TimelineEngine : montage non destructif (liste de coupes sur l'original). Fonctions pures, sans DOM. */
 export interface Range { start: number; end: number }
-export interface Word { text: string; start: number; end: number; conf?: number }
+/** pre : début donné par Whisper quand il avait étiré le mot sur une hésitation ; start est alors le vrai début, recalé sur le son. */
+export interface Word { text: string; start: number; end: number; conf?: number; pre?: number }
 
 export const EPS = 1e-6;
 

@@ -7,17 +7,23 @@ if (!MODELS || !VIDEO) { console.log('ASR_MODELS et ASR_VIDEO requis : test igno
 (async () => {
   const b = await chromium.launch(); const ctx = await b.newContext({ viewport: { width: 390, height: 844 } }); const p = await ctx.newPage(); const errs = [], served = [];
   p.on('pageerror', (e) => errs.push(e.message)); p.on('dialog', (d) => d.accept());
+  p.on('crash', () => console.log('PAGE PLANTÉE')); p.on('console', (m) => { if (process.env.ASR_DEBUG) console.log('LOG', m.text().slice(0, 300)); });
   await ctx.addInitScript((v) => { localStorage.setItem('gs.autoClean', '0'); localStorage.setItem('gs.verbatim', v ? '1' : '0'); }, VERBATIM);
-  await ctx.route(/huggingface\.co\/onnx-community\/whisper-(base|small)_timestamped\/resolve\/[^/]+\/(.+)$/, (r) => {
-    const m = r.request().url().match(/whisper-(base|small)_timestamped\/resolve\/[^/]+\/(.+)$/), f = path.join(MODELS, 'whisper-' + m[1], decodeURIComponent(m[2]));
-    if (!fs.existsSync(f)) return r.fulfill({ status: 404, body: 'absent' }); served.push(path.basename(f)); r.fulfill({ body: fs.readFileSync(f) });
-  });
+  // miroir local des modèles (les gros fichiers passent mal par l'interception du navigateur)
+  const srv = require('http').createServer((q, r) => {
+    const m = decodeURIComponent(q.url).match(/whisper-(base|small)_timestamped\/resolve\/[^/]+\/(.+)$/), f = m && path.join(MODELS, 'whisper-' + m[1], m[2]);
+    r.setHeader('Access-Control-Allow-Origin', '*');
+    if (!f || !fs.existsSync(f)) { r.statusCode = 404; return r.end('absent'); }
+    served.push(path.basename(f)); r.setHeader('Content-Length', fs.statSync(f).size); fs.createReadStream(f).pipe(r);
+  }).listen(5199);
+  await ctx.addInitScript(() => localStorage.setItem('gs.asrHost', 'http://localhost:5199/'));
   await ctx.route(/cdn\.jsdelivr\.net\/npm\/@huggingface\/transformers@[^/]+\/dist\/(.+)$/, (r) => {
     const f = path.join(__dirname, '../../node_modules/@huggingface/transformers/dist', r.request().url().split('/dist/')[1]);
     r.fulfill({ body: fs.readFileSync(f), contentType: f.endsWith('.wasm') ? 'application/wasm' : 'text/javascript' });
   });
   await p.goto('http://localhost:5173/'); await p.setInputFiles('#editFile', VIDEO); await p.waitForSelector('.qe');
   await p.waitForFunction(() => /Montage \d/.test(document.querySelector('.qe [data-r=status]').textContent), null, { timeout: 60000 });
+  if (process.env.ASR_MODEL) await p.selectOption('.qe [data-a=model]', process.env.ASR_MODEL);
   const t0 = Date.now(); await p.click('.qe [data-a=transcribe]');
   await p.waitForFunction(() => document.querySelectorAll('.qe .tx span[data-i]').length > 0 || /Échec|Impossible/.test(document.querySelector('.qe .body').textContent), null, { timeout: 900000 });
   const text = (await p.$$eval('.qe .tx span[data-i]', (l) => l.map((x) => x.textContent))).join(' ');
@@ -28,5 +34,5 @@ if (!MODELS || !VIDEO) { console.log('ASR_MODELS et ASR_VIDEO requis : test igno
   await p.click('.qe [data-tab=tx]'); await p.waitForTimeout(400);
   const kept = (await p.$$eval('.qe .tx span[data-i]', (l) => l.filter((x) => !x.classList.contains('cut')).map((x) => x.textContent))).join(' ');
   console.log('texte gardé :', kept);
-  console.log('erreurs :', errs); assert.equal(errs.length, 0); console.log('OK'); await b.close();
+  console.log('erreurs :', errs); assert.equal(errs.length, 0); console.log('OK'); await b.close(); srv.close();
 })().catch((e) => { console.error('ÉCHEC', e); process.exit(1); });

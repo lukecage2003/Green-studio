@@ -25,7 +25,8 @@ function lastVoice(x: Float32Array): number {
 }
 
 self.onmessage = async (e: MessageEvent) => {
-  const { type, audio, language = "fr", model = "auto", translate = false, verbatim = true } = e.data as { type: "run"; audio: Float32Array; language?: string; model?: ModelKey; translate?: boolean; verbatim?: boolean };
+  const { type, audio, language = "fr", model = "auto", translate = false, verbatim = true, host = "" } = e.data as { type: "run"; audio: Float32Array; language?: string; model?: ModelKey; translate?: boolean; verbatim?: boolean; host?: string };
+  if (host) env.remoteHost = host; // autre source pour les modèles (miroir local, tests)
   if (type !== "run") return;
   try {
     const adapter = (navigator as any).gpu ? await (navigator as any).gpu.requestAdapter().catch(() => null) : null, webgpu = !!adapter;

@@ -23,8 +23,9 @@ export function buildCaptions(words: Word[], cuts: Range[], o: { maxWords?: numb
   const lines: CapLine[] = []; let cur: Word[] = [], chars = 0;
   const flush = () => { if (cur.length) lines.push({ start: cur[0].start, end: cur[cur.length - 1].end, words: cur }); cur = []; chars = 0; };
   let prev: Word | null = null;
-  for (const w of words) {
-    if (isCut(w) || !w.text.trim()) continue;
+  for (const w0 of words) {
+    if (isCut(w0) || !/[\p{L}\p{N}]/u.test(w0.text)) continue; // « … » et ponctuation seule : rien à afficher
+    const w = /,+$/.test(w0.text) ? { ...w0, text: w0.text.replace(/,+$/, "") } : w0; // virgules de fin retirées (lecture plus nette à l'écran)
     const len = w.text.length + (cur.length ? 1 : 0);
     if (cur.length && (cur.length >= maxWords || chars + len > maxChars || (prev && w.start - prev.end > maxGap) || /[.!?…]$/.test(prev!.text))) flush();
     cur.push(w); chars += len; prev = w;

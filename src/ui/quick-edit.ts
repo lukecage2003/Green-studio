@@ -1,6 +1,6 @@
 /** Quick Edit : montage par le texte. Lecteur qui saute les coupes, forme d'onde + timeline, transcription cliquable,
  *  suggestions (répétitions, hésitations, silences…), annuler/rétablir, export. Tout reste sur l'appareil. */
-import { EditSession, wordsToRange, EPS, type Range, type Word } from "../core/timeline.ts";
+import { EditSession, wordsToRange, sourceToEdited, EPS, type Range, type Word } from "../core/timeline.ts";
 import { bestTakes, type TakeResult } from "../core/takes.ts";
 import { clipsOf, snapSplit, hitAt, trimEdge, wavePeaks } from "../core/derush.ts";
 import { compose, drawTitle, activeAt, type Overlay, type OverlayMode, type Title } from "../core/overlay.ts";
@@ -10,7 +10,7 @@ const mediaDb = () => new Promise<IDBDatabase>((res, rej) => { const r = indexed
 async function mediaPut(id: string, b: Blob) { const db = await mediaDb(); await new Promise((res, rej) => { const t = db.transaction("files", "readwrite"); t.objectStore("files").put(b, id); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
 async function mediaGet(id: string): Promise<Blob | null> { const db = await mediaDb(); return new Promise((res) => { const q = db.transaction("files").objectStore("files").get(id); q.onsuccess = () => res(q.result ?? null); q.onerror = () => res(null); }); }
 import { takeReport } from "../core/coach.ts";
-import { TICS, RHYTHM, type Rhythm, type SnapMode, snapToQuiet, withBounds, cleanTranscript, analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
+import { TICS, RHYTHM, type Rhythm, type SnapMode, snapToQuiet, withBounds, tightenWords, dropCrumbs, cleanTranscript, analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
 import { peaks as computePeaks, loudnessGain, speechBounds } from "../core/audio.ts";
 import { buildCaptions, drawCaption, lineAt, CAPTION_DEFAULT, PRESETS, type CapLine, type CaptionStyle, type CaptionPreset } from "../core/captions.ts";
 import { probe, extractAudio, exportEdited, webCodecsAvailable, extractClip } from "../core/media.ts";
@@ -94,7 +94,7 @@ const CSS = `
 .lib ul{margin:0 12px}.lib li:first-child{border-radius:20px 20px 0 0}.lib li:last-child{border-radius:0 0 20px 20px}.lib li:only-child{border-radius:20px}
 `;
 
-interface Saved { splits?: number[]; enWords?: Word[] | null; capLang?: "fr" | "en"; overlays?: Overlay[]; titles?: Title[]; v: 1; duration: number; words: Word[] | null; cuts: Range[]; ignored: string[]; peaks?: number[]; style?: CaptionStyle; norm?: boolean; q720?: boolean; voice?: boolean; zooms?: boolean }
+interface Saved { tight?: boolean; splits?: number[]; enWords?: Word[] | null; capLang?: "fr" | "en"; overlays?: Overlay[]; titles?: Title[]; v: 1; duration: number; words: Word[] | null; cuts: Range[]; ignored: string[]; peaks?: number[]; style?: CaptionStyle; norm?: boolean; q720?: boolean; voice?: boolean; zooms?: boolean }
 
 export interface EditorOptions {
   file: Blob; key: string; name?: string; onClose?: () => void; toast?: (m: string, ms?: number) => void;
@@ -118,6 +118,7 @@ const autoTplId = () => { try { return localStorage.getItem("gs.tplAuto") || "";
 const myTics = (): string[] => { try { const v = JSON.parse(localStorage.getItem("gs.tics") || "null"); return Array.isArray(v) ? v : TICS; } catch { return TICS; } };
 const setTics = (l: string[]) => { try { localStorage.setItem("gs.tics", JSON.stringify(l)); } catch { /* */ } };
 const myRhythm = (): Rhythm => { try { const v = localStorage.getItem("gs.rhythm") as Rhythm; return v && v in RHYTHM ? v : "punchy"; } catch { return "punchy"; } }; // Dynamique par défaut : le plus rythmé
+const asrHost = () => { try { return localStorage.getItem("gs.asrHost") || ""; } catch { return ""; } };
 const verbPref = () => { try { return localStorage.getItem("gs.verbatim") !== "0"; } catch { return true; } };
 const autoPref = () => { try { return localStorage.getItem("gs.autoClean") !== "0"; } catch { return true; } };
 
@@ -167,10 +168,10 @@ export async function openEditor(o: EditorOptions) {
   const ignored = new Set(saved?.ignored ?? []);
   let pk: Float32Array | null = saved?.peaks ? Float32Array.from(saved.peaks, (x) => x / 255) : null;
   let pcm: Float32Array | null = null, audioErr = "";
-  let style: CaptionStyle = { ...CAPTION_DEFAULT, ...(saved?.style ?? {}) }, norm = saved?.norm ?? true, q720 = saved?.q720 ?? false, voice = saved?.voice ?? true, zooms = saved?.zooms ?? false, lines: CapLine[] = [];
+  let style: CaptionStyle = { ...CAPTION_DEFAULT, ...(saved?.style ?? {}) }, norm = saved?.norm ?? true, q720 = saved?.q720 ?? false, voice = saved?.voice ?? true, zooms = saved?.zooms ?? true, /* zooms actifs par défaut : montage dynamique */ lines: CapLine[] = [];
   (root.querySelector("[data-a=zooms]") as HTMLInputElement).checked = zooms;
   let overlays: Overlay[] = saved?.overlays ?? [], titles: Title[] = saved?.titles ?? [];
-  let splits: number[] = saved?.splits ?? [];
+  let splits: number[] = saved?.splits ?? [], tight = saved?.tight ?? false; // tight : débuts de mots déjà recalés sur le son
   let enWords: Word[] | null = saved?.enWords ?? null, capLang: "fr" | "en" = saved?.capLang ?? "fr";
   function applyTpl(tp: Template) {
     style = { ...CAPTION_DEFAULT, ...tp.style }; capLang = tp.lang ?? "fr"; if (tp.rhythm) try { localStorage.setItem("gs.rhythm", tp.rhythm); } catch { /* */ } zooms = tp.zooms; voice = tp.voice; norm = tp.norm; q720 = tp.q720;
@@ -192,7 +193,7 @@ export async function openEditor(o: EditorOptions) {
   const ctl = new AbortController();
 
   const save = () => {
-    const s: Saved = { v: 1, splits, enWords, capLang, duration, words, cuts: session.cuts, ignored: [...ignored], style, norm, q720, voice, zooms, overlays, titles, peaks: pk ? Array.from(pk, (x) => Math.round(x * 255)) : undefined };
+    const s: Saved = { v: 1, tight, splits, enWords, capLang, duration, words, cuts: session.cuts, ignored: [...ignored], style, norm, q720, voice, zooms, overlays, titles, peaks: pk ? Array.from(pk, (x) => Math.round(x * 255)) : undefined };
     try { localStorage.setItem(storeKey, JSON.stringify(s)); } catch { /* quota localStorage : on garde en mémoire */ }
   };
   const covered = (r: Range) => session.cuts.some((c) => c.start <= r.start + 0.02 && c.end >= r.end - 0.02);
@@ -200,7 +201,7 @@ export async function openEditor(o: EditorOptions) {
 
   /* ---------- Audio : forme d'onde + PCM pour la transcription (lecture par morceaux, pas de chargement complet) ---------- */
   const audioP = extractAudio(o.file, 16000, (p) => { if (!pk) setStatus(`Analyse audio… ${Math.round(p * 100)} %`); }, ctl.signal)
-    .then((a) => { pcm = a.pcm; if (words) sugs = suggest(words); if (!pk) { pk = computePeaks(a.pcm, 1200); let m = 0; for (const v of pk) m = Math.max(m, v); if (m > 0) for (let i = 0; i < pk.length; i++) pk[i] /= m; save(); } refresh(); })
+    .then((a) => { pcm = a.pcm; if (words && !tight) { words = tightenWords(words, a.pcm, 16000); tight = true; save(); } if (words) sugs = suggest(words); if (!pk) { pk = computePeaks(a.pcm, 1200); let m = 0; for (const v of pk) m = Math.max(m, v); if (m > 0) for (let i = 0; i < pk.length; i++) pk[i] /= m; save(); } refresh(); })
     .catch((e) => { if (e?.name !== "AbortError") { audioErr = e?.message ?? String(e); refresh(); } });
 
   /* ---------- Rendu ---------- */
@@ -557,7 +558,7 @@ export async function openEditor(o: EditorOptions) {
       else if (d.type === "loaded") show(0, `Transcription en cours (modèle ${d.model}, ${d.device === "webgpu" ? "GPU" : "processeur"})…`);
       else if (d.type === "progress") show(d.p, `Transcription ${Math.round(d.p * 100)} %${d.eta > 1 ? ` · reste ~${fmt(d.eta)}` : ""}`);
       else if (d.type === "done") {
-        worker?.terminate(); worker = null; words = cleanTranscript(d.words); sugs = suggest(words!); // élisions recollées, génériques inventés retirés sel = null; save();
+        worker?.terminate(); worker = null; words = cleanTranscript(d.words); if (pcm) { words = tightenWords(words, pcm, 16000); tight = true; } else tight = false; sugs = suggest(words!); // élisions recollées, génériques inventés retirés sel = null; save();
         body.innerHTML = ""; refresh();
         if (o.express) cleanAll().then(() => runExport(true)); // express : tout s’enchaîne
         else if (o.autoClean || autoPref()) cleanAll(); // nettoyage automatique (option, activée par défaut)
@@ -570,7 +571,7 @@ export async function openEditor(o: EditorOptions) {
           : "Échec de la transcription : " + d.message);
       }
     };
-    const copy = pcm.slice(); worker.postMessage({ type: "run", audio: copy, language: "fr", model, verbatim: verbPref() }, [copy.buffer]);
+    const copy = pcm.slice(); worker.postMessage({ type: "run", audio: copy, language: "fr", model, verbatim: verbPref(), host: asrHost() }, [copy.buffer]);
   }
 
   /** Sous-titres anglais : Whisper traduit directement l'audio (sur l'appareil), phrase par phrase. */
@@ -628,17 +629,26 @@ export async function openEditor(o: EditorOptions) {
     r.push(...takeCuts()); // reprises et hors-script retirés si la prise suit le script
     r.push(...((await edgeCuts()) ?? []));
     if (!r.length) { refresh(); return toast("Aucun défaut à supprimer. 👌", 3000); }
+    r = dropCrumbs([...session.cuts, ...r], words, duration); // miettes entre deux coupes (< 0,15 s, sans mot) : coupées aussi
     const before = session.editedDuration; session.addCuts(r); commit();
     toast(`✨ ${r.length} défaut(s) supprimé(s) (−${(before - session.editedDuration).toFixed(1)} s)${takeInfo ? " · " + takeSummary() : ""}. ↶ pour annuler.`, 6000);
   }
 
-  /** Zooms dynamiques (« punch-in ») : le zoom alterne 1× / 1,12× à chaque coupe et à chaque fin de phrase. */
+  /** Zooms dynamiques (« punch-in ») : le zoom alterne 1× / 1,12× à chaque raccord et à chaque fin de phrase, avec au moins
+   *  1,2 s (temps monté) entre deux changements : masque les sauts d'image sans effet stroboscopique quand les coupes sont serrées. */
+  let zCache: { cuts: Range[]; words: Word[] | null; at: number[] } | null = null;
+  function zoomTimes(): number[] {
+    if (zCache && zCache.cuts === session.cuts && zCache.words === words) return zCache.at;
+    const cand = session.cuts.map((c) => c.end);
+    if (words) for (let i = 0; i + 1 < words.length; i++) if (/[.!?…]$/.test(words[i].text) && !inCut((words[i].end + words[i + 1].start) / 2)) cand.push(words[i + 1].start);
+    cand.sort((a, b) => a - b); const at: number[] = []; let last = 0;
+    for (const t of cand) { if (t >= duration - 0.3) continue; const e = sourceToEdited(t, duration, session.cuts); if (e - last >= 1.2) { at.push(t); last = e; } }
+    zCache = { cuts: session.cuts, words, at }; return at;
+  }
   function zoomAt(t: number): number {
-    let n = 0;
-    for (const c of session.cuts) if (c.end <= t) n++;
-    if (words) for (let i = 0; i + 1 < words.length; i++) { const w = words[i]; if (w.end > t) break;
-      if (/[.!?…]$/.test(w.text) && !inCut((w.end + words[i + 1].start) / 2) && words[i + 1].start <= t) n++; }
-    return n % 2 ? 1.12 : 1;
+    const at = zoomTimes(); let lo = 0, hi = at.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (at[m] <= t) lo = m + 1; else hi = m; }
+    return lo % 2 ? 1.12 : 1;
   }
 
   /** Écoute comparée : 6 s à partir de la tête de lecture, son d'origine puis voix studio. */

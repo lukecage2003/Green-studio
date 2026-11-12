@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.12)
+# Green Studio 3.1 — état réel (beta.13)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,14 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.13
+- **Vérifié avec Whisper small** (le modèle utilisé sur le téléphone) dans l'app, sur deux vraies prises, mot pour mot + « Tout supprimer » : 25 s → 19 s (10 coupes) et 14 s → 6 s (4 coupes), tous les vrais mots gardés dans le texte.
+- **Mots étirés recalés** (`tightenWords`) : quand Whisper étire un mot sur l'hésitation qui le précède, son début est recalé sur sa vraie position dans le son (ancien début gardé dans `pre`). Avant, le mot gardait son son mais disparaissait du texte et des sous-titres (« Ça », « C'est », « Si »).
+- **Miettes supprimées** : un morceau gardé de moins de 0,15 s entre deux coupes, sans mot, est coupé aussi (plus de « clic »).
+- **Zooms dynamiques actifs par défaut**, avec au moins 1,2 s entre deux changements (pas d'effet stroboscopique quand les coupes sont serrées).
+- **Sous-titres** : virgules de fin retirées, « … » ignoré.
+- `tests/browser/asr-real.e2e.cjs` sert les modèles par un miroir local (`gs.asrHost`), choix du modèle par `ASR_MODEL`.
 
 ## 3.1.0-beta.12
 - **Transcription mot pour mot** (par défaut, option « Mot pour mot » dans l'onglet Texte) : Whisper est amorcé avec un court texte plein d'hésitations, ce qui l'incite à ÉCRIRE les « euh », répétitions et faux départs au lieu de les effacer. transformers.js ne gérant pas l'amorce pour l'horodatage par mot, elle est retirée des séquences et de l'attention croisée avant l'alignement (`src/core/verbatim.ts`) ; si un passage décroche (écho de l'amorce, texte qui s'arrête avant la fin de la parole), il est retranscrit sans amorce.
