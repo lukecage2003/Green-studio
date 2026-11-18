@@ -35,17 +35,31 @@ const CSS = `
 .qe .go{background:var(--accent);color:#000}
 .qe .round{width:44px;height:44px;padding:0;border-radius:50%;font-size:17px}
 .qe .icon{width:40px;padding:0;background:none;font-size:20px}
-.qe .vw{position:relative;background:#000;height:36vh;margin:0 16px;border-radius:16px;overflow:hidden}
+.qe .vw{position:relative;background:#000;height:34vh;margin:0 12px;border-radius:16px;overflow:hidden;flex:0 0 auto;transition:height .25s}
+.qe.big .vw{height:19vh}
+.qe .tl{position:relative;padding:8px 12px 0}
+.qe .tlz{position:absolute;right:18px;top:12px;display:flex;gap:4px}
+.qe .tlz button{width:26px;height:22px;border-radius:7px;background:rgba(40,40,44,.85);color:#fff;font-size:14px;line-height:1}
+.qe .transport .row{padding:0;margin-left:6px;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1 1 auto;min-width:0}
+.qe .tabs .grow{flex:0 0 34px;font-size:16px;transition:transform .25s}.qe.big .tabs .grow{transform:rotate(180deg)}
+.qe .tbar{flex:0 0 auto;display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;padding:6px 8px calc(6px + env(safe-area-inset-bottom,0px));border-top:1px solid rgba(255,255,255,.08);background:rgba(18,18,20,.96)}
+.qe .tbar::-webkit-scrollbar{display:none}
+.qe .tb{flex:0 0 auto;width:66px;height:54px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;border-radius:12px;color:#f2f2f7;font-size:11px;font-weight:600;position:relative}
+.qe .tb .ic{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.qe .tb:active{background:rgba(255,255,255,.1)}.qe .tb:disabled{opacity:.35}.qe .tb[hidden]{display:none}
+.qe .tb[data-a=del]:not(:disabled){color:#ff6961}.qe .tb[data-a=rest]{color:#64d2ff}.qe .tb[data-a=clean]{color:var(--accent)}
+.qe .tb input{position:absolute;opacity:0;pointer-events:none}.qe label.tb:has(input:checked){color:var(--accent)}
+.qe label.tb:has(input:checked)::after{content:"";position:absolute;bottom:3px;width:4px;height:4px;border-radius:2px;background:var(--accent)}
 .qe video{position:absolute;inset:0;width:100%;height:100%;background:#000;object-fit:contain}.qe video.spare{visibility:hidden}
 .qe .vwz{position:absolute;inset:0;transform-origin:0 0;touch-action:none}
 .qe .vzr{position:absolute;top:8px;right:8px;z-index:3;padding:4px 10px;font-size:13px;background:rgba(0,0,0,.6)}
 .qe .vw canvas.cc{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;border-radius:0;background:none}
-.qe .tl{padding:12px 16px 0}
-.qe canvas.wave{width:100%;height:96px;display:block;border-radius:14px;background:#141416;touch-action:none}
+
+.qe canvas.wave{width:100%;height:84px;display:block;border-radius:14px;background:#141416;touch-action:none}
 .qe .dr{display:flex;align-items:center;gap:6px;padding:8px 0 0;overflow-x:auto;scrollbar-width:none}.qe .dr::-webkit-scrollbar{display:none}
 .qe .dr .ib{flex:0 0 auto}.qe .dr .sp{flex:1}.qe .dr [data-a=del]:not(:disabled){color:#ff6961}
-.qe .transport{display:flex;align-items:center;gap:10px;padding:10px 16px 0}
-.qe .transport [data-r=time]{font-variant-numeric:tabular-nums;font-size:15px;font-weight:600}
+.qe .transport{display:flex;align-items:center;gap:8px;padding:8px 12px 0;min-width:0}
+.qe .transport [data-r=time]{white-space:nowrap;font-variant-numeric:tabular-nums;font-size:15px;font-weight:600}
 .qe .sp{flex:1}
 .qe .tools{display:flex;gap:8px;overflow-x:auto;padding:10px 16px 2px;scrollbar-width:none}.qe .tools::-webkit-scrollbar{display:none}
 .qe .tools label{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 6px 0 14px;border-radius:17px;background:var(--fill);font-size:14px;font-weight:600;white-space:nowrap}
@@ -53,10 +67,10 @@ const CSS = `
 .qe input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:22px;height:22px;border-radius:50%;background:#fff;transition:left .2s}
 .qe input[type=checkbox]:checked{background:var(--accent)}.qe input[type=checkbox]:checked::after{left:18px}
 .qe .row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:8px 16px 0;font-size:13px;color:var(--muted)}
-.qe .tabs{display:flex;gap:2px;margin:12px 16px 0;padding:2px;border-radius:10px;background:var(--fill)}
+.qe .tabs{display:flex;gap:2px;margin:10px 12px 0;padding:2px;border-radius:10px;background:var(--fill)}
 .qe .tabs button{flex:1;height:32px;border-radius:8px;font-size:14px;font-weight:600;color:var(--fg)}
 .qe .tabs button[aria-selected=true]{background:#636366;box-shadow:0 3px 8px rgba(0,0,0,.12)}
-.qe .body{flex:1;overflow:auto;padding:14px 16px 100px;-webkit-overflow-scrolling:touch}
+.qe .body{flex:1;min-height:0;overflow:auto;padding:12px 14px 24px;-webkit-overflow-scrolling:touch}
 .qe .tx{font-size:18px;line-height:1.7;letter-spacing:-.01em}
 .qe .tx span{border-radius:5px;padding:1px 2px;cursor:pointer;transition:background .15s}
 .qe .tx span.cut{text-decoration:line-through;color:rgba(235,235,245,.3);background:rgba(255,69,58,.14)}
@@ -152,27 +166,21 @@ export async function openEditor(o: EditorOptions) {
   root.innerHTML = `
     <header><button data-a="close">Fermer</button><h2>Montage</h2><button data-a="export">Exporter</button></header>
     <div class="vw"><div class="vwz"><video playsinline preload="auto"></video><video class="spare" playsinline preload="auto" muted></video><canvas class="cc" aria-hidden="true"></canvas></div><button class="ib vzr" data-a="vzReset" hidden>🔍 1×</button></div>
-    <div class="tl"><canvas class="wave" aria-label="Timeline : glissez pour vous déplacer, pincez pour zoomer, touchez un clip pour le sélectionner"></canvas>
-      <div class="dr"><button class="ib icon" data-a="zout" aria-label="Dézoomer">−</button><button class="ib icon" data-a="zin" aria-label="Zoomer">＋</button>
-        <button class="ib" data-a="split" title="Scinder le clip à la tête de lecture (calé entre deux mots)">✂ Scinder</button>
-        <button class="ib" data-a="del" disabled>🗑 Supprimer</button><button class="ib" data-a="rest" hidden>↺ Restaurer</button>
-        <span class="sp"></span><button class="ib" data-a="fit" title="Voir toute la vidéo">⤢ Tout</button></div></div>
-    <div class="transport"><button class="ib round go" data-a="play" aria-label="Lecture">▶</button><span data-r="time">0:00</span><span class="sp"></span>
+    <div class="transport"><button class="ib round go" data-a="play" aria-label="Lecture">▶</button><span data-r="time">0:00</span><span class="row" data-r="status"></span><span class="sp"></span>
       <button class="ib icon" data-a="undo" aria-label="Annuler">↶</button><button class="ib icon" data-a="redo" aria-label="Rétablir">↷</button></div>
-    <div class="tools">
-      <label>Zooms <input type="checkbox" data-a="zooms"></label>
-      <button class="ib" data-a="ins" title="Insérer une image ou un extrait par-dessus la vidéo">🖼 Insérer</button>
-      <button class="ib" data-a="title" title="Ajouter un bandeau titre">🅣 Bandeau</button>
-      <button class="ib" data-a="freezeAdd" title="Figer l'image à la tête de lecture et zoomer sur un détail">⏸ Pause + zoom</button>
-      <button class="ib" data-a="pub" title="Titres, description, hashtags et accroche">✍️ Publication</button>
-      <button class="ib" data-a="voiceAB" title="Écouter votre voix avant / après le traitement studio">🎙 Voix studio</button>
-      <button class="ib" data-a="trim" title="Couper le silence avant la première et après la dernière parole">✂ Bords muets</button>
-      <label>Sauter les coupes <input type="checkbox" data-a="pv" checked></label></div>
-    <div class="row" data-r="status"></div>
-    <div class="tabs" role="tablist"><button role="tab" data-tab="tx" aria-selected="true">Texte</button><button role="tab" data-tab="sg" aria-selected="false">Suggestions</button><button role="tab" data-tab="cc" aria-selected="false">Sous-titres</button><button role="tab" data-tab="dress" aria-selected="false">Habillage</button></div>
+    <div class="tl"><canvas class="wave" aria-label="Timeline : glissez pour vous déplacer, pincez pour zoomer, touchez un clip pour le sélectionner"></canvas>
+      <div class="tlz"><button data-a="zout" aria-label="Dézoomer">−</button><button data-a="zin" aria-label="Zoomer">＋</button><button data-a="fit" aria-label="Voir toute la vidéo">⤢</button></div></div>
+    <div class="tabs" role="tablist"><button role="tab" data-tab="tx" aria-selected="true">Texte</button><button role="tab" data-tab="sg" aria-selected="false">Suggestions</button><button role="tab" data-tab="cc" aria-selected="false">Sous-titres</button><button role="tab" data-tab="dress" aria-selected="false">Habillage</button><button class="grow" data-a="grow" aria-label="Agrandir la zone de travail">⌃</button></div>
     <input type="file" data-r="ovFile" accept="image/*,video/*" hidden><input type="file" data-r="bankFile" accept="image/*,video/*" hidden>
-    <div class="body" data-r="body"></div>`;
+    <div class="body" data-r="body"></div>
+    <nav class="tbar" aria-label="Outils">
+      <button class="tb" data-a="split" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.6 7.6 20 18M8.6 16.4 20 6"/></svg><span>Scinder</span></button><button class="tb" data-a="del" disabled><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Supprimer</span></button><button class="tb" data-a="rest" hidden><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.6M4 3.5V8.6h5.1"/></svg><span>Restaurer</span></button><button class="tb" data-a="clean" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.6L18.5 9l-4.7 1.8L12 15.5l-1.8-4.7L5.5 9l4.7-1.4zM18.5 15l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/></svg><span>Nettoyer</span></button><button class="tb" data-a="freezeAdd" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21M8.5 8v5M12.5 8v5"/></svg><span>Pause + zoom</span></button>
+      <button class="tb" data-a="ins" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg><span>Insérer</span></button><button class="tb" data-a="title" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M6 4h12M12 4v7"/></svg><span>Bandeau</span></button><button class="tb" data-a="voiceAB" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span>Voix studio</span></button><button class="tb" data-a="pub" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></svg><span>Publication</span></button><button class="tb" data-a="trim" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4v16M20 4v16M8 12h8M10 9l-2 3 2 3M14 9l2 3-2 3"/></svg><span>Bords muets</span></button>
+      <label class="tb"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6"/><circle cx="12" cy="12" r="2.5"/></svg><span>Zooms</span><input type="checkbox" data-a="zooms"></label>
+      <label class="tb"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l7 7-7 7M13 5l7 7-7 7"/></svg><span>Sauter coupes</span><input type="checkbox" data-a="pv" checked></label>
+    </nav>`;
   document.body.appendChild(root);
+  try { if (localStorage.getItem("gs.qeBig") === "1") root.classList.add("big"); } catch { /* */ }
   const q = <T extends Element = HTMLElement>(sel: string) => root.querySelector(sel) as unknown as T;
   // Deux lecteurs : l'un joue, l'autre attend déjà calé sur la suite après la prochaine coupe → raccord instantané, sans pause.
   let [video, spare] = Array.from(root.querySelectorAll("video")) as HTMLVideoElement[];
@@ -271,7 +279,7 @@ export async function openEditor(o: EditorOptions) {
       return;
     }
     if (!body.querySelector(".tx")) {
-      body.innerHTML = `<div class="tx">${words.map((w, i) => `<span data-i="${i}">${esc(w.text)}</span>`).join(" ")}</div>
+      body.scrollTop = 0; body.innerHTML = `<div class="tx">${words.map((w, i) => `<span data-i="${i}">${esc(w.text)}</span>`).join(" ")}</div>
         <p style="color:var(--muted);font-size:12px;margin-top:18px">Touchez un mot pour vous y placer, touchez-en un autre pour étendre la sélection. <button class="ib" data-a="retx">Retranscrire</button></p>` + dictCard();
       curWord = -1;
     }
@@ -343,11 +351,11 @@ export async function openEditor(o: EditorOptions) {
       + freezes.map((f) => `<div class="sg" data-fz="${f.id}"><div class="t"><b style="color:#ff9f0a">⏸ Arrêt sur image · ${fmt(f.at)} · ${f.dur.toFixed(1).replace(".", ",")} s</b>
         <div class="chips" style="margin-top:6px"><button class="ib" data-a="fzoom" aria-pressed="${!!f.zoom}">🔍 ${f.zoom ? `Zoom ${f.zoom.z.toFixed(1).replace(".", ",")}×` : "Zoomer"}</button><button class="ib" data-a="fplay">▶ Voir</button></div></div>
         <button class="ib" data-a="fminus" aria-label="Plus court">−</button><button class="ib" data-a="fplus" aria-label="Plus long">+</button><button class="ib" data-a="fhere">Ici</button><button class="ib" data-a="fdel" aria-label="Supprimer">✕</button></div>`).join("");
-    const tiRows = titles.map((ti) => `<div class="sg" data-ti="${ti.id}"><div class="t"><b style="color:#bf5af2">Bandeau · ${fmt(ti.start)} → ${fmt(ti.end)}</b>
+    const tiRows = titles.map((ti) => `<div class="sg" data-ti="${ti.id}"><div class="t"><b style="color:#bf5af2">${ti.kind === "chapter" ? "📖 Chapitre" : ti.kind === "bubble" ? "💬 Bulle" : "Bandeau"} · ${fmt(ti.start)} → ${fmt(ti.end)}</b>
         <input data-a="ttext" value="${esc(ti.text)}" placeholder="Titre" style="width:100%;margin-top:6px;background:rgba(255,255,255,.08);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit">
         <input data-a="tsub" value="${esc(ti.sub ?? "")}" placeholder="Sous-titre (facultatif)" style="width:100%;margin-top:4px;background:rgba(255,255,255,.06);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit;font-size:14px"></div>
         <button class="ib" data-a="tminus" aria-label="Plus court">−</button><button class="ib" data-a="tplus" aria-label="Plus long">+</button><button class="ib" data-a="there">Ici</button><button class="ib" data-a="tdel" aria-label="Supprimer">✕</button></div>`).join("");
-    body.innerHTML = `<div class="row" style="padding:0 0 10px"><button class="ib go" data-a="ins">🖼 Image / extrait</button><button class="ib" data-a="title">🅣 Bandeau</button></div>
+    body.innerHTML = `<div class="row" style="padding:0 0 10px"><button class="ib go" data-a="ins">🖼 Image / extrait</button><button class="ib" data-a="title">🅣 Bandeau</button><button class="ib" data-a="chapter">📖 Chapitre</button><button class="ib" data-a="bubble">💬 Bulle</button></div>
       ${ovRows || tiRows ? ovRows + tiRows : `<div class="card"><b>Habillez votre vidéo</b><p>Insérez une case de comic, une couverture ou un extrait : il s’affiche par-dessus la vidéo au moment choisi (tête de lecture, ou les mots sélectionnés dans Texte), en plein écran, en incrustation, ou avec vous en petit dans un coin. Ajoutez un bandeau « Nom · Thème du jour ».</p></div>`}` + bankCard();
   }
   /**
@@ -416,10 +424,15 @@ export async function openEditor(o: EditorOptions) {
     overlays.push({ id, kind, start, end, mode: "full" }); overlays.sort((a, b) => a.start - b.start);
     tab = "dress"; body.innerHTML = ""; commit(); toast("Inséré. Choisissez son affichage dans Habillage.", 2500);
   }
-  function addTitle() {
-    const t = prompt("Bandeau — titre (ex. « Comics News »)", "")?.trim(); if (!t) return;
-    const sub = prompt("Sous-titre (facultatif, ex. « Le nouveau Spider-Man »)", "")?.trim() || undefined;
-    const start = video.currentTime; titles.push({ id: "ti" + Date.now().toString(36), text: t, sub, start, end: Math.min(duration, start + 4) });
+  function addTitle(kind: Title["kind"] = "lower") {
+    const n = titles.filter((x) => x.kind === "chapter").length + 1;
+    const ask = kind === "chapter" ? ["Chapitre — titre (ex. « Les origines de Venom »)", "Surtitre (ex. « Partie " + n + " »)", "Partie " + n]
+      : kind === "bubble" ? ["Bulle — la réplique (ex. « Je suis Batman ! »)", "Qui parle ? (facultatif, ex. « Batman, Year One »)", ""]
+      : ["Bandeau — titre (ex. « Comics News »)", "Sous-titre (facultatif, ex. « Le nouveau Spider-Man »)", ""];
+    const t = prompt(ask[0], "")?.trim(); if (!t) return;
+    const sub = prompt(ask[1], ask[2])?.trim() || undefined;
+    const start = video.currentTime, len = kind === "chapter" ? 2.6 : kind === "bubble" ? Math.min(7, Math.max(2.5, t.split(/\s+/).length * 0.45)) : 4;
+    titles.push({ id: "ti" + Date.now().toString(36), text: t, sub, start, end: Math.min(duration, start + len), kind }); titles.sort((a, b) => a.start - b.start);
     titles.sort((a, b) => a.start - b.start); tab = "dress"; body.innerHTML = ""; commit();
   }
   /** Image de l'extrait pour l'aperçu (extrait vidéo calé sur la lecture). */
@@ -668,7 +681,7 @@ export async function openEditor(o: EditorOptions) {
         else { const nx = session.cuts.find((x) => x.start > t); if (nx && nx.start - t < 2 && nx.end < duration - 0.05) prepare(nx.end); }
       }
     }
-    q("[data-r=time]").textContent = `${fmt(t)} / ${fmt(duration)}`;
+    q("[data-r=time]").textContent = fmt(t);
     q("[data-a=play]").textContent = video.paused && !fz ? "▶" : "⏸";
     if (words && tab === "tx") { // mot en cours
       let lo = 0, hi = words.length - 1, k = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (words[m].start <= t) { k = m; lo = m + 1; } else hi = m - 1; }
@@ -940,9 +953,11 @@ export async function openEditor(o: EditorOptions) {
       } catch (e: any) {
         if (e?.name === "AbortError") throw e;
         console.warn("Export rapide impossible, repli temps réel", e); ep.textContent = "Export en temps réel (plus lent)…";
+        (window as any).gsLog?.("warn", "export rapide impossible → temps réel : " + (e?.message ?? e));
         blob = await exportRealtime(video, duration, session.cuts, onProgress, ac.signal); ext = blob.type.includes("mp4") ? "mp4" : "webm";
         how = "temps réel" + (words && style.preset !== "none" ? " · sans sous-titres (navigateur non compatible)" : "");
       }
+      (window as any).gsLog?.("info", `export ${how} : ${fmt(session.editedDuration)} de vidéo en ${((performance.now() - t0) / 1000).toFixed(1)} s, ${(blob.size / 1e6).toFixed(1)} Mo`);
       const name = `green-studio-montage-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.${ext}`, href = URL.createObjectURL(blob);
       const file = new File([blob], name, { type: blob.type });
       const canShare = !!navigator.canShare?.({ files: [file] });
@@ -990,6 +1005,7 @@ export async function openEditor(o: EditorOptions) {
       case "export": doExport(); break;
       case "play": if (fz) { fz = null; break; } if (video.paused) { stopAt = null; follow = true; if (video.currentTime >= duration - 0.05) video.currentTime = 0; video.play().catch(() => {}); } else video.pause(); break;
       case "zin": case "zout": case "fit": case "split": case "del": case "rest": derush(a); break;
+      case "grow": root.classList.toggle("big"); try { localStorage.setItem("gs.qeBig", root.classList.contains("big") ? "1" : "0"); } catch { /* */ } break;
       case "transcribe": transcribe(); break;
       case "preset": style = { ...style, preset: t.closest<HTMLElement>("[data-v]")!.dataset.v as CaptionPreset }; save();
         root.querySelectorAll<HTMLElement>("[data-a=preset]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === style.preset))); break;
@@ -1027,6 +1043,8 @@ export async function openEditor(o: EditorOptions) {
         saveTpls(r); body.innerHTML = ""; renderCC(); break; }
       case "ins": q<HTMLInputElement>("[data-r=ovFile]").click(); break;
       case "title": addTitle(); break;
+      case "chapter": addTitle("chapter"); break;
+      case "bubble": addTitle("bubble"); break;
       case "freezeAdd": { video.pause(); fz = null;
         if (!video.videoWidth) break;
         if (inCut(video.currentTime)) { toast("Placez la tête de lecture sur une partie gardée.", 2500); break; }

@@ -40,7 +40,8 @@ export const pathDuration = (n: number) => 0.8 + n * 2.2;
 export const clipTime = (ov: Overlay, t: number) => Math.max(0, Math.min(t - ov.start, ov.freeze ?? Infinity));
 /** Progression du zoom d'un extrait à l'instant t (le zoom démarre au gel, sinon 0,3 s après l'apparition). */
 export const overlayZoomK = (ov: Overlay, t: number) => (ov.zoom ? zoomEase(t - ov.start - (ov.kind === "video" && ov.freeze != null ? ov.freeze : 0.3)) : 0);
-export interface Title { id: string; text: string; sub?: string; start: number; end: number }
+/** kind : bandeau (bas gauche), chapitre (carton plein écran), bulle (citation façon comic). */
+export interface Title { id: string; text: string; sub?: string; start: number; end: number; kind?: "lower" | "chapter" | "bubble" }
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 type Src = CanvasImageSource & { width?: number; height?: number; videoWidth?: number; videoHeight?: number; displayWidth?: number; displayHeight?: number };
@@ -96,8 +97,48 @@ export function compose(ctx: Ctx, W: number, H: number, t: number, ov: Overlay |
 }
 
 /** Bandeau titre (bas gauche) en verre sombre : glisse en entrant, s'efface en sortant. */
+/** Découpe un texte en lignes qui tiennent dans maxW (police déjà réglée). */
+function wrap(ctx: Ctx, text: string, maxW: number): string[] {
+  const out: string[] = []; let line = "";
+  for (const w of text.split(/\s+/)) { const tryL = line ? line + " " + w : w; if (line && ctx.measureText(tryL).width > maxW) { out.push(line); line = w; } else line = tryL; }
+  if (line) out.push(line); return out;
+}
+/** Carton de chapitre : image assombrie, petit surtitre (« PARTIE 2 »), grand titre, trait d'accent ; entrée en zoom léger. */
+function drawChapter(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
+  const a = fadeIn(ti, t, 0.35), sc = 1.06 - 0.06 * a;
+  ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = "rgba(6,6,10,.62)"; ctx.fillRect(0, 0, W, H);
+  ctx.translate(W / 2, H * 0.46); ctx.scale(sc, sc); ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  const fs = W * 0.095, sfs = W * 0.042;
+  ctx.font = `900 ${fs}px ${FONT}`; const lines = wrap(ctx, ti.text.toUpperCase(), W * 0.84), lh = fs * 1.08, top = -((lines.length - 1) * lh) / 2;
+  if (ti.sub) { ctx.font = `800 ${sfs}px ${FONT}`; ctx.fillStyle = accent; ctx.fillText(ti.sub.toUpperCase(), 0, top - fs * 0.95); }
+  ctx.font = `900 ${fs}px ${FONT}`; ctx.lineJoin = "round"; ctx.lineWidth = fs * 0.12; ctx.strokeStyle = "rgba(0,0,0,.85)"; ctx.fillStyle = "#fff";
+  lines.forEach((l, i) => { ctx.strokeText(l, 0, top + i * lh); ctx.fillText(l, 0, top + i * lh); });
+  ctx.fillStyle = accent; const bw = W * 0.18 * a; ctx.fillRect(-bw / 2, top + (lines.length - 1) * lh + fs * 0.85, bw, W * 0.012);
+  ctx.restore();
+}
+/** Bulle de citation façon comic : bulle blanche à contour noir, pointe vers le bas, texte en capitales ; « pop » à l'apparition. */
+function drawBubble(ctx: Ctx, W: number, H: number, t: number, ti: Title) {
+  const a = fadeIn(ti, t, 0.18), age = t - ti.start, pop = age < 0.25 ? 0.85 + 0.15 * Math.sin((age / 0.25) * Math.PI / 2) * 1.08 : 1;
+  const fs = W * 0.056, pad = W * 0.04, maxW = W * 0.6;
+  ctx.save(); ctx.globalAlpha = a; ctx.font = `italic 900 ${fs}px ${FONT}`;
+  const lines = wrap(ctx, ti.text.toUpperCase(), maxW), lh = fs * 1.18, tw = Math.max(...lines.map((l) => ctx.measureText(l).width));
+  const sub = ti.sub ? `— ${ti.sub}` : "", sfs = fs * 0.62; ctx.font = `700 ${sfs}px ${FONT}`; const sw = sub ? ctx.measureText(sub).width : 0;
+  const bw = Math.max(tw, sw) + pad * 2, bh = lines.length * lh + (sub ? sfs * 1.6 : 0) + pad, rx = Math.min(W * 0.48, (bw / 2) * 1.32), ry = (bh / 2) * 1.38, cx = W / 2, cy = H * 0.05 + ry;
+  ctx.translate(cx, cy); ctx.scale(pop, pop);
+  ctx.lineWidth = W * 0.008; ctx.strokeStyle = "#111"; ctx.fillStyle = "#fff"; ctx.lineJoin = "round";
+  ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+  ctx.moveTo(-rx * 0.12, ry * 0.96); ctx.lineTo(-rx * 0.3, ry + pad * 1.8); ctx.lineTo(rx * 0.1, ry * 0.97);
+  ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(0, 0, rx - ctx.lineWidth, ry - ctx.lineWidth, 0, 0, Math.PI * 2); ctx.fill(); // recouvre la base de la pointe
+  ctx.fillStyle = "#111"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.font = `italic 900 ${fs}px ${FONT}`;
+  const top = -bh / 2 + pad * 0.5 + lh / 2; lines.forEach((l, i) => ctx.fillText(l, 0, top + i * lh));
+  if (sub) { ctx.font = `700 ${sfs}px ${FONT}`; ctx.fillStyle = "#444"; ctx.fillText(sub, 0, top + lines.length * lh + sfs * 0.3); }
+  ctx.restore();
+}
 export function drawTitle(ctx: Ctx, W: number, H: number, t: number, ti: Title | null, accent = "#30d158") {
   if (!ti || !ti.text.trim()) return;
+  if (ti.kind === "chapter") return drawChapter(ctx, W, H, t, ti, accent);
+  if (ti.kind === "bubble") return drawBubble(ctx, W, H, t, ti);
   const a = fadeIn(ti, t, 0.3), fs = W * 0.052, sfs = W * 0.034, pad = W * 0.04, x0 = W * 0.05 - (1 - a) * W * 0.08, y1 = H * 0.79;
   ctx.save(); ctx.globalAlpha = a;
   ctx.font = `800 ${fs}px ${FONT}`; const tw = ctx.measureText(ti.text).width;

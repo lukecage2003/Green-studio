@@ -176,34 +176,34 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
       }
     };
     const sr0 = at ? await at.getSampleRate() : 48000, ch0 = at ? await at.getNumberOfChannels() : 1;
-    for (const seg of items) {
-      if (seg.fr) { // image figée (dernière image avant l'instant), 30 i/s, zoom progressif ; son coupé
-        const f = seg.fr, s = await vsink.getSample(Math.max(0, f.at - 0.02)); if (!s) continue;
-        if (!cv) { const k = maxHeight > 0 ? Math.min(1, maxHeight / s.displayHeight) : 1;
-          cv = new OffscreenCanvas(Math.round(s.displayWidth * k / 2) * 2, Math.round(s.displayHeight * k / 2) * 2); cx = cv.getContext("2d")!; }
-        const n = Math.max(1, Math.round(f.dur * 30)), ov = dress ? activeAt(dress.overlays, f.at) : null, os = ov ? await overlaySource(ov, f.at) : null;
-        for (let k = 0; k < n; k++) {
-          if (signal?.aborted) { s.close(); os?.close?.(); throw abortErr(); }
-          const zk = zoomEase(k / 30);
-          const speaker = (x: number, y: number, w: number, h: number) => { const r = zoomRect(s.displayWidth, s.displayHeight, w, h, f.zoom, zk); s.draw(cx!, r.sx, r.sy, r.sw, r.sh, x, y, w, h); };
-          cx!.clearRect(0, 0, cv.width, cv.height);
-          compose(cx!, cv.width, cv.height, f.at, ov, os?.src ?? null, speaker);
-          if (dress) drawTitle(cx!, cv.width, cv.height, f.at, activeAt(dress.titles, f.at), dress.accent);
-          if (captions) drawCaption(cx!, 0, 0, cv.width, cv.height, lineAt(captions.lines, f.at), f.at, captions.style);
-          const o = new VideoSample(cv, { timestamp: offset + k / 30, duration: 1 / 30 }); await vsrc.add(o, k === 0 ? { keyFrame: true } : undefined); o.close();
-        }
-        s.close(); os?.close?.(); lastV = offset + (n - 1) / 30;
-        if (asrc) { const N = Math.round(f.dur * sr0), out = new AudioSample({ data: new Float32Array(N * ch0), format: "f32-planar", numberOfChannels: ch0, sampleRate: sr0, timestamp: offset }); await asrc.add(out); out.close(); }
-        offset += f.dur; done_ += f.dur; onProgress?.(Math.min(0.99, done_ / total)); continue;
-      }
+    // Décalage de chaque morceau dans la vidéo finale (connu d'avance : l'audio peut avancer en parallèle de l'image)
+    const offs: number[] = []; { let o = 0; for (const it of items) { offs.push(o); o += it.fr ? it.fr.dur : it.end - it.start; } }
+    /** Son d'un morceau (silence pour un arrêt sur image). */
+    const audioItem = async (seg: Item, off: number) => {
+      if (!asrc) return;
+      if (seg.fr) { const N = Math.round(seg.fr.dur * sr0), out = new AudioSample({ data: new Float32Array(N * ch0), format: "f32-planar", numberOfChannels: ch0, sampleRate: sr0, timestamp: off }); await asrc.add(out); out.close(); return; }
       const len = seg.end - seg.start;
-      // Vidéo : images du segment, réhorodatées à la suite des précédentes.
-      let first = true;
-      for await (const s of vsink.samples(seg.start, seg.end)) {
+      if (asink && asrc && voice) await voiceSegment(asink, asrc, seg, len, off);
+      else if (asink && asrc) for await (const s of asink.samples(seg.start, seg.end)) {
         if (signal?.aborted) { s.close(); throw abortErr(); }
-        if (s.timestamp >= seg.end - 1e-4) { s.close(); continue; }
+        const sr = s.sampleRate, a = Math.max(0, Math.round((seg.start - s.timestamp) * sr)), b = Math.min(s.numberOfFrames, Math.round((seg.end - s.timestamp) * sr));
+        if (b <= a) { s.close(); continue; }
+        const p = planes(s).map((x) => x.subarray(a, b)), t0 = s.timestamp + a / sr - seg.start, n = b - a;
+        for (let i = 0; i < n; i++) { const g = fadeGain(t0 + i / sr, len, fade) * gain; if (g !== 1) for (const x of p) x[i] *= g; }
+        if (gain > 1) for (const x of p) for (let i = 0; i < n; i++) x[i] = softLimit(x[i]);
+        const data = new Float32Array(n * p.length); p.forEach((x, c) => data.set(x, c * n));
+        const out = new AudioSample({ data, format: "f32-planar", numberOfChannels: p.length, sampleRate: sr, timestamp: off + t0 });
+        await asrc.add(out); out.close(); s.close();
+      }
+    };
+    // Image et son traités EN MÊME TEMPS : pendant que la puce vidéo encode, le processeur prépare le son (voix studio comprise).
+    let audioErr: unknown = null;
+    const audioTask = (async () => { for (let i = 0; i < items.length; i++) { if (audioErr) return; await audioItem(items[i], offs[i]); }
+      const vEnd = vs as StudioVoice | null; if (vEnd && asrc) await vEmit(asrc, vEnd.flush()); })().catch((e) => { audioErr = e; });
+    /** Une image source du morceau `seg` (placé à `offset` dans la vidéo finale) : habillage éventuel, puis encodage. */
+    const frameOut = async (s: VideoSample, seg: Range, offset: number, first: boolean): Promise<boolean> => {
         const t = offset + Math.max(0, s.timestamp - seg.start);
-        if (t <= lastV + 1e-4) { s.close(); continue; }
+        if (t <= lastV + 1e-4) { s.close(); return false; }
         lastV = t; let o: VideoSample = s;
         // durée bornée au segment : sinon, avec une source saccadée (peu d'images/s), la dernière image d'un segment
         // déborderait au-delà de la coupe et allongerait la vidéo exportée
@@ -226,25 +226,56 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
           if (captions) drawCaption(cx!, 0, 0, cv.width, cv.height, lineAt(captions.lines, s.timestamp), s.timestamp, captions.style);
           o = new VideoSample(cv, { timestamp: t, duration: d }); s.close();
         } else { s.setTimestamp(t); s.setDuration(d); }
-        await vsrc.add(o, first ? { keyFrame: true } : undefined); first = false; o.close();
-        onProgress?.(Math.min(0.99, (done_ + (t - offset)) / total));
+        await vsrc.add(o, first ? { keyFrame: true } : undefined); o.close();
+        onProgress?.(Math.min(0.99, t / total));
+        return true;
+    };
+    for (let ii = 0; ii < items.length; ii++) {
+      const seg = items[ii]; offset = offs[ii];
+      if (audioErr) throw audioErr;
+      if (seg.fr) { // image figée (dernière image avant l'instant), 30 i/s, zoom progressif ; son coupé
+        const f = seg.fr, s = await vsink.getSample(Math.max(0, f.at - 0.02)); if (!s) continue;
+        if (!cv) { const k = maxHeight > 0 ? Math.min(1, maxHeight / s.displayHeight) : 1;
+          cv = new OffscreenCanvas(Math.round(s.displayWidth * k / 2) * 2, Math.round(s.displayHeight * k / 2) * 2); cx = cv.getContext("2d")!; }
+        const n = Math.max(1, Math.round(f.dur * 30)), ov = dress ? activeAt(dress.overlays, f.at) : null, os = ov ? await overlaySource(ov, f.at) : null;
+        for (let k = 0; k < n; k++) {
+          if (signal?.aborted) { s.close(); os?.close?.(); throw abortErr(); }
+          const zk = zoomEase(k / 30);
+          const speaker = (x: number, y: number, w: number, h: number) => { const r = zoomRect(s.displayWidth, s.displayHeight, w, h, f.zoom, zk); s.draw(cx!, r.sx, r.sy, r.sw, r.sh, x, y, w, h); };
+          cx!.clearRect(0, 0, cv.width, cv.height);
+          compose(cx!, cv.width, cv.height, f.at, ov, os?.src ?? null, speaker);
+          if (dress) drawTitle(cx!, cv.width, cv.height, f.at, activeAt(dress.titles, f.at), dress.accent);
+          if (captions) drawCaption(cx!, 0, 0, cv.width, cv.height, lineAt(captions.lines, f.at), f.at, captions.style);
+          const o = new VideoSample(cv, { timestamp: offset + k / 30, duration: 1 / 30 }); await vsrc.add(o, k === 0 ? { keyFrame: true } : undefined); o.close();
+        }
+        s.close(); os?.close?.(); lastV = offset + (n - 1) / 30;
+        onProgress?.(Math.min(0.99, (offset + f.dur) / total)); continue;
       }
-      // Audio : rogné exactement aux bornes du segment, avec fondus.
-      if (asink && asrc && voice) await voiceSegment(asink, asrc, seg, len, offset);
-      else if (asink && asrc) for await (const s of asink.samples(seg.start, seg.end)) {
-        if (signal?.aborted) { s.close(); throw abortErr(); }
-        const sr = s.sampleRate, a = Math.max(0, Math.round((seg.start - s.timestamp) * sr)), b = Math.min(s.numberOfFrames, Math.round((seg.end - s.timestamp) * sr));
-        if (b <= a) { s.close(); continue; }
-        const p = planes(s).map((x) => x.subarray(a, b)), t0 = s.timestamp + a / sr - seg.start, n = b - a;
-        for (let i = 0; i < n; i++) { const g = fadeGain(t0 + i / sr, len, fade) * gain; if (g !== 1) for (const x of p) x[i] *= g; }
-        if (gain > 1) for (const x of p) for (let i = 0; i < n; i++) x[i] = softLimit(x[i]);
-        const data = new Float32Array(n * p.length); p.forEach((x, c) => data.set(x, c * n));
-        const out = new AudioSample({ data, format: "f32-planar", numberOfChannels: p.length, sampleRate: sr, timestamp: offset + t0 });
-        await asrc.add(out); out.close(); s.close();
-      }
-      offset += len; done_ += len;
+      // Vidéo : morceaux consécutifs (dans l'ordre du temps) décodés en UN seul passage — sans repartir de l'image clé
+      // précédente à chaque coupe (≈ 25 à 40 % de décodage en moins avec un montage serré) ; les parties coupées sont sautées.
+      let jj = ii; while (jj + 1 < items.length && !items[jj + 1].fr && items[jj + 1].start >= items[jj].end - 1e-4) jj++;
+      let pi = ii, first = true, pend: VideoSample | null = null; // pend : dernière image AVANT le morceau (elle couvre son début)
+      try {
+        for await (const s of vsink.samples(items[ii].start, items[jj].end)) {
+          if (signal?.aborted) { s.close(); throw abortErr(); }
+          if (audioErr) { s.close(); throw audioErr; }
+          while (pi <= jj && s.timestamp >= items[pi].end - 1e-4) {
+            // morceau sans image propre (source à très peu d'images/s) : l'image qui le couvre est montrée
+            if (first && pend && pend.timestamp < items[pi].end - 1e-4) { await frameOut(pend, items[pi], offs[pi], true); pend = null; }
+            pi++; first = true; pend?.close(); pend = null;
+          }
+          if (pi > jj) { s.close(); break; }
+          const it = items[pi];
+          if (s.timestamp < it.start - 1e-4) { pend?.close(); pend = s; continue; } // partie coupée (gardée de côté : elle peut couvrir le début)
+          if (first && pend && s.timestamp > it.start + 1e-4) { if (await frameOut(pend, it, offs[pi], true)) first = false; pend = null; }
+          else { pend?.close(); pend = null; }
+          if (await frameOut(s, it, offs[pi], first)) first = false;
+        }
+        if (pi <= jj && first && pend) { await frameOut(pend, items[pi], offs[pi], true); pend = null; }
+      } finally { pend?.close(); }
+      ii = jj;
     }
-    const vEnd = vs as StudioVoice | null; if (vEnd && asrc) await vEmit(asrc, vEnd.flush()); // fin du flux voix studio
+    await audioTask; if (audioErr) throw audioErr; // fin du son (et du flux voix studio)
     await output.finalize(); onProgress?.(1);
     const mime = mp4 ? "video/mp4" : "video/webm", raw = await done();
     return { blob: raw.type === mime ? raw : new Blob([raw], { type: mime }), ext, mime, video: vcodec, audio: acodec };

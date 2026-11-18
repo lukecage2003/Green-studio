@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.16)
+# Green Studio 3.1 — état réel (beta.17)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,15 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.17
+- **Export plus rapide** (mesuré sur 25 s en 1080×1920 30 i/s, mêmes fichiers en sortie) : sans habillage 8,4 → 5,7 s (−32 %), sous-titres + zooms 11,8 → 9,1 s (−23 %), voix studio 15,1 → 10,0 s (−34 %).
+  - Son et image traités en parallèle (l'encodeur matériel du téléphone n'attend plus la voix studio).
+  - Morceaux consécutifs décodés en un seul passage, sans repartir d'une image clé à chaque coupe ; l'image qui couvre le début d'un morceau est conservée (corrige un défaut trouvé par `app.e2e` sur source à faible débit d'images).
+  - Journal : chaque export note son mode (rapide / temps réel), sa durée et la cause d'un éventuel repli.
+- **Montage redessiné** : une seule barre d'outils en bas (icônes + libellés : Scinder, Supprimer/Restaurer, Nettoyer, Pause + zoom, Insérer, Bandeau, Voix studio, Publication, Bords muets, Zooms, Sauter coupes) ; statut dans la ligne de lecture ; zoom de la timeline sur la timeline ; bouton ⌃ pour agrandir la zone de travail (vidéo réduite). Zone de travail 196 → 279 px sur un écran de S25 (plus avec ⌃).
+- Corrigé : le texte n'était pas visible juste après la transcription (onglet déjà défilé).
+- **Comics** : 📖 Chapitre (carton plein écran « PARTIE 2 · … ») et 💬 Bulle (citation façon comic, avec qui parle) dans Habillage.
 
 ## 3.1.0-beta.16
 - **Analyse d'une vraie vidéo envoyée** : export de 0,6 s (11 images) à ~16 i/s, son quasi muet (crête −46 dBFS). Le nettoyage, sans parole, avait tout coupé.

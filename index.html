@@ -423,6 +423,7 @@ import "@fontsource-variable/inter/index.css"; // police façon Apple, incluse d
 /* ---------- Journal de diagnostic (sur le téléphone ; partagé seulement à la demande) ---------- */
 const APP_VERSION = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev";
 const LOG_KEY = "gs.log";
+window.gsLog = (lvl, msg) => logEvent(lvl, msg); // journal accessible au montage
 function logEvent(lvl, msg) {
   try {
     const l = JSON.parse(localStorage.getItem(LOG_KEY) || "[]"); l.push({ t: Date.now(), lvl, msg: String(msg).slice(0, 600) });
