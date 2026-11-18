@@ -5,7 +5,8 @@ export type OverlayMode = "full" | "pip" | "me";
 /** Zoom sur un détail : facteur z (1–4) vers le point (x, y) de l'image source (0–1). */
 export interface ZoomTarget { z: number; x: number; y: number }
 /** freeze : l'extrait vidéo se fige à cet instant (s depuis son début) ; zoom : on s'approche d'un détail (après le gel, sinon dès l'apparition). */
-export interface Overlay { id: string; kind: "image" | "video"; start: number; end: number; mode: OverlayMode; freeze?: number; zoom?: ZoomTarget }
+/** path : parcours de cases (page de comic) — la page entière, puis chaque case dans l'ordre. */
+export interface Overlay { id: string; kind: "image" | "video"; start: number; end: number; mode: OverlayMode; freeze?: number; zoom?: ZoomTarget; path?: ZoomTarget[] }
 /** Arrêt sur image dans la vidéo principale : à l'instant `at` (temps source), l'image reste figée `dur` s, avec zoom éventuel. */
 export interface Freeze { id: string; at: number; dur: number; zoom?: ZoomTarget }
 
@@ -23,6 +24,18 @@ export function zoomRect(srcW: number, srcH: number, dw: number, dh: number, zt:
   const cx = Math.min(srcW - cw / 2, Math.max(cw / 2, fx * srcW)), cy = Math.min(srcH - ch / 2, Math.max(ch / 2, fy * srcH));
   return { sx: cx - cw / 2, sy: cy - ch / 2, sw: cw, sh: ch };
 }
+/**
+ * Parcours de cases à l'instant t : 0,8 s sur la page entière, puis chaque case reçoit le même temps — 0,6 s de glissement
+ * depuis la précédente, puis on reste dessus. Renvoie le cadrage à appliquer (progression 1).
+ */
+export function pathAt(path: ZoomTarget[], start: number, end: number, t: number): ZoomTarget {
+  const whole = { z: 1, x: 0.5, y: 0.5 }, n = path.length, T = Math.max(0.8, (end - start - 0.8) / n), dt = t - start - 0.8;
+  if (!n || dt <= 0) return whole;
+  const i = Math.min(n - 1, Math.floor(dt / T)), a = i ? path[i - 1] : whole, b = path[i], k = zoomEase(dt - i * T, 0.6);
+  return { z: a.z + (b.z - a.z) * k, x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k };
+}
+/** Durée conseillée d'un parcours (≈ 2,2 s par case). */
+export const pathDuration = (n: number) => 0.8 + n * 2.2;
 /** Temps à lire dans un extrait vidéo : il avance, puis reste figé à partir de `freeze`. */
 export const clipTime = (ov: Overlay, t: number) => Math.max(0, Math.min(t - ov.start, ov.freeze ?? Infinity));
 /** Progression du zoom d'un extrait à l'instant t (le zoom démarre au gel, sinon 0,3 s après l'apparition). */
@@ -59,19 +72,20 @@ export function drawCover(ctx: Ctx, src: Src, x: number, y: number, w: number, h
  */
 export function compose(ctx: Ctx, W: number, H: number, t: number, ov: Overlay | null, src: Src | null, speaker: (x: number, y: number, w: number, h: number) => void) {
   if (!ov || !src) { speaker(0, 0, W, H); return; }
+  const pz = ov.path?.length ? pathAt(ov.path, ov.start, ov.end, t) : null;
   const a = fadeIn(ov, t), kb = ov.freeze != null && t - ov.start >= ov.freeze ? Math.min(1, ov.freeze / Math.max(0.1, ov.end - ov.start)) : Math.min(1, Math.max(0, (t - ov.start) / Math.max(0.1, ov.end - ov.start))), zk = overlayZoomK(ov, t);
   if (ov.mode === "pip") {
     speaker(0, 0, W, H);
     const w = W * 0.88, h = Math.min(H * 0.42, w * 0.75), x = (W - w) / 2, y = H * 0.1 + (1 - a) * H * 0.03, r = W * 0.05;
     ctx.save(); ctx.globalAlpha = a; ctx.shadowColor = "rgba(0,0,0,.45)"; ctx.shadowBlur = W * 0.05; ctx.shadowOffsetY = W * 0.015;
     rounded(ctx, x, y, w, h, r); ctx.fillStyle = "#000"; ctx.fill(); ctx.shadowColor = "transparent";
-    rounded(ctx, x, y, w, h, r); ctx.clip(); drawCover(ctx, src, x, y, w, h, kb, ov.zoom, zk); ctx.restore();
+    rounded(ctx, x, y, w, h, r); ctx.clip(); drawCover(ctx, src, x, y, w, h, pz ? 0 : kb, pz ?? ov.zoom, pz ? 1 : zk); ctx.restore();
     ctx.save(); ctx.globalAlpha = a * 0.6; rounded(ctx, x, y, w, h, r); ctx.lineWidth = Math.max(1, W * 0.002); ctx.strokeStyle = "rgba(255,255,255,.5)"; ctx.stroke(); ctx.restore();
     return;
   }
   // full / me : l'extrait remplit l'image (fondu depuis la personne)
   if (a < 1) speaker(0, 0, W, H);
-  ctx.save(); ctx.globalAlpha = a; drawCover(ctx, src, 0, 0, W, H, kb, ov.zoom, zk); ctx.restore();
+  ctx.save(); ctx.globalAlpha = a; drawCover(ctx, src, 0, 0, W, H, pz ? 0 : kb, pz ?? ov.zoom, pz ? 1 : zk); ctx.restore();
   if (ov.mode === "me") {
     const w = W * 0.36, h = w * 16 / 9, x = W - w - W * 0.05, y = H - h - H * 0.16, r = W * 0.06;
     ctx.save(); ctx.globalAlpha = a; ctx.shadowColor = "rgba(0,0,0,.5)"; ctx.shadowBlur = W * 0.05;

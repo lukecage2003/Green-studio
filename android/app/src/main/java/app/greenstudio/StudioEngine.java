@@ -202,7 +202,9 @@ public class StudioEngine {
         boolean swap = rot == 90 || rot == 270;
         camW = swap ? h : w; camH = swap ? w : h;
         final long t0 = SystemClock.uptimeMillis();
-        InputImage in = InputImage.fromMediaImage(img.getImage(), rot);
+        // Image réduite pour le détourage (le modèle travaille en 256×256) : bien moins de conversion par image → plus d'images/s
+        InputImage in;
+        try { in = smallInput(img, rot); } catch (Throwable t) { in = InputImage.fromMediaImage(img.getImage(), rot); }
         segmenter.process(in).addOnSuccessListener(analysis, (SegmentationMask m) -> {
             int mw = m.getWidth(), mh = m.getHeight();
             ByteBuffer raw = m.getBuffer(); raw.rewind(); raw.order(ByteOrder.nativeOrder());
@@ -214,6 +216,23 @@ public class StudioEngine {
             headSeen(mask, mw, mh);
             gl.post(() -> { try { render(img, rot, mask, mw, mh); } catch (Throwable t) { Log.e(TAG, "rendu", t); fail("Rendu : " + t.getMessage()); } finally { img.close(); } });
         }).addOnFailureListener(analysis, e -> { Log.w(TAG, "détourage", e); img.close(); });
+    }
+
+    private byte[] nv21; private int nvW, nvH;
+    /** Copie réduite (≈ 640 px de large) de l'image caméra au format NV21, pour le détourage. */
+    private InputImage smallInput(ImageProxy img, int rot) {
+        int w = img.getWidth(), h = img.getHeight(), f = Math.max(1, Math.max(w, h) / 640);
+        if (f == 1) return InputImage.fromMediaImage(img.getImage(), rot);
+        int tw = (w / f) & ~1, th = (h / f) & ~1;
+        if (nv21 == null || nvW != tw || nvH != th) { nv21 = new byte[tw * th * 3 / 2]; nvW = tw; nvH = th; }
+        ImageProxy.PlaneProxy[] pl = img.getPlanes();
+        ByteBuffer yb = pl[0].getBuffer(), ub = pl[1].getBuffer(), vb = pl[2].getBuffer();
+        int yrs = pl[0].getRowStride(), yps = pl[0].getPixelStride(), urs = pl[1].getRowStride(), ups = pl[1].getPixelStride(), vrs = pl[2].getRowStride(), vps = pl[2].getPixelStride();
+        int yl = yb.limit(), ul = ub.limit(), vl = vb.limit(), o = 0;
+        for (int y = 0; y < th; y++) { int row = y * f * yrs; for (int x = 0; x < tw; x++) { int i = row + x * f * yps; nv21[o++] = i < yl ? yb.get(i) : 0; } }
+        for (int y = 0; y < th / 2; y++) { int ur = y * f * urs, vr = y * f * vrs;
+            for (int x = 0; x < tw / 2; x++) { int vi = vr + x * f * vps, ui = ur + x * f * ups; nv21[o++] = vi < vl ? vb.get(vi) : (byte) 128; nv21[o++] = ui < ul ? ub.get(ui) : (byte) 128; } }
+        return InputImage.fromByteArray(nv21, tw, th, rot, InputImage.IMAGE_FORMAT_NV21);
     }
 
     /* ======================= Lumière auto ======================= */

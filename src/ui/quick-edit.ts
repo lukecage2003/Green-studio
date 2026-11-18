@@ -1,9 +1,9 @@
 /** Quick Edit : montage par le texte. Lecteur qui saute les coupes, forme d'onde + timeline, transcription cliquable,
  *  suggestions (répétitions, hésitations, silences…), annuler/rétablir, export. Tout reste sur l'appareil. */
-import { EditSession, wordsToRange, sourceToEdited, EPS, type Range, type Word } from "../core/timeline.ts";
+import { EditSession, wordsToRange, sourceToEdited, editedDuration, EPS, type Range, type Word } from "../core/timeline.ts";
 import { bestTakes, type TakeResult } from "../core/takes.ts";
 import { clipsOf, snapSplit, hitAt, trimEdge, wavePeaks } from "../core/derush.ts";
-import { compose, drawTitle, activeAt, clipTime, zoomRect, zoomEase, type Overlay, type OverlayMode, type Title, type Freeze, type ZoomTarget } from "../core/overlay.ts";
+import { compose, drawTitle, activeAt, clipTime, zoomRect, zoomEase, pathDuration, type Overlay, type OverlayMode, type Title, type Freeze, type ZoomTarget } from "../core/overlay.ts";
 
 /** Fichiers insérés (images, extraits) : gardés sur le téléphone (IndexedDB), retrouvés à la réouverture du projet. */
 const mediaDb = () => new Promise<IDBDatabase>((res, rej) => { const r = indexedDB.open("gs-media", 1); r.onupgradeneeded = () => r.result.createObjectStore("files"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
@@ -338,7 +338,7 @@ export async function openEditor(o: EditorOptions) {
   function renderDress() {
     const ovRows = overlays.map((ov) => `<div class="sg" data-o="${ov.id}"><div class="t"><b style="color:#64d2ff">${ov.kind === "image" ? "Image" : "Extrait vidéo"} · ${fmt(ov.start)} → ${fmt(ov.end)}</b>
         <div class="chips" style="margin-top:6px">${MODES.map(([m, l]) => `<button class="ib" data-a="omode" data-v="${m}" aria-pressed="${ov.mode === m}">${l}</button>`).join("")}</div>
-        <div class="chips" style="margin-top:6px">${ov.kind === "video" ? `<button class="ib" data-a="ofreeze" aria-pressed="${ov.freeze != null}">${ov.freeze != null ? `⏸ Figé à ${ov.freeze.toFixed(1).replace(".", ",")} s` : "⏸ Figer ici"}</button>` : ""}<button class="ib" data-a="ozoom" aria-pressed="${!!ov.zoom}">🔍 ${ov.zoom ? `Zoom ${ov.zoom.z.toFixed(1).replace(".", ",")}×` : "Zoomer"}</button></div></div>
+        <div class="chips" style="margin-top:6px">${ov.kind === "video" ? `<button class="ib" data-a="ofreeze" aria-pressed="${ov.freeze != null}">${ov.freeze != null ? `⏸ Figé à ${ov.freeze.toFixed(1).replace(".", ",")} s` : "⏸ Figer ici"}</button>` : ""}<button class="ib" data-a="ozoom" aria-pressed="${!!(ov.zoom || ov.path)}">🔍 ${ov.path ? `Parcours ${ov.path.length} cases` : ov.zoom ? `Zoom ${ov.zoom.z.toFixed(1).replace(".", ",")}×` : "Zoomer / cases"}</button></div></div>
         <button class="ib" data-a="ominus" aria-label="Plus court">−</button><button class="ib" data-a="oplus" aria-label="Plus long">+</button><button class="ib" data-a="ohere">Ici</button><button class="ib" data-a="odel" aria-label="Supprimer">✕</button></div>`).join("")
       + freezes.map((f) => `<div class="sg" data-fz="${f.id}"><div class="t"><b style="color:#ff9f0a">⏸ Arrêt sur image · ${fmt(f.at)} · ${f.dur.toFixed(1).replace(".", ",")} s</b>
         <div class="chips" style="margin-top:6px"><button class="ib" data-a="fzoom" aria-pressed="${!!f.zoom}">🔍 ${f.zoom ? `Zoom ${f.zoom.z.toFixed(1).replace(".", ",")}×` : "Zoomer"}</button><button class="ib" data-a="fplay">▶ Voir</button></div></div>
@@ -354,16 +354,17 @@ export async function openEditor(o: EditorOptions) {
    * Cadrage du zoom : l'image (vidéo figée, extrait ou image) s'affiche ; on touche le détail à agrandir, on pince ou on glisse
    * le curseur pour le niveau. Le rectangle montre exactement ce qui sera visible. undefined = annulé, null = sans zoom.
    */
-  function zoomPick(src: CanvasImageSource, sw: number, sh: number, aspect: number, cur?: ZoomTarget | null): Promise<ZoomTarget | null | undefined> {
+  function zoomPick(src: CanvasImageSource, sw: number, sh: number, aspect: number, cur?: ZoomTarget | null, multi = false, curPath: ZoomTarget[] = []): Promise<ZoomTarget | ZoomTarget[] | null | undefined> {
     return new Promise((res) => {
       const m = document.createElement("div"); m.className = "modal";
       m.innerHTML = `<div class="card" style="gap:10px"><b>Zoom sur un détail</b><p>Touchez le détail à agrandir · pincez ou réglez le niveau.</p>
         <canvas data-z style="width:100%;height:46vh;border-radius:12px;background:#000;touch-action:none"></canvas>
         <label class="opt">Zoom <input type="range" data-zl min="1.2" max="4" step="0.1" value="${cur?.z ?? 2}" style="flex:1"> <b data-zv></b></label>
+        ${multi ? `<div class="row" style="padding:0"><button class="ib" data-zx="add">＋ Case suivante</button><span data-zn style="color:var(--muted);font-size:13px"></span></div>` : ""}
         <div class="row" style="padding:0"><button class="ib go" data-zx="ok">Valider</button><button class="ib" data-zx="none">Sans zoom</button><button class="ib" data-zx="no">Annuler</button></div></div>`;
       root.appendChild(m);
       const cv2 = m.querySelector<HTMLCanvasElement>("[data-z]")!, sl = m.querySelector<HTMLInputElement>("[data-zl]")!, zv = m.querySelector<HTMLElement>("[data-zv]")!;
-      let zt: ZoomTarget = { z: cur?.z ?? 2, x: cur?.x ?? 0.5, y: cur?.y ?? 0.4 };
+      const path: ZoomTarget[] = curPath.slice(0, -1); let zt: ZoomTarget = curPath.length ? { ...curPath[curPath.length - 1] } : { z: cur?.z ?? 2, x: cur?.x ?? 0.5, y: cur?.y ?? 0.4 };
       const geo = () => { const dpr = devicePixelRatio || 1, W = cv2.clientWidth * dpr, H = cv2.clientHeight * dpr, k = Math.min(W / sw, H / sh); return { dpr, W, H, k, ox: (W - sw * k) / 2, oy: (H - sh * k) / 2 }; };
       const paint = () => {
         const { dpr, W, H, k, ox, oy } = geo(); if (cv2.width !== Math.round(W)) { cv2.width = Math.round(W); cv2.height = Math.round(H); }
@@ -372,7 +373,11 @@ export async function openEditor(o: EditorOptions) {
         g.fillStyle = "rgba(0,0,0,.55)"; g.fillRect(ox, oy, sw * k, ry - oy); g.fillRect(ox, ry + rh, sw * k, oy + sh * k - ry - rh); g.fillRect(ox, ry, rx - ox, rh); g.fillRect(rx + rw, ry, ox + sw * k - rx - rw, rh);
         g.strokeStyle = "#fff"; g.lineWidth = 2 * dpr; g.strokeRect(rx, ry, rw, rh);
         g.fillStyle = "#ff9f0a"; g.beginPath(); g.arc(ox + zt.x * sw * k, oy + zt.y * sh * k, 6 * dpr, 0, 7); g.fill();
+        g.font = `800 ${13 * dpr}px system-ui`; g.textAlign = "center"; g.textBaseline = "middle";
+        path.forEach((p2, i) => { const r2 = zoomRect(sw, sh, aspect * 1000, 1000, p2, 1); g.strokeStyle = "rgba(255,159,10,.8)"; g.lineWidth = 1.5 * dpr; g.strokeRect(ox + r2.sx * k, oy + r2.sy * k, r2.sw * k, r2.sh * k);
+          g.fillStyle = "#ff9f0a"; g.beginPath(); g.arc(ox + p2.x * sw * k, oy + p2.y * sh * k, 10 * dpr, 0, 7); g.fill(); g.fillStyle = "#000"; g.fillText(String(i + 1), ox + p2.x * sw * k, oy + p2.y * sh * k); });
         zv.textContent = zt.z.toFixed(1).replace(".", ",") + "×";
+        const zn = m.querySelector<HTMLElement>("[data-zn]"); if (zn) zn.textContent = path.length ? `Case ${path.length + 1} · ${path.length} déjà placée(s)` : "Touchez la 1re case, puis « ＋ Case suivante »";
       };
       const pts = new Map<number, { x: number; y: number }>(); let pinch: { d: number; z: number } | null = null;
       const at = (e: PointerEvent) => { const b = cv2.getBoundingClientRect(), { dpr, k, ox, oy } = geo();
@@ -383,7 +388,9 @@ export async function openEditor(o: EditorOptions) {
         if (pinch && pts.size === 2) { zt = { ...zt, z: Math.min(4, Math.max(1.2, pinch.z * dist() / pinch.d)) }; sl.value = String(zt.z); } else if (!pinch) at(e); paint(); };
       cv2.onpointerup = cv2.onpointercancel = (e) => { pts.delete(e.pointerId); if (pts.size < 2) pinch = null; };
       sl.oninput = () => { zt = { ...zt, z: +sl.value }; paint(); };
-      m.querySelectorAll<HTMLElement>("[data-zx]").forEach((b) => (b.onclick = () => { m.remove(); res(b.dataset.zx === "ok" ? zt : b.dataset.zx === "none" ? null : undefined); }));
+      m.querySelectorAll<HTMLElement>("[data-zx]").forEach((b) => (b.onclick = () => {
+        if (b.dataset.zx === "add") { path.push({ ...zt }); paint(); return; }
+        m.remove(); res(b.dataset.zx === "ok" ? (path.length ? [...path, zt] : zt) : b.dataset.zx === "none" ? null : undefined); }));
       requestAnimationFrame(paint);
     });
   }
@@ -794,8 +801,12 @@ export async function openEditor(o: EditorOptions) {
     if (pcm) r = snapToQuiet(withBounds(r, words), pcm, 16000); // bords de coupe sur le silence le plus proche (au centième de seconde)
     r.push(...takeCuts()); // reprises et hors-script retirés si la prise suit le script
     r.push(...((await edgeCuts()) ?? []));
-    if (!r.length) { refresh(); return toast("Aucun défaut à supprimer. 👌", 3000); }
-    r = dropCrumbs([...session.cuts, ...r], words, duration); // miettes entre deux coupes (< 0,15 s, sans mot) : coupées aussi
+    if (!r.length) { refresh(); toast("Aucun défaut à supprimer. 👌", 3000); return true; }
+    r = dropCrumbs([...session.cuts, ...r], words, duration);
+    // garde-fou : un nettoyage qui ne laisserait presque rien (son muet, micro coupé) n'est pas appliqué
+    { const keep = editedDuration(duration, r); const spoken = (words ?? []).filter((w) => /[\p{L}\p{N}]/u.test(w.text)).length;
+      if (duration > 4 && (keep < 1.5 || (spoken < 3 && keep < duration * 0.25))) {
+      refresh(); toast(`Rien n'a été coupé : le nettoyage ne garderait que ${keep.toFixed(1).replace(".", ",")} s sur ${Math.round(duration)} s. Aucune parole nette détectée — micro coupé ou trop loin ?`, 8000); return false; } } // miettes entre deux coupes (< 0,15 s, sans mot) : coupées aussi
     const before = session.editedDuration; session.addCuts(r); commit();
     toast(`✨ ${r.length} défaut(s) supprimé(s) (−${(before - session.editedDuration).toFixed(1)} s)${takeInfo ? " · " + takeSummary() : ""}. ↶ pour annuler.`, 6000);
   }
@@ -1020,7 +1031,7 @@ export async function openEditor(o: EditorOptions) {
         if (!video.videoWidth) break;
         if (inCut(video.currentTime)) { toast("Placez la tête de lecture sur une partie gardée.", 2500); break; }
         const at0 = video.currentTime; await new Promise((r) => setTimeout(r, 60)); // image affichée avant le cadrage
-        const zt = await zoomPick(video, video.videoWidth, video.videoHeight, video.videoWidth / video.videoHeight); if (zt === undefined) break;
+        const zt0 = await zoomPick(video, video.videoWidth, video.videoHeight, video.videoWidth / video.videoHeight); if (zt0 === undefined) break; const zt = Array.isArray(zt0) ? zt0[0] : zt0;
         freezes = [...freezes.filter((f) => Math.abs(f.at - at0) > 0.05), { id: "fz" + Date.now().toString(36), at: at0, dur: 2, zoom: zt ?? undefined }].sort((a, b) => a.at - b.at);
         commit(); toast("⏸ Arrêt sur image ajouté (2 s). Réglez sa durée dans Habillage.", 3000); break; }
       case "fzoom": case "fminus": case "fplus": case "fhere": case "fdel": case "fplay": {
@@ -1031,7 +1042,7 @@ export async function openEditor(o: EditorOptions) {
         if (a === "fdel") freezes = freezes.filter((x) => x !== f);
         if (a === "fplay") { seek(Math.max(0, f.at - 1)); video.play().catch(() => {}); break; }
         if (a === "fzoom") { video.pause(); seek(f.at); await new Promise((r) => { video.onseeked = r; setTimeout(r, 1500); });
-          const zt = await zoomPick(video, video.videoWidth, video.videoHeight, video.videoWidth / video.videoHeight, f.zoom); if (zt === undefined) break; f.zoom = zt ?? undefined; }
+          const zt = await zoomPick(video, video.videoWidth, video.videoHeight, video.videoWidth / video.videoHeight, f.zoom); if (zt === undefined) break; f.zoom = (Array.isArray(zt) ? zt[0] : zt) ?? undefined; }
         body.innerHTML = ""; commit(); break; }
       case "ofreeze": case "ozoom": {
         const ov = overlays.find((x) => x.id === t.closest<HTMLElement>("[data-o]")?.dataset.o); if (!ov) break;
@@ -1039,7 +1050,10 @@ export async function openEditor(o: EditorOptions) {
           if (ov.freeze != null) delete ov.freeze;
           else { const d = video.currentTime - ov.start; if (d < 0 || d > ov.end - ov.start) { toast("Placez la tête de lecture pendant l’extrait, au moment à figer.", 3000); break; } ov.freeze = Math.max(0, d); }
         } else { video.pause(); const fr = await overlayFrame(ov); if (!fr || !fr.w) { toast("Image de l’extrait indisponible.", 2500); break; }
-          const zt = await zoomPick(fr.src, fr.w, fr.h, ovAspect(ov), ov.zoom); if (zt === undefined) break; if (zt) ov.zoom = zt; else delete ov.zoom; }
+          const zt = await zoomPick(fr.src, fr.w, fr.h, ovAspect(ov), ov.zoom, true, ov.path ?? []); if (zt === undefined) break;
+          delete ov.zoom; delete ov.path;
+          if (Array.isArray(zt)) { ov.path = zt; const need = pathDuration(zt.length); if (ov.end - ov.start < need) { ov.end = Math.min(duration, ov.start + need); toast(`Parcours de ${zt.length} cases : extrait allongé à ${Math.round(ov.end - ov.start)} s.`, 3000); } }
+          else if (zt) ov.zoom = zt; }
         body.innerHTML = ""; commit(); break; }
       case "omode": case "ominus": case "oplus": case "ohere": case "odel": {
         const id = t.closest<HTMLElement>("[data-o]")?.dataset.o, ov = overlays.find((x) => x.id === id); if (!ov) break;

@@ -1231,11 +1231,12 @@ async function startRecNative() {
   catch (e) { return toast(e?.message ?? "Enregistrement impossible", 6000); }
   rec = { state: "recording", native: true, stop() { this.state = "inactive"; finishNative(); } }; logEvent("info", `prise native ${W}×${H}`);
   t0r = performance.now(); nativeRecT = t0r;
-  $("rec").classList.add("on"); $("recChip").hidden = false;
+  recPeak = 0; $("rec").classList.add("on"); $("recChip").hidden = false;
   recTimer = setInterval(() => { const s = ((performance.now() - t0r) / 1000) | 0; $("recChip").textContent = `${String((s / 60) | 0).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; }, 250);
 }
 /** Fin d'une prise native : le MP4 écrit par Android est copié (par morceaux) dans « Mes prises », puis la suite habituelle. */
 async function finishNative() {
+  window.gsRecEnd = performance.now();
   const dur = performance.now() - t0r; toast("Finalisation de la prise…", 30000);
   try {
     const r = await St.stopRecording(), resp = await fetch(window.Capacitor.convertFileSrc(r.path));
@@ -1272,10 +1273,10 @@ async function startRecInner() {
   r.onstop = finishRec;
   await actx?.resume();
   r.start(1000); t0r = performance.now();
-  $("rec").classList.add("on"); $("recChip").hidden = false;
+  recPeak = 0; $("rec").classList.add("on"); $("recChip").hidden = false;
   recTimer = setInterval(() => { const s = ((performance.now() - t0r) / 1000) | 0; $("recChip").textContent = `${String((s / 60) | 0).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; }, 250);
 }
-function stopRec() { clearInterval(recTimer); if (rec.state !== "inactive") rec.stop(); $("rec").classList.remove("on"); $("recChip").hidden = true; }
+function stopRec() { window.gsRecEnd = performance.now(); clearInterval(recTimer); if (rec.state !== "inactive") rec.stop(); $("rec").classList.remove("on"); $("recChip").hidden = true; }
 async function finishRec() {
   const type = recMime.split(";")[0], ext = type === "video/mp4" ? "mp4" : "webm";
   rec = null; let blob;
@@ -1291,6 +1292,9 @@ function openPreview(blob, id, info) {
   const url = URL.createObjectURL(blob), ext = blob.type === "video/mp4" ? "mp4" : "webm";
   pvId = id; pvBlob = blob; pvSaved = false; $("pvVid").src = url; const a = $("dl"); a.href = url; a.download = `green-studio-${Date.now()}.${ext}`;
   $("pvInfo").textContent = info; $("pv").hidden = false;
+  if (recPeak > 0 && recPeak < 0.012 && performance.now() - (window.gsRecEnd ?? 0) < 60000) { // prise qui vient d'être filmée, voix à peine audible
+    const t = $("toast"); t.classList.remove("ok"); toast("⚠ Son très faible : votre voix est presque inaudible. Vérifiez le micro choisi (barre du haut) et parlez plus près.", 8000);
+    logEvent("warn", "prise au son très faible, crête " + recPeak.toFixed(4)); }
   import("/src/ui/quick-edit.ts").then((m) => m.prewarmASR?.()).catch(() => {}); // modèle de transcription chargé pendant que l'on regarde la prise
 }
 async function showPending() {
@@ -1755,7 +1759,8 @@ $('ai').onclick = () => ($('perf').hidden = !$('perf').hidden);
 
 /* ---------- Check studio : lumière, bruit de fond, cadrage (avant de filmer) ---------- */
 const rmsHist = [];
-function coachRms(r) { if (vad?.speaking) return; rmsHist.push(r); if (rmsHist.length > 240) rmsHist.shift(); }
+let recPeak = 0;
+function coachRms(r) { if (!$("recChip").hidden && r > recPeak) recPeak = r; if (vad?.speaking) return; rmsHist.push(r); if (rmsHist.length > 240) rmsHist.shift(); }
 async function runCheck(manual) {
   const C = await import("/src/core/coach.ts");
   if (manual) { $("checkList").innerHTML = "<li><span>⏳</span><span>Restez face à la caméra, sans parler…</span></li>"; $("check").hidden = false; }

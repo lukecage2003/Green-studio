@@ -19,5 +19,13 @@ const FAKE = `self.onmessage = (e) => { if (e.data.type === 'run') self.postMess
   const d = await dl; console.log('fichier enregistré :', d.suggestedFilename());
   const st = await p.textContent('.qe [data-r=status]'); console.log('montage :', st);
   assert.match(st, /[1-9]\d* coupe/, 'nettoyage appliqué avant l’export'); assert.match(d.suggestedFilename(), /green-studio-montage-.*\.(mp4|webm)$/);
+  // prise sans voix (Whisper ne trouve rien) : Express exporte tout, sans couper, avec un avertissement
+  await p.evaluate(() => { document.querySelectorAll('.qe .modal').forEach((m) => m.remove()); document.querySelector('.qe [data-a=close]').click(); });
+  await p.waitForTimeout(500); if (await p.isVisible('#pvClose')) await p.click('#pvClose'); await p.waitForSelector('#rec:not([hidden])'); await p.waitForSelector('.qe', { state: 'detached' });
+  await ctx.unroute(/transcribe\.worker/); await ctx.route(/transcribe\.worker/, (r) => r.fulfill({ contentType: 'text/javascript', body: "self.onmessage = (e) => { if (e.data.type === 'run') self.postMessage({ type: 'done', words: [] }); };" }));
+  await p.click('#rec'); await p.waitForSelector('#recChip:not([hidden])', { timeout: 20000 }); await p.waitForTimeout(6000); await p.click('#rec');
+  await p.waitForSelector('#pv:not([hidden])'); const dl2 = p.waitForEvent('download', { timeout: 120000 }); await p.click('#pvExpress');
+  await p.waitForFunction(() => /Vidéo prête/.test(document.querySelector('.qe .modal')?.textContent ?? ''), null, { timeout: 120000 }); await dl2;
+  const st2 = await p.textContent('.qe [data-r=status]'); console.log('prise muette :', st2); const [, km, ks, tm, ts] = st2.match(/(\d+):(\d+) \/ (\d+):(\d+)/).map(Number); assert.ok((km * 60 + ks) >= 0.8 * (tm * 60 + ts), 'presque tout est gardé');
   console.log('erreurs :', errs); assert.equal(errs.length, 0); console.log('OK'); await b.close();
 })().catch((e) => { console.error('ÉCHEC', e); process.exit(1); });

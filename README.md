@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.15)
+# Green Studio 3.1 — état réel (beta.16)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,13 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.16
+- **Analyse d'une vraie vidéo envoyée** : export de 0,6 s (11 images) à ~16 i/s, son quasi muet (crête −46 dBFS). Le nettoyage, sans parole, avait tout coupé.
+- **Garde-fou du nettoyage** : s'il resterait moins de 1,5 s, ou presque rien sans parole détectée, rien n'est coupé et un message explique pourquoi (micro coupé ou trop loin). L'Express exporte alors la prise entière. Testé (`express.e2e`, prise muette).
+- **Alerte son faible** à la fin d'une prise (niveau maximal suivi pendant l'enregistrement), notée dans le journal.
+- **Moteur natif plus fluide** : le détourage reçoit une copie réduite (~640 px, NV21) au lieu de l'image 1920×1080 complète (le modèle travaille en 256×256) : bien moins de conversion par image. Compilé ; gain à mesurer sur le téléphone (compteur i/s du moteur natif).
+- **Parcours de cases** (comics) : sur une image ou un extrait inséré, « 🔍 Zoomer / cases » › touchez chaque case puis « ＋ Case suivante » : page entière 0,8 s, puis chaque case (glissement 0,6 s, ~2,2 s par case), extrait allongé automatiquement. Testé (`comics.e2e` : pixels de la page, de la case 1 puis de la case 2 dans l'export).
 
 ## 3.1.0-beta.15
 - **⏸ Pause + zoom** (montage) : arrêt sur image à la tête de lecture (2 s, réglable 0,5–8 s dans Habillage), avec zoom progressif vers le détail touché du doigt (pincer ou curseur, 1,2–4×). Aperçu figé puis reprise ; export : l'image figée est insérée (son coupé), la vidéo s'allonge d'autant.

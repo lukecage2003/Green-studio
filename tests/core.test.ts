@@ -441,3 +441,12 @@ test("zoom sur un détail : cadre dans l'image (jamais de bord noir), progressio
   assert.equal(clipTime(ov, 11), 1); assert.equal(clipTime(ov, 15), 2, "figé à 2 s");
   assert.equal(overlayZoomK(ov, 11.5), 0); assert.equal(overlayZoomK(ov, 13), 1); assert.equal(zoomEase(0.35), 0.5);
 });
+
+test("parcours de cases : page entière, puis chaque case dans l'ordre (glissement puis arrêt)", async () => {
+  const { pathAt, pathDuration } = await import("../src/core/overlay.ts");
+  const path = [{ z: 2, x: 0.25, y: 0.25 }, { z: 3, x: 0.75, y: 0.75 }];
+  assert.deepEqual(pathAt(path, 10, 15.2, 10.5), { z: 1, x: 0.5, y: 0.5 }, "page entière au début");
+  assert.deepEqual(pathAt(path, 10, 15.2, 12), path[0], "case 1 atteinte");
+  const mid = pathAt(path, 10, 15.2, 13.3); assert.ok(mid.z > 2 && mid.z < 3 && mid.x > 0.25 && mid.x < 0.75, "glissement vers la case 2");
+  assert.deepEqual(pathAt(path, 10, 15.2, 15), path[1]); assert.equal(pathDuration(2), 5.2);
+});
