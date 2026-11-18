@@ -2,12 +2,12 @@
 import {
   Input, MP4, QTFF, WEBM, MATROSKA, BlobSource, AudioSampleSink, VideoSampleSink, Output, Mp4OutputFormat, WebMOutputFormat,
   BufferTarget, StreamTarget, VideoSampleSource, VideoSample, AudioSampleSource, AudioSample, QUALITY_HIGH,
-  getFirstEncodableVideoCodec, getFirstEncodableAudioCodec, type StreamTargetChunk,
+  getFirstEncodableVideoCodec, getFirstEncodableAudioCodec, canEncodeVideo, type StreamTargetChunk,
 } from "mediabunny";
 import { kept, type Range } from "./timeline.ts";
 import { Resampler, toMono, fadeGain, softLimit } from "./audio.ts";
 import { StudioVoice, loadDenoiser } from "./voice.ts";
-import { compose, drawTitle, activeAt, type Overlay, type Title } from "./overlay.ts";
+import { compose, drawTitle, activeAt, clipTime, zoomRect, zoomEase, type Freeze, type Overlay, type Title } from "./overlay.ts";
 import { lineAt, drawCaption, type CapLine, type CaptionStyle } from "./captions.ts";
 
 const FORMATS = [MP4, QTFF, WEBM, MATROSKA]; // vidéos de téléphone (dont .mov iPhone) : module plus léger que ALL_FORMATS
@@ -64,6 +64,12 @@ export async function extractClip(file: Blob, start: number, dur: number): Promi
 
 export interface ExportResult { blob: Blob; ext: "mp4" | "webm"; mime: string; video: string; audio: string | null }
 
+/** Encodeur matériel du téléphone (S25 : puce vidéo dédiée, plus rapide et moins chaude) s'il accepte ces réglages ; sinon le choix par défaut. */
+async function hwOpts(codec: any, w: number, h: number, bitrate: number | typeof QUALITY_HIGH) {
+  try { if (await canEncodeVideo(codec, { width: w, height: h, bitrate, hardwareAcceleration: "prefer-hardware" } as any)) return { hardwareAcceleration: "prefer-hardware" as const, latencyMode: "quality" as const }; } catch { /* */ }
+  return {};
+}
+
 /** Cible d'écriture : fichier OPFS (sur disque) si possible, sinon mémoire. */
 async function makeTarget(ext: string, folder = "gs-export") {
   try {
@@ -90,12 +96,13 @@ export interface ExportOptions {
   voice?: boolean;                                 // voix studio : débruitage, égaliseur, compresseur
   zoom?: ((t: number) => number) | null;           // zooms dynamiques : facteur de zoom selon le temps source (1 = aucun)
   intro?: Range | null;                            // accroche : passage rejoué en ouverture, avant le montage
+  freezes?: Freeze[];                              // arrêts sur image (temps source), avec zoom éventuel
   /** habillage : extraits (images / vidéos) et bandeaux titres, en temps source */
   dress?: { overlays: Overlay[]; titles: Title[]; images: Map<string, CanvasImageSource>; videos: Map<string, Blob>; accent?: string } | null;
 }
 
 export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOptions = {}): Promise<ExportResult> {
-  const { onProgress, signal, fade = 0.012, gain = 1, captions = null, maxHeight = 0, voice = false, zoom = null, dress = null, intro = null } = opts;
+  const { onProgress, signal, fade = 0.012, gain = 1, captions = null, maxHeight = 0, voice = false, zoom = null, dress = null, intro = null, freezes = [] } = opts;
   const vidSinks = new Map<string, { input: Input; sink: VideoSampleSink }>();
   const input = new Input({ source: new BlobSource(file), formats: FORMATS });
   let output: Output | null = null;
@@ -104,7 +111,16 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
     if (!vt) throw new Error("Aucune piste vidéo.");
     const duration = await input.computeDuration(), segs = kept(duration, cuts);
     if (intro && intro.end - intro.start > 0.3) segs.unshift({ start: Math.max(0, intro.start), end: Math.min(duration, intro.end) });
-    const total = segs.reduce((s, k) => s + k.end - k.start, 0) || 1;
+    // arrêts sur image : le segment qui contient l'instant est coupé en deux et l'image figée est insérée entre les deux
+    type Item = Range & { fr?: Freeze };
+    const items: Item[] = []; const fz = [...freezes].sort((a, b) => a.at - b.at);
+    segs.forEach((g, gi) => {
+      let a = g.start;
+      if (!(gi === 0 && intro)) for (const f of fz) if (f.at > a + 0.02 && f.at < g.end - 0.02) { items.push({ start: a, end: f.at }); items.push({ start: f.at, end: f.at, fr: f }); a = f.at; }
+      else if (Math.abs(f.at - g.end) <= 0.02 && f.at > a) { items.push({ start: a, end: g.end }); items.push({ start: g.end, end: g.end, fr: f }); a = g.end; }
+      if (g.end - a > 1e-3) items.push({ start: a, end: g.end });
+    });
+    const total = items.reduce((s, k) => s + (k.fr ? k.fr.dur : k.end - k.start), 0) || 1;
     // MP4/H.264 en priorité (compatible partout : TikTok, Instagram, YouTube), sinon WebM/VP9.
     let vcodec = await getFirstEncodableVideoCodec(["avc"]), mp4 = !!vcodec;
     if (!vcodec) vcodec = await getFirstEncodableVideoCodec(["vp9", "vp8"]);
@@ -115,7 +131,8 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
     // Débit fixe et généreux selon la taille de sortie (le mode « qualité » automatique donnait ~1,6 Mbit/s, trop peu pour du visage + texte).
     const cw = await vt.getCodedWidth(), ch = await vt.getCodedHeight(), outH = Math.min(Math.max(cw, ch), maxHeight > 0 ? maxHeight : Infinity);
     const bitrate = outH >= 2400 ? 24e6 : outH >= 1800 ? 12e6 : outH >= 1200 ? 6e6 : QUALITY_HIGH;
-    const vsrc = new VideoSampleSource({ codec: vcodec, bitrate, keyFrameInterval: 2 });
+    const ow = Math.round(cw * Math.min(1, outH / Math.max(cw, ch)) / 2) * 2, oh = Math.round(ch * Math.min(1, outH / Math.max(cw, ch)) / 2) * 2;
+    const vsrc = new VideoSampleSource({ codec: vcodec, bitrate, keyFrameInterval: 2, ...(await hwOpts(vcodec, ow, oh, bitrate)) });
     output.addVideoTrack(vsrc);
     const asrc = acodec ? new AudioSampleSource({ codec: acodec, bitrate: 192000 }) : null;
     if (asrc) output.addAudioTrack(asrc);
@@ -123,7 +140,7 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
 
     // Passage par un canvas seulement si nécessaire (sous-titres, redimensionnement) : sinon les images vont directement à l'encodeur.
     let cv: OffscreenCanvas | null = null, cx: OffscreenCanvasRenderingContext2D | null = null;
-    const viaCanvas = (!!captions && captions.style.preset !== "none" && captions.lines.length > 0) || maxHeight > 0 || !!zoom
+    const viaCanvas = (!!captions && captions.style.preset !== "none" && captions.lines.length > 0) || maxHeight > 0 || !!zoom || items.some((i) => i.fr)
       || !!(dress && (dress.overlays.length || dress.titles.length));
     /** Image de l'extrait au temps t (vidéo : lue image par image, à fermer après usage). */
     const overlaySource = async (ov: Overlay, t: number): Promise<{ src: any; close?: () => void } | null> => {
@@ -131,7 +148,7 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
       const blob = dress!.videos.get(ov.id); if (!blob) return null;
       let e = vidSinks.get(ov.id);
       if (!e) { const input = new Input({ source: new BlobSource(blob), formats: FORMATS }); const tr = await input.getPrimaryVideoTrack(); if (!tr) return null; e = { input, sink: new VideoSampleSink(tr) }; vidSinks.set(ov.id, e); }
-      const smp = await e.sink.getSample(Math.max(0, t - ov.start)); return smp ? { src: smp, close: () => smp.close() } : null;
+      const smp = await e.sink.getSample(clipTime(ov, t)); return smp ? { src: smp, close: () => smp.close() } : null;
     };
     const vsink = new VideoSampleSink(vt), asink = at && asrc ? new AudioSampleSink(at) : null;
     let offset = 0, lastV = -1, done_ = 0;
@@ -158,7 +175,27 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
         vFed += n; await vEmit(src, vs.process(mono));
       }
     };
-    for (const seg of segs) {
+    const sr0 = at ? await at.getSampleRate() : 48000, ch0 = at ? await at.getNumberOfChannels() : 1;
+    for (const seg of items) {
+      if (seg.fr) { // image figée (dernière image avant l'instant), 30 i/s, zoom progressif ; son coupé
+        const f = seg.fr, s = await vsink.getSample(Math.max(0, f.at - 0.02)); if (!s) continue;
+        if (!cv) { const k = maxHeight > 0 ? Math.min(1, maxHeight / s.displayHeight) : 1;
+          cv = new OffscreenCanvas(Math.round(s.displayWidth * k / 2) * 2, Math.round(s.displayHeight * k / 2) * 2); cx = cv.getContext("2d")!; }
+        const n = Math.max(1, Math.round(f.dur * 30)), ov = dress ? activeAt(dress.overlays, f.at) : null, os = ov ? await overlaySource(ov, f.at) : null;
+        for (let k = 0; k < n; k++) {
+          if (signal?.aborted) { s.close(); os?.close?.(); throw abortErr(); }
+          const zk = zoomEase(k / 30);
+          const speaker = (x: number, y: number, w: number, h: number) => { const r = zoomRect(s.displayWidth, s.displayHeight, w, h, f.zoom, zk); s.draw(cx!, r.sx, r.sy, r.sw, r.sh, x, y, w, h); };
+          cx!.clearRect(0, 0, cv.width, cv.height);
+          compose(cx!, cv.width, cv.height, f.at, ov, os?.src ?? null, speaker);
+          if (dress) drawTitle(cx!, cv.width, cv.height, f.at, activeAt(dress.titles, f.at), dress.accent);
+          if (captions) drawCaption(cx!, 0, 0, cv.width, cv.height, lineAt(captions.lines, f.at), f.at, captions.style);
+          const o = new VideoSample(cv, { timestamp: offset + k / 30, duration: 1 / 30 }); await vsrc.add(o, k === 0 ? { keyFrame: true } : undefined); o.close();
+        }
+        s.close(); os?.close?.(); lastV = offset + (n - 1) / 30;
+        if (asrc) { const N = Math.round(f.dur * sr0), out = new AudioSample({ data: new Float32Array(N * ch0), format: "f32-planar", numberOfChannels: ch0, sampleRate: sr0, timestamp: offset }); await asrc.add(out); out.close(); }
+        offset += f.dur; done_ += f.dur; onProgress?.(Math.min(0.99, done_ / total)); continue;
+      }
       const len = seg.end - seg.start;
       // Vidéo : images du segment, réhorodatées à la suite des précédentes.
       let first = true;
@@ -236,7 +273,7 @@ export async function concatVideos(files: Blob[], opts: { onProgress?: (p: numbe
     const ext = mp4 ? "mp4" : "webm", { target, done } = await makeTarget(ext, "gs-asm"); // dossier à part : un export ne l'efface pas
     output = new Output({ format: mp4 ? new Mp4OutputFormat({ fastStart: false }) : new WebMOutputFormat(), target });
     const outH = Math.max(W, H), bitrate = outH >= 2400 ? 24e6 : outH >= 1800 ? 12e6 : outH >= 1200 ? 6e6 : QUALITY_HIGH;
-    const vsrc = new VideoSampleSource({ codec: vcodec, bitrate, keyFrameInterval: 2 }); output.addVideoTrack(vsrc);
+    const vsrc = new VideoSampleSource({ codec: vcodec, bitrate, keyFrameInterval: 2, ...(await hwOpts(vcodec, W, H, bitrate)) }); output.addVideoTrack(vsrc);
     const asrc = acodec ? new AudioSampleSource({ codec: acodec, bitrate: 192000 }) : null; if (asrc) output.addAudioTrack(asrc);
     await output.start();
     const a0 = info.find((x) => x.at)?.at ?? null, SR = a0 ? await a0.getSampleRate() : 48000, CH = a0 ? Math.min(2, await a0.getNumberOfChannels()) : 2;

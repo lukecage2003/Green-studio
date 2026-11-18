@@ -429,3 +429,15 @@ test("sous-titres : mots forts (nom propre hors début de phrase, chiffre, « Me
   const em = l.flatMap((x) => x.words).filter((w) => w.em).map((w) => w.text);
   assert.deepEqual(em, ["Iron", "Man", "korvac", "2025."]);
 });
+
+test("zoom sur un détail : cadre dans l'image (jamais de bord noir), progression, extrait figé", async () => {
+  const { zoomRect, clipTime, overlayZoomK, zoomEase } = await import("../src/core/overlay.ts");
+  const full = zoomRect(1080, 1920, 1080, 1920, null); assert.deepEqual(full, { sx: 0, sy: 0, sw: 1080, sh: 1920 });
+  const z = zoomRect(1080, 1920, 1080, 1920, { z: 3, x: 0.25, y: 0.5 }, 1); assert.ok(Math.abs(z.sw - 360) < 1e-6 && Math.abs(z.sx + z.sw / 2 - 270) < 1e-6);
+  const edge = zoomRect(1080, 1920, 1080, 1920, { z: 2, x: 0, y: 1 }, 1); assert.ok(edge.sx === 0 && Math.abs(edge.sy + edge.sh - 1920) < 1e-6, "collé au bord, pas au-delà");
+  const half = zoomRect(1080, 1920, 1080, 1920, { z: 3, x: 0.25, y: 0.5 }, 0.5); assert.ok(Math.abs(half.sw - 540) < 1e-6, "à mi-chemin : 2×");
+  const wide = zoomRect(1920, 1080, 1080, 1920, null); assert.ok(Math.abs(wide.sw / wide.sh - 1080 / 1920) < 1e-6, "image large dans un cadre vertical : recadrée");
+  const ov = { id: "o", kind: "video" as const, start: 10, end: 16, mode: "full" as const, freeze: 2, zoom: { z: 2, x: 0.5, y: 0.5 } };
+  assert.equal(clipTime(ov, 11), 1); assert.equal(clipTime(ov, 15), 2, "figé à 2 s");
+  assert.equal(overlayZoomK(ov, 11.5), 0); assert.equal(overlayZoomK(ov, 13), 1); assert.equal(zoomEase(0.35), 0.5);
+});

@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.14)
+# Green Studio 3.1 — état réel (beta.15)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,14 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.15
+- **⏸ Pause + zoom** (montage) : arrêt sur image à la tête de lecture (2 s, réglable 0,5–8 s dans Habillage), avec zoom progressif vers le détail touché du doigt (pincer ou curseur, 1,2–4×). Aperçu figé puis reprise ; export : l'image figée est insérée (son coupé), la vidéo s'allonge d'autant.
+- **Extraits vidéo insérés : « Figer ici » + zoom** sur un détail ; **zoom aussi sur les images** (case de comic…). Même outil de cadrage, rectangle = ce qui sera visible.
+- **Loupe de l'aperçu** : pincer / double-tap pour inspecter l'image (jusqu'à 5×), sans effet sur l'export.
+- **Encodeur matériel** demandé à l'export quand le téléphone l'accepte (vérifié avant).
+- Corrigé : à l'export, les extraits vidéo insérés étaient dessinés avec une méthode qui n'accepte pas les images de mediabunny.
+- Testé : `tests/browser/freeze.e2e.cjs` (pixels exportés : avant / pendant l'arrêt zoomé et figé / après ; extrait figé et zoomé ; loupe) + unitaires du cadrage.
 
 ## 3.1.0-beta.14
 - **Mes mots** (onglet Texte) : dictionnaire personnel (un ou plusieurs mots → bonne écriture), appliqué après chaque transcription et aux sous-titres ; corriger un mot avec ✎ propose de l'y ajouter. Testé (`tools.e2e`, unitaires).

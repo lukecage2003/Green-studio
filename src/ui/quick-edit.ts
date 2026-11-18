@@ -3,7 +3,7 @@
 import { EditSession, wordsToRange, sourceToEdited, EPS, type Range, type Word } from "../core/timeline.ts";
 import { bestTakes, type TakeResult } from "../core/takes.ts";
 import { clipsOf, snapSplit, hitAt, trimEdge, wavePeaks } from "../core/derush.ts";
-import { compose, drawTitle, activeAt, type Overlay, type OverlayMode, type Title } from "../core/overlay.ts";
+import { compose, drawTitle, activeAt, clipTime, zoomRect, zoomEase, type Overlay, type OverlayMode, type Title, type Freeze, type ZoomTarget } from "../core/overlay.ts";
 
 /** Fichiers insérés (images, extraits) : gardés sur le téléphone (IndexedDB), retrouvés à la réouverture du projet. */
 const mediaDb = () => new Promise<IDBDatabase>((res, rej) => { const r = indexedDB.open("gs-media", 1); r.onupgradeneeded = () => r.result.createObjectStore("files"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
@@ -37,6 +37,8 @@ const CSS = `
 .qe .icon{width:40px;padding:0;background:none;font-size:20px}
 .qe .vw{position:relative;background:#000;height:36vh;margin:0 16px;border-radius:16px;overflow:hidden}
 .qe video{position:absolute;inset:0;width:100%;height:100%;background:#000;object-fit:contain}.qe video.spare{visibility:hidden}
+.qe .vwz{position:absolute;inset:0;transform-origin:0 0;touch-action:none}
+.qe .vzr{position:absolute;top:8px;right:8px;z-index:3;padding:4px 10px;font-size:13px;background:rgba(0,0,0,.6)}
 .qe .vw canvas.cc{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;border-radius:0;background:none}
 .qe .tl{padding:12px 16px 0}
 .qe canvas.wave{width:100%;height:96px;display:block;border-radius:14px;background:#141416;touch-action:none}
@@ -95,7 +97,7 @@ const CSS = `
 .lib ul{margin:0 12px}.lib li:first-child{border-radius:20px 20px 0 0}.lib li:last-child{border-radius:0 0 20px 20px}.lib li:only-child{border-radius:20px}
 `;
 
-interface Saved { hook?: Range | null; tight?: boolean; splits?: number[]; enWords?: Word[] | null; capLang?: "fr" | "en"; overlays?: Overlay[]; titles?: Title[]; v: 1; duration: number; words: Word[] | null; cuts: Range[]; ignored: string[]; peaks?: number[]; style?: CaptionStyle; norm?: boolean; q720?: boolean; voice?: boolean; zooms?: boolean }
+interface Saved { freezes?: Freeze[]; hook?: Range | null; tight?: boolean; splits?: number[]; enWords?: Word[] | null; capLang?: "fr" | "en"; overlays?: Overlay[]; titles?: Title[]; v: 1; duration: number; words: Word[] | null; cuts: Range[]; ignored: string[]; peaks?: number[]; style?: CaptionStyle; norm?: boolean; q720?: boolean; voice?: boolean; zooms?: boolean }
 
 export interface EditorOptions {
   file: Blob; key: string; name?: string; onClose?: () => void; toast?: (m: string, ms?: number) => void;
@@ -149,7 +151,7 @@ export async function openEditor(o: EditorOptions) {
   const root = document.createElement("section"); root.className = "qe"; root.setAttribute("aria-label", "Montage");
   root.innerHTML = `
     <header><button data-a="close">Fermer</button><h2>Montage</h2><button data-a="export">Exporter</button></header>
-    <div class="vw"><video playsinline preload="auto"></video><video class="spare" playsinline preload="auto" muted></video><canvas class="cc" aria-hidden="true"></canvas></div>
+    <div class="vw"><div class="vwz"><video playsinline preload="auto"></video><video class="spare" playsinline preload="auto" muted></video><canvas class="cc" aria-hidden="true"></canvas></div><button class="ib vzr" data-a="vzReset" hidden>🔍 1×</button></div>
     <div class="tl"><canvas class="wave" aria-label="Timeline : glissez pour vous déplacer, pincez pour zoomer, touchez un clip pour le sélectionner"></canvas>
       <div class="dr"><button class="ib icon" data-a="zout" aria-label="Dézoomer">−</button><button class="ib icon" data-a="zin" aria-label="Zoomer">＋</button>
         <button class="ib" data-a="split" title="Scinder le clip à la tête de lecture (calé entre deux mots)">✂ Scinder</button>
@@ -161,6 +163,7 @@ export async function openEditor(o: EditorOptions) {
       <label>Zooms <input type="checkbox" data-a="zooms"></label>
       <button class="ib" data-a="ins" title="Insérer une image ou un extrait par-dessus la vidéo">🖼 Insérer</button>
       <button class="ib" data-a="title" title="Ajouter un bandeau titre">🅣 Bandeau</button>
+      <button class="ib" data-a="freezeAdd" title="Figer l'image à la tête de lecture et zoomer sur un détail">⏸ Pause + zoom</button>
       <button class="ib" data-a="pub" title="Titres, description, hashtags et accroche">✍️ Publication</button>
       <button class="ib" data-a="voiceAB" title="Écouter votre voix avant / après le traitement studio">🎙 Voix studio</button>
       <button class="ib" data-a="trim" title="Couper le silence avant la première et après la dernière parole">✂ Bords muets</button>
@@ -194,6 +197,7 @@ export async function openEditor(o: EditorOptions) {
   (root.querySelector("[data-a=zooms]") as HTMLInputElement).checked = zooms;
   let overlays: Overlay[] = saved?.overlays ?? [], titles: Title[] = saved?.titles ?? [];
   let splits: number[] = saved?.splits ?? [], tight = saved?.tight ?? false; // tight : débuts de mots déjà recalés sur le son
+  let freezes: Freeze[] = saved?.freezes ?? [], fz: { f: Freeze; t0: number } | null = null, lastT = 0; // arrêts sur image ; celui en cours de lecture
   let hook: Range | null = saved?.hook ?? null; // accroche : passage rejoué en ouverture de la vidéo exportée
   const aiYes = new Set<string>(); // faux départs confirmés par l'IA du téléphone
   let enWords: Word[] | null = saved?.enWords ?? null, capLang: "fr" | "en" = saved?.capLang ?? "fr";
@@ -217,7 +221,7 @@ export async function openEditor(o: EditorOptions) {
   const ctl = new AbortController();
 
   const save = () => {
-    const s: Saved = { v: 1, hook, tight, splits, enWords, capLang, duration, words, cuts: session.cuts, ignored: [...ignored], style, norm, q720, voice, zooms, overlays, titles, peaks: pk ? Array.from(pk, (x) => Math.round(x * 255)) : undefined };
+    const s: Saved = { v: 1, freezes, hook, tight, splits, enWords, capLang, duration, words, cuts: session.cuts, ignored: [...ignored], style, norm, q720, voice, zooms, overlays, titles, peaks: pk ? Array.from(pk, (x) => Math.round(x * 255)) : undefined };
     try { localStorage.setItem(storeKey, JSON.stringify(s)); } catch { /* quota localStorage : on garde en mémoire */ }
   };
   const covered = (r: Range) => session.cuts.some((c) => c.start <= r.start + 0.02 && c.end >= r.end - 0.02);
@@ -235,7 +239,7 @@ export async function openEditor(o: EditorOptions) {
     (q("[data-a=undo]") as HTMLButtonElement).disabled = !session.canUndo;
     (q("[data-a=redo]") as HTMLButtonElement).disabled = !session.canRedo;
     const ed = session.editedDuration, removed = duration - ed;
-    setStatus(`Montage ${fmt(ed)} / ${fmt(duration)} · ${session.cuts.length} coupe(s)${removed > 0.5 ? ` · −${Math.round(removed)} s` : ""}${hook ? " · accroche en ouverture" : ""}`);
+    setStatus(`Montage ${fmt(ed)} / ${fmt(duration)} · ${session.cuts.length} coupe(s)${removed > 0.5 ? ` · −${Math.round(removed)} s` : ""}${hook ? " · accroche en ouverture" : ""}${freezes.length ? ` · ${freezes.length} arrêt(s) sur image` : ""}`);
     const open = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range)).length;
     q("[data-tab=sg]").textContent = `Suggestions${sugs.length ? ` (${open})` : ""}`;
     root.querySelectorAll<HTMLElement>("[data-tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
@@ -333,8 +337,12 @@ export async function openEditor(o: EditorOptions) {
   }
   function renderDress() {
     const ovRows = overlays.map((ov) => `<div class="sg" data-o="${ov.id}"><div class="t"><b style="color:#64d2ff">${ov.kind === "image" ? "Image" : "Extrait vidéo"} · ${fmt(ov.start)} → ${fmt(ov.end)}</b>
-        <div class="chips" style="margin-top:6px">${MODES.map(([m, l]) => `<button class="ib" data-a="omode" data-v="${m}" aria-pressed="${ov.mode === m}">${l}</button>`).join("")}</div></div>
-        <button class="ib" data-a="ominus" aria-label="Plus court">−</button><button class="ib" data-a="oplus" aria-label="Plus long">+</button><button class="ib" data-a="ohere">Ici</button><button class="ib" data-a="odel" aria-label="Supprimer">✕</button></div>`).join("");
+        <div class="chips" style="margin-top:6px">${MODES.map(([m, l]) => `<button class="ib" data-a="omode" data-v="${m}" aria-pressed="${ov.mode === m}">${l}</button>`).join("")}</div>
+        <div class="chips" style="margin-top:6px">${ov.kind === "video" ? `<button class="ib" data-a="ofreeze" aria-pressed="${ov.freeze != null}">${ov.freeze != null ? `⏸ Figé à ${ov.freeze.toFixed(1).replace(".", ",")} s` : "⏸ Figer ici"}</button>` : ""}<button class="ib" data-a="ozoom" aria-pressed="${!!ov.zoom}">🔍 ${ov.zoom ? `Zoom ${ov.zoom.z.toFixed(1).replace(".", ",")}×` : "Zoomer"}</button></div></div>
+        <button class="ib" data-a="ominus" aria-label="Plus court">−</button><button class="ib" data-a="oplus" aria-label="Plus long">+</button><button class="ib" data-a="ohere">Ici</button><button class="ib" data-a="odel" aria-label="Supprimer">✕</button></div>`).join("")
+      + freezes.map((f) => `<div class="sg" data-fz="${f.id}"><div class="t"><b style="color:#ff9f0a">⏸ Arrêt sur image · ${fmt(f.at)} · ${f.dur.toFixed(1).replace(".", ",")} s</b>
+        <div class="chips" style="margin-top:6px"><button class="ib" data-a="fzoom" aria-pressed="${!!f.zoom}">🔍 ${f.zoom ? `Zoom ${f.zoom.z.toFixed(1).replace(".", ",")}×` : "Zoomer"}</button><button class="ib" data-a="fplay">▶ Voir</button></div></div>
+        <button class="ib" data-a="fminus" aria-label="Plus court">−</button><button class="ib" data-a="fplus" aria-label="Plus long">+</button><button class="ib" data-a="fhere">Ici</button><button class="ib" data-a="fdel" aria-label="Supprimer">✕</button></div>`).join("");
     const tiRows = titles.map((ti) => `<div class="sg" data-ti="${ti.id}"><div class="t"><b style="color:#bf5af2">Bandeau · ${fmt(ti.start)} → ${fmt(ti.end)}</b>
         <input data-a="ttext" value="${esc(ti.text)}" placeholder="Titre" style="width:100%;margin-top:6px;background:rgba(255,255,255,.08);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit">
         <input data-a="tsub" value="${esc(ti.sub ?? "")}" placeholder="Sous-titre (facultatif)" style="width:100%;margin-top:4px;background:rgba(255,255,255,.06);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit;font-size:14px"></div>
@@ -342,6 +350,53 @@ export async function openEditor(o: EditorOptions) {
     body.innerHTML = `<div class="row" style="padding:0 0 10px"><button class="ib go" data-a="ins">🖼 Image / extrait</button><button class="ib" data-a="title">🅣 Bandeau</button></div>
       ${ovRows || tiRows ? ovRows + tiRows : `<div class="card"><b>Habillez votre vidéo</b><p>Insérez une case de comic, une couverture ou un extrait : il s’affiche par-dessus la vidéo au moment choisi (tête de lecture, ou les mots sélectionnés dans Texte), en plein écran, en incrustation, ou avec vous en petit dans un coin. Ajoutez un bandeau « Nom · Thème du jour ».</p></div>`}` + bankCard();
   }
+  /**
+   * Cadrage du zoom : l'image (vidéo figée, extrait ou image) s'affiche ; on touche le détail à agrandir, on pince ou on glisse
+   * le curseur pour le niveau. Le rectangle montre exactement ce qui sera visible. undefined = annulé, null = sans zoom.
+   */
+  function zoomPick(src: CanvasImageSource, sw: number, sh: number, aspect: number, cur?: ZoomTarget | null): Promise<ZoomTarget | null | undefined> {
+    return new Promise((res) => {
+      const m = document.createElement("div"); m.className = "modal";
+      m.innerHTML = `<div class="card" style="gap:10px"><b>Zoom sur un détail</b><p>Touchez le détail à agrandir · pincez ou réglez le niveau.</p>
+        <canvas data-z style="width:100%;height:46vh;border-radius:12px;background:#000;touch-action:none"></canvas>
+        <label class="opt">Zoom <input type="range" data-zl min="1.2" max="4" step="0.1" value="${cur?.z ?? 2}" style="flex:1"> <b data-zv></b></label>
+        <div class="row" style="padding:0"><button class="ib go" data-zx="ok">Valider</button><button class="ib" data-zx="none">Sans zoom</button><button class="ib" data-zx="no">Annuler</button></div></div>`;
+      root.appendChild(m);
+      const cv2 = m.querySelector<HTMLCanvasElement>("[data-z]")!, sl = m.querySelector<HTMLInputElement>("[data-zl]")!, zv = m.querySelector<HTMLElement>("[data-zv]")!;
+      let zt: ZoomTarget = { z: cur?.z ?? 2, x: cur?.x ?? 0.5, y: cur?.y ?? 0.4 };
+      const geo = () => { const dpr = devicePixelRatio || 1, W = cv2.clientWidth * dpr, H = cv2.clientHeight * dpr, k = Math.min(W / sw, H / sh); return { dpr, W, H, k, ox: (W - sw * k) / 2, oy: (H - sh * k) / 2 }; };
+      const paint = () => {
+        const { dpr, W, H, k, ox, oy } = geo(); if (cv2.width !== Math.round(W)) { cv2.width = Math.round(W); cv2.height = Math.round(H); }
+        const g = cv2.getContext("2d")!; g.clearRect(0, 0, W, H); g.drawImage(src, ox, oy, sw * k, sh * k);
+        const r = zoomRect(sw, sh, aspect * 1000, 1000, zt, 1), rx = ox + r.sx * k, ry = oy + r.sy * k, rw = r.sw * k, rh = r.sh * k;
+        g.fillStyle = "rgba(0,0,0,.55)"; g.fillRect(ox, oy, sw * k, ry - oy); g.fillRect(ox, ry + rh, sw * k, oy + sh * k - ry - rh); g.fillRect(ox, ry, rx - ox, rh); g.fillRect(rx + rw, ry, ox + sw * k - rx - rw, rh);
+        g.strokeStyle = "#fff"; g.lineWidth = 2 * dpr; g.strokeRect(rx, ry, rw, rh);
+        g.fillStyle = "#ff9f0a"; g.beginPath(); g.arc(ox + zt.x * sw * k, oy + zt.y * sh * k, 6 * dpr, 0, 7); g.fill();
+        zv.textContent = zt.z.toFixed(1).replace(".", ",") + "×";
+      };
+      const pts = new Map<number, { x: number; y: number }>(); let pinch: { d: number; z: number } | null = null;
+      const at = (e: PointerEvent) => { const b = cv2.getBoundingClientRect(), { dpr, k, ox, oy } = geo();
+        zt = { ...zt, x: Math.min(1, Math.max(0, ((e.clientX - b.left) * dpr - ox) / (sw * k))), y: Math.min(1, Math.max(0, ((e.clientY - b.top) * dpr - oy) / (sh * k))) }; };
+      const dist = () => { const [a, b] = [...pts.values()]; return Math.hypot(a.x - b.x, a.y - b.y) || 1; };
+      cv2.onpointerdown = (e) => { cv2.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); if (pts.size === 2) pinch = { d: dist(), z: zt.z }; else { at(e); paint(); } };
+      cv2.onpointermove = (e) => { if (!pts.has(e.pointerId)) return; pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pinch && pts.size === 2) { zt = { ...zt, z: Math.min(4, Math.max(1.2, pinch.z * dist() / pinch.d)) }; sl.value = String(zt.z); } else if (!pinch) at(e); paint(); };
+      cv2.onpointerup = cv2.onpointercancel = (e) => { pts.delete(e.pointerId); if (pts.size < 2) pinch = null; };
+      sl.oninput = () => { zt = { ...zt, z: +sl.value }; paint(); };
+      m.querySelectorAll<HTMLElement>("[data-zx]").forEach((b) => (b.onclick = () => { m.remove(); res(b.dataset.zx === "ok" ? zt : b.dataset.zx === "none" ? null : undefined); }));
+      requestAnimationFrame(paint);
+    });
+  }
+  /** Image d'un extrait à l'instant voulu (pour le cadrage du zoom). */
+  async function overlayFrame(ov: Overlay): Promise<{ src: CanvasImageSource; w: number; h: number } | null> {
+    const e = ovSrc.get(ov.id); if (!e) return null;
+    if (e.img) return { src: e.img, w: e.img.width, h: e.img.height };
+    const v = e.vid!, want = ov.freeze ?? Math.min(Math.max(0, video.currentTime - ov.start), ov.end - ov.start);
+    if (Math.abs(v.currentTime - want) > 0.02) await new Promise((r) => { v.onseeked = r; v.currentTime = want; setTimeout(r, 1500); });
+    return { src: v, w: v.videoWidth, h: v.videoHeight };
+  }
+  /** Forme du cadre où l'extrait s'affiche (même géométrie que l'export). */
+  const ovAspect = (ov: Overlay) => { const W = video.videoWidth || 9, H = video.videoHeight || 16; if (ov.mode !== "pip") return W / H; const w = W * 0.88; return w / Math.min(H * 0.42, w * 0.75); };
   /** Insère le fichier choisi : sur les mots sélectionnés, sinon à la tête de lecture (3,5 s pour une image). */
   async function insertMedia(f: File) {
     const kind: Overlay["kind"] = f.type.startsWith("video/") ? "video" : "image", id = "ov" + Date.now().toString(36);
@@ -364,9 +419,9 @@ export async function openEditor(o: EditorOptions) {
   function previewSrc(ov: Overlay, t: number) {
     const e = ovSrc.get(ov.id); if (!e) return null;
     if (e.img) return e.img;
-    const v = e.vid!; const want = Math.max(0, t - ov.start);
-    if (Math.abs(v.currentTime - want) > 0.3) v.currentTime = want;
-    if (!video.paused && v.paused) v.play().catch(() => {}); if (video.paused && !v.paused) v.pause();
+    const v = e.vid!; const want = clipTime(ov, t), frozen = ov.freeze != null && t - ov.start >= ov.freeze;
+    if (Math.abs(v.currentTime - want) > (frozen ? 0.04 : 0.3)) v.currentTime = want;
+    if (!video.paused && !frozen && v.paused) v.play().catch(() => {}); if ((video.paused || frozen) && !v.paused) v.pause();
     return v.readyState >= 2 ? v : null;
   }
 
@@ -415,9 +470,14 @@ export async function openEditor(o: EditorOptions) {
     const k = Math.min(bw / video.videoWidth, bh / video.videoHeight), w = video.videoWidth * k * dpr, h = video.videoHeight * k * dpr, t = video.currentTime;
     const ov = activeAt(overlays, t), ti = activeAt(titles, t);
     for (const o of overlays) if (o !== ov) { const v = ovSrc.get(o.id)?.vid; if (v && !v.paused) v.pause(); }
-    if (ov || ti) {
+    const zk = fz ? zoomEase((performance.now() - fz.t0) / 1000) : 0;
+    const speaker = (x: number, y: number, ww: number, hh: number) => {
+      if (fz) { const r = zoomRect(video.videoWidth, video.videoHeight, ww, hh, fz.f.zoom, zk); g.drawImage(video, r.sx, r.sy, r.sw, r.sh, x, y, ww, hh); }
+      else if (x || y || ww !== w || hh !== h) g.drawImage(video, x, y, ww, hh);
+    };
+    if (ov || ti || fz) {
       g.save(); g.translate((ccv.width - w) / 2, (ccv.height - h) / 2);
-      compose(g, w, h, t, ov, ov ? previewSrc(ov, t) : null, (x, y, ww, hh) => { if (x || y || ww !== w || hh !== h) g.drawImage(video, x, y, ww, hh); });
+      compose(g, w, h, t, ov, ov ? previewSrc(ov, t) : null, speaker);
       drawTitle(g, w, h, t, ti); g.restore();
     }
     if (!lines.length || style.preset === "none") return;
@@ -484,6 +544,7 @@ export async function openEditor(o: EditorOptions) {
       rr(x, yT, w, hh, 7 * dpr); g.fillStyle = sc && c.start === sc.start ? "#24453a" : "#1f2f28"; g.fill(); g.save(); rr(x, yT, w, hh, 7 * dpr); g.clip(); waveIn(c.start, c.end, "#6fd39c"); g.restore(); }
     // repères : extraits (bleu), bandeaux (violet), suggestions (jaune)
     g.fillStyle = "rgba(100,210,255,.95)"; for (const o of overlays) g.fillRect(X(o.start), yT + 2 * dpr, Math.max(2, X(o.end) - X(o.start)), 3 * dpr);
+    g.fillStyle = "#ff9f0a"; for (const f of freezes) { const fx = X(f.at); g.fillRect(fx - 1.5 * dpr, yT, 3 * dpr, hh); g.beginPath(); g.moveTo(fx - 5 * dpr, yT); g.lineTo(fx + 5 * dpr, yT); g.lineTo(fx, yT + 6 * dpr); g.fill(); }
     g.fillStyle = "rgba(191,90,242,.95)"; for (const ti of titles) g.fillRect(X(ti.start), yT + 6 * dpr, Math.max(2, X(ti.end) - X(ti.start)), 3 * dpr);
     g.fillStyle = "#ffd60a"; for (const s of sugs) if (!ignored.has(s.id) && !covered(s.range)) g.fillRect(X(s.range.start), yB - 4 * dpr, Math.max(2, X(s.range.end) - X(s.range.start)), 3 * dpr);
     // sélection : cadre blanc + poignées
@@ -541,6 +602,25 @@ export async function openEditor(o: EditorOptions) {
     }
   }
 
+  /* ---------- Loupe de l'aperçu : pincer pour zoomer, glisser pour se déplacer, double-tap pour 2× / 1× (l'export n'est pas touché) ---------- */
+  { const vw = q<HTMLElement>(".vw"), vz = q<HTMLElement>(".vwz"), rb = q<HTMLElement>("[data-a=vzReset]");
+    let S = 1, X = 0, Y = 0, lastTap = 0; const pts = new Map<number, { x: number; y: number }>(); let g0: { d: number; S: number; X: number; Y: number; mx: number; my: number } | null = null;
+    const apply = () => { const w = vw.clientWidth, h = vw.clientHeight; S = Math.min(5, Math.max(1, S)); X = Math.min(0, Math.max(w - w * S, X)); Y = Math.min(0, Math.max(h - h * S, Y));
+      vz.style.transform = S > 1.01 ? `translate(${X}px,${Y}px) scale(${S})` : ""; rb.hidden = S <= 1.01; rb.textContent = `🔍 ${S.toFixed(1).replace(".", ",")}× ✕`; };
+    const zoomAtPt = (ns: number, px: number, py: number) => { X = px - (px - X) * ns / S; Y = py - (py - Y) * ns / S; S = ns; apply(); };
+    const loc = (e: PointerEvent) => { const b = vw.getBoundingClientRect(); return { x: e.clientX - b.left, y: e.clientY - b.top }; };
+    vw.addEventListener("pointerdown", (e) => { if ((e.target as HTMLElement).closest("button")) return; vw.setPointerCapture(e.pointerId); pts.set(e.pointerId, loc(e));
+      if (pts.size === 2) { const [a, b] = [...pts.values()]; g0 = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, S, X, Y, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }; }
+      else { const now = performance.now(), p = loc(e); if (now - lastTap < 300) { zoomAtPt(S > 1.01 ? 1 : 2.5, p.x, p.y); lastTap = 0; } else lastTap = now; g0 = { d: 0, S, X, Y, mx: p.x, my: p.y }; } });
+    vw.addEventListener("pointermove", (e) => { if (!pts.has(e.pointerId) || !g0) return; pts.set(e.pointerId, loc(e));
+      if (pts.size === 2 && g0.d) { const [a, b] = [...pts.values()], d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, ns = Math.min(5, Math.max(1, g0.S * d / g0.d));
+        X = mx - (g0.mx - g0.X) * ns / g0.S; Y = my - (g0.my - g0.Y) * ns / g0.S; S = ns; apply(); }
+      else if (pts.size === 1 && S > 1.01) { const p = loc(e); X = g0.X + p.x - g0.mx; Y = g0.Y + p.y - g0.my; apply(); } });
+    const up = (e: PointerEvent) => { pts.delete(e.pointerId); if (pts.size === 1) { const p = [...pts.values()][0]; g0 = { d: 0, S, X, Y, mx: p.x, my: p.y }; } else if (!pts.size) g0 = null; };
+    vw.addEventListener("pointerup", up); vw.addEventListener("pointercancel", up);
+    rb.onclick = () => { S = 1; X = Y = 0; apply(); };
+  }
+
   /* ---------- Lecture : saute les parties coupées ---------- */
   /** Cale le lecteur de réserve sur `at` (en pause, image décodée) avant d'en avoir besoin. */
   function prepare(at: number) { if (+(spare.dataset.at ?? -1) !== at) { spare.dataset.at = String(at); spare.pause(); spare.currentTime = at; } }
@@ -561,12 +641,18 @@ export async function openEditor(o: EditorOptions) {
   };
   function arm() { const v = video as any; if (!v.requestVideoFrameCallback) return; if (vfEl) (vfEl as any).cancelVideoFrameCallback(vfH); vfEl = video; vfH = v.requestVideoFrameCallback(onVF); }
   arm();
-  function seek(t: number) { stopAt = null; video.currentTime = Math.max(0, Math.min(duration, t)); }
+  function seek(t: number) { stopAt = null; fz = null; lastT = t; video.currentTime = Math.max(0, Math.min(duration, t)); }
   function playRange(a: number, b: number) { video.currentTime = Math.max(0, a); stopAt = b; follow = true; video.play().catch(() => {}); }
   const pvOn = () => (q("[data-a=pv]") as HTMLInputElement).checked;
   function tick() {
     if (closed) return;
     const t = video.currentTime;
+    if (fz) { if ((performance.now() - fz.t0) / 1000 >= fz.f.dur) { fz = null; video.play().catch(() => {}); } }
+    else if (!video.paused) {
+      const f = freezes.find((x) => x.at > lastT && x.at <= t + 0.02 && t - x.at < 0.4 && !inCut(x.at));
+      if (f) { video.pause(); fz = { f, t0: performance.now() }; }
+    }
+    lastT = t;
     if (!video.paused) {
       if (stopAt != null && t >= stopAt) { video.pause(); stopAt = null; }
       else if (pvOn() && stopAt == null) {
@@ -576,7 +662,7 @@ export async function openEditor(o: EditorOptions) {
       }
     }
     q("[data-r=time]").textContent = `${fmt(t)} / ${fmt(duration)}`;
-    q("[data-a=play]").textContent = video.paused ? "▶" : "⏸";
+    q("[data-a=play]").textContent = video.paused && !fz ? "▶" : "⏸";
     if (words && tab === "tx") { // mot en cours
       let lo = 0, hi = words.length - 1, k = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (words[m].start <= t) { k = m; lo = m + 1; } else hi = m - 1; }
       if (k !== curWord) { const sp = body.querySelectorAll<HTMLElement>(".tx span"); sp[curWord]?.classList.remove("cur"); curWord = k;
@@ -838,7 +924,7 @@ export async function openEditor(o: EditorOptions) {
         if (!webCodecsAvailable()) throw new Error("WebCodecs indisponible");
         let gain = 1; if (norm) { await audioP; if (pcm) gain = loudnessGain(pcm, 16000, session.kept); }
         const captions = words && style.preset !== "none" ? { lines, style } : null;
-        const r = await exportEdited(o.file, session.cuts, { onProgress, signal: ac.signal, gain, captions, maxHeight: q720 ? 1280 : 0, voice, zoom: zooms ? zoomAt : null, intro: hook && !inCut((hook.start + hook.end) / 2) ? hook : null,
+        const r = await exportEdited(o.file, session.cuts, { onProgress, signal: ac.signal, gain, captions, maxHeight: q720 ? 1280 : 0, voice, zoom: zooms ? zoomAt : null, intro: hook && !inCut((hook.start + hook.end) / 2) ? hook : null, freezes: freezes.filter((f) => !inCut(f.at)),
           dress: overlays.length || titles.length ? { overlays, titles, images: new Map([...ovSrc].filter(([, e]) => e.img).map(([id, e]) => [id, e.img!])), videos: new Map([...ovSrc].filter(([, e]) => !e.img).map(([id, e]) => [id, e.blob])) } : null }); blob = r.blob; ext = r.ext; how = `${r.video.toUpperCase()}${r.audio ? " + " + r.audio.toUpperCase() : ""}`;
       } catch (e: any) {
         if (e?.name === "AbortError") throw e;
@@ -874,7 +960,7 @@ export async function openEditor(o: EditorOptions) {
     for (const e of ovSrc.values()) { e.img?.close(); if (e.vid) { e.vid.pause(); URL.revokeObjectURL(e.vid.src); } } for (const v of [video, spare]) { v.pause(); v.removeAttribute("src"); v.load(); }
     URL.revokeObjectURL(url); removeEventListener("keydown", onKey); root.remove(); o.onClose?.();
   }
-  root.addEventListener("click", (e) => {
+  root.addEventListener("click", async (e) => {
     const t = e.target as HTMLElement, a = t.closest<HTMLElement>("[data-a]")?.dataset.a, tb = t.closest<HTMLElement>("[data-tab]")?.dataset.tab;
     if (tb) { tab = tb as typeof tab; body.innerHTML = ""; refresh(); body.scrollTop = 0; return; }
     const wi = t.closest<HTMLElement>(".tx span")?.dataset.i;
@@ -891,7 +977,7 @@ export async function openEditor(o: EditorOptions) {
       case "undo": if (session.undo()) commit(); break;
       case "redo": if (session.redo()) commit(); break;
       case "export": doExport(); break;
-      case "play": if (video.paused) { stopAt = null; follow = true; if (video.currentTime >= duration - 0.05) video.currentTime = 0; video.play().catch(() => {}); } else video.pause(); break;
+      case "play": if (fz) { fz = null; break; } if (video.paused) { stopAt = null; follow = true; if (video.currentTime >= duration - 0.05) video.currentTime = 0; video.play().catch(() => {}); } else video.pause(); break;
       case "zin": case "zout": case "fit": case "split": case "del": case "rest": derush(a); break;
       case "transcribe": transcribe(); break;
       case "preset": style = { ...style, preset: t.closest<HTMLElement>("[data-v]")!.dataset.v as CaptionPreset }; save();
@@ -930,6 +1016,31 @@ export async function openEditor(o: EditorOptions) {
         saveTpls(r); body.innerHTML = ""; renderCC(); break; }
       case "ins": q<HTMLInputElement>("[data-r=ovFile]").click(); break;
       case "title": addTitle(); break;
+      case "freezeAdd": { video.pause(); fz = null;
+        if (!video.videoWidth) break;
+        if (inCut(video.currentTime)) { toast("Placez la tête de lecture sur une partie gardée.", 2500); break; }
+        const at0 = video.currentTime; await new Promise((r) => setTimeout(r, 60)); // image affichée avant le cadrage
+        const zt = await zoomPick(video, video.videoWidth, video.videoHeight, video.videoWidth / video.videoHeight); if (zt === undefined) break;
+        freezes = [...freezes.filter((f) => Math.abs(f.at - at0) > 0.05), { id: "fz" + Date.now().toString(36), at: at0, dur: 2, zoom: zt ?? undefined }].sort((a, b) => a.at - b.at);
+        commit(); toast("⏸ Arrêt sur image ajouté (2 s). Réglez sa durée dans Habillage.", 3000); break; }
+      case "fzoom": case "fminus": case "fplus": case "fhere": case "fdel": case "fplay": {
+        const f = freezes.find((x) => x.id === t.closest<HTMLElement>("[data-fz]")?.dataset.fz); if (!f) break;
+        if (a === "fminus") f.dur = Math.max(0.5, f.dur - 0.5);
+        if (a === "fplus") f.dur = Math.min(8, f.dur + 0.5);
+        if (a === "fhere") f.at = video.currentTime;
+        if (a === "fdel") freezes = freezes.filter((x) => x !== f);
+        if (a === "fplay") { seek(Math.max(0, f.at - 1)); video.play().catch(() => {}); break; }
+        if (a === "fzoom") { video.pause(); seek(f.at); await new Promise((r) => { video.onseeked = r; setTimeout(r, 1500); });
+          const zt = await zoomPick(video, video.videoWidth, video.videoHeight, video.videoWidth / video.videoHeight, f.zoom); if (zt === undefined) break; f.zoom = zt ?? undefined; }
+        body.innerHTML = ""; commit(); break; }
+      case "ofreeze": case "ozoom": {
+        const ov = overlays.find((x) => x.id === t.closest<HTMLElement>("[data-o]")?.dataset.o); if (!ov) break;
+        if (a === "ofreeze") {
+          if (ov.freeze != null) delete ov.freeze;
+          else { const d = video.currentTime - ov.start; if (d < 0 || d > ov.end - ov.start) { toast("Placez la tête de lecture pendant l’extrait, au moment à figer.", 3000); break; } ov.freeze = Math.max(0, d); }
+        } else { video.pause(); const fr = await overlayFrame(ov); if (!fr || !fr.w) { toast("Image de l’extrait indisponible.", 2500); break; }
+          const zt = await zoomPick(fr.src, fr.w, fr.h, ovAspect(ov), ov.zoom); if (zt === undefined) break; if (zt) ov.zoom = zt; else delete ov.zoom; }
+        body.innerHTML = ""; commit(); break; }
       case "omode": case "ominus": case "oplus": case "ohere": case "odel": {
         const id = t.closest<HTMLElement>("[data-o]")?.dataset.o, ov = overlays.find((x) => x.id === id); if (!ov) break;
         if (a === "omode") ov.mode = t.closest<HTMLElement>("[data-v]")!.dataset.v as OverlayMode;
