@@ -3,7 +3,7 @@
 import { EditSession, wordsToRange, sourceToEdited, editedDuration, EPS, type Range, type Word } from "../core/timeline.ts";
 import { bestTakes, type TakeResult } from "../core/takes.ts";
 import { clipsOf, snapSplit, hitAt, trimEdge, wavePeaks } from "../core/derush.ts";
-import { compose, drawTitle, activeAt, activeMarks, drawMark, sfxFromWords, SFX, type Mark, clipTime, zoomRect, zoomEase, pathDuration, type Overlay, type OverlayMode, type Title, type Freeze, type ZoomTarget } from "../core/overlay.ts";
+import { compose, drawTitle, activeAt, activeMarks, drawMark, sfxFromWords, SFX, type Mark, clipTime, zoomRect, zoomEase, pathDuration, ANIMS, type OverlayAnim, type Overlay, type OverlayMode, type Title, type Freeze, type ZoomTarget } from "../core/overlay.ts";
 
 /** Fichiers insérés (images, extraits) : gardés sur le téléphone (IndexedDB), retrouvés à la réouverture du projet. */
 const mediaDb = () => new Promise<IDBDatabase>((res, rej) => { const r = indexedDB.open("gs-media", 1); r.onupgradeneeded = () => r.result.createObjectStore("files"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
@@ -14,7 +14,7 @@ import { applyDictionary, findPhrase, type DictEntry } from "../core/dictionary.
 import { TICS, RHYTHM, type Rhythm, type SnapMode, snapToQuiet, withBounds, tightenWords, dropCrumbs, cleanTranscript, analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
 import { peaks as computePeaks, loudnessGain, speechBounds } from "../core/audio.ts";
 import { buildCaptions, drawCaption, lineAt, CAPTION_DEFAULT, PRESETS, type CapLine, type CaptionStyle, type CaptionPreset } from "../core/captions.ts";
-import { probe, extractAudio, exportEdited, webCodecsAvailable, extractClip } from "../core/media.ts";
+import { probe, extractAudio, exportEdited, webCodecsAvailable, extractClip, type Transition, type Aspect } from "../core/media.ts";
 import { StudioVoice, loadDenoiser } from "../core/voice.ts";
 import { exportRealtime } from "../core/export.ts";
 
@@ -171,7 +171,7 @@ export async function openEditor(o: EditorOptions) {
     <div class="tl"><canvas class="wave" aria-label="Timeline : glissez pour vous déplacer, pincez pour zoomer, touchez un clip pour le sélectionner"></canvas>
       <div class="tlz"><button data-a="zout" aria-label="Dézoomer">−</button><button data-a="zin" aria-label="Zoomer">＋</button><button data-a="fit" aria-label="Voir toute la vidéo">⤢</button></div></div>
     <div class="tabs" role="tablist"><button role="tab" data-tab="tx" aria-selected="true">Texte</button><button role="tab" data-tab="sg" aria-selected="false">Suggestions</button><button role="tab" data-tab="cc" aria-selected="false">Sous-titres</button><button role="tab" data-tab="dress" aria-selected="false">Habillage</button><button class="grow" data-a="grow" aria-label="Agrandir la zone de travail">⌃</button></div>
-    <input type="file" data-r="ovFile" accept="image/*,video/*" hidden><input type="file" data-r="bankFile" accept="image/*,video/*" hidden>
+    <input type="file" data-r="ovFile" accept="image/*,video/*" hidden><input type="file" data-r="withFile" accept="image/*" hidden><input type="file" data-r="bankFile" accept="image/*,video/*" hidden>
     <div class="body" data-r="body"></div>
     <nav class="tbar" aria-label="Outils">
       <button class="tb" data-a="split" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.6 7.6 20 18M8.6 16.4 20 6"/></svg><span>Scinder</span></button><button class="tb" data-a="del" disabled><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Supprimer</span></button><button class="tb" data-a="rest" hidden><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.6M4 3.5V8.6h5.1"/></svg><span>Restaurer</span></button><button class="tb" data-a="clean" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.6L18.5 9l-4.7 1.8L12 15.5l-1.8-4.7L5.5 9l4.7-1.4zM18.5 15l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/></svg><span>Nettoyer</span></button><button class="tb" data-a="freezeAdd" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21M8.5 8v5M12.5 8v5"/></svg><span>Pause + zoom</span></button>
@@ -224,7 +224,7 @@ export async function openEditor(o: EditorOptions) {
     else { const v = document.createElement("video"); v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = URL.createObjectURL(blob); e.vid = v; }
     ovSrc.set(id, e);
   }
-  overlays.forEach((ov) => loadOverlay(ov.id, ov.kind).catch(() => {}));
+  overlays.forEach((ov) => { loadOverlay(ov.id, ov.kind).catch(() => {}); if (ov.with) loadOverlay(ov.with, "image").catch(() => {}); });
   let tab: "tx" | "sg" | "cc" | "dress" = "tx", sel: { anchor: number; a: number; b: number } | null = null, inPt: number | null = null, stopAt: number | null = null;
   let worker: Worker | null = null, raf = 0, closed = false, curWord = -1, follow = true;
   const ctl = new AbortController();
@@ -337,7 +337,7 @@ export async function openEditor(o: EditorOptions) {
           <button class="ib" data-a="ign" aria-label="${ign ? "Rétablir la suggestion" : "Ignorer"}">${ign ? "↩" : "✕"}</button></div>`; }).join("");
   }
 
-  const MODES: [OverlayMode, string][] = [["full", "Plein écran"], ["pip", "Incrustation"], ["me", "Moi en petit"]];
+  const MODES: [OverlayMode, string][] = [["full", "Plein écran"], ["pip", "Incrustation"], ["me", "Moi en petit"], ["compare", "Avant / Après"]];
   function bankCard() {
     const l = myBank();
     return `<details class="card" data-bank style="margin-top:10px" ${l.length ? "open" : ""}><summary><b>Banque d’images</b> (${l.length})</summary>
@@ -347,18 +347,20 @@ export async function openEditor(o: EditorOptions) {
   function renderDress() {
     const ovRows = overlays.map((ov) => `<div class="sg" data-o="${ov.id}"><div class="t"><b style="color:#64d2ff">${ov.kind === "image" ? "Image" : "Extrait vidéo"} · ${fmt(ov.start)} → ${fmt(ov.end)}</b>
         <div class="chips" style="margin-top:6px">${MODES.map(([m, l]) => `<button class="ib" data-a="omode" data-v="${m}" aria-pressed="${ov.mode === m}">${l}</button>`).join("")}</div>
-        <div class="chips" style="margin-top:6px">${ov.kind === "video" ? `<button class="ib" data-a="ofreeze" aria-pressed="${ov.freeze != null}">${ov.freeze != null ? `⏸ Figé à ${ov.freeze.toFixed(1).replace(".", ",")} s` : "⏸ Figer ici"}</button>` : ""}<button class="ib" data-a="ozoom" aria-pressed="${!!(ov.zoom || ov.path)}">🔍 ${ov.path ? `Parcours ${ov.path.length} cases` : ov.zoom ? `Zoom ${ov.zoom.z.toFixed(1).replace(".", ",")}×` : "Zoomer / cases"}</button></div></div>
+        <div class="chips" style="margin-top:6px">${ov.kind === "video" ? `<button class="ib" data-a="ofreeze" aria-pressed="${ov.freeze != null}">${ov.freeze != null ? `⏸ Figé à ${ov.freeze.toFixed(1).replace(".", ",")} s` : "⏸ Figer ici"}</button>` : ""}<button class="ib" data-a="ozoom" aria-pressed="${!!(ov.zoom || ov.path)}">🔍 ${ov.path ? `Parcours ${ov.path.length} cases` : ov.zoom ? `Zoom ${ov.zoom.z.toFixed(1).replace(".", ",")}×` : "Zoomer / cases"}</button></div>
+        ${ov.mode === "compare" ? `<div class="chips" style="margin-top:6px"><button class="ib ${ov.with ? "" : "go"}" data-a="owith">🖼 ${ov.with ? "Changer l’image « après »" : "Choisir l’image « après »"}</button><button class="ib" data-a="olabels">🏷 ${esc((ov.labels ?? ["Avant", "Après"]).join(" / "))}</button></div>`
+        : `<div class="chips anim" style="margin-top:6px">${ANIMS.map(([k, l]) => `<button class="ib" data-a="oanim" data-v="${k}" aria-pressed="${(ov.anim ?? "none") === k}">${l}</button>`).join("")}</div>`}</div>
         <button class="ib" data-a="ominus" aria-label="Plus court">−</button><button class="ib" data-a="oplus" aria-label="Plus long">+</button><button class="ib" data-a="ohere">Ici</button><button class="ib" data-a="odel" aria-label="Supprimer">✕</button></div>`).join("")
       + marks.map((m) => `<div class="sg" data-mk="${m.id}"><div class="t"><b style="color:#ffd60a">${m.type === "arrow" ? "➜ Flèche" : m.type === "circle" ? "◯ Cercle" : "💥 " + esc(m.text ?? "")} · ${fmt(m.start)} → ${fmt(m.end)}</b></div>
         <button class="ib" data-a="mminus" aria-label="Plus court">−</button><button class="ib" data-a="mplus" aria-label="Plus long">+</button><button class="ib" data-a="mhere">Ici</button><button class="ib" data-a="mdel" aria-label="Supprimer">✕</button></div>`).join("")
       + freezes.map((f) => `<div class="sg" data-fz="${f.id}"><div class="t"><b style="color:#ff9f0a">⏸ Arrêt sur image · ${fmt(f.at)} · ${f.dur.toFixed(1).replace(".", ",")} s</b>
         <div class="chips" style="margin-top:6px"><button class="ib" data-a="fzoom" aria-pressed="${!!f.zoom}">🔍 ${f.zoom ? `Zoom ${f.zoom.z.toFixed(1).replace(".", ",")}×` : "Zoomer"}</button><button class="ib" data-a="fplay">▶ Voir</button></div></div>
         <button class="ib" data-a="fminus" aria-label="Plus court">−</button><button class="ib" data-a="fplus" aria-label="Plus long">+</button><button class="ib" data-a="fhere">Ici</button><button class="ib" data-a="fdel" aria-label="Supprimer">✕</button></div>`).join("");
-    const tiRows = titles.map((ti) => `<div class="sg" data-ti="${ti.id}"><div class="t"><b style="color:#bf5af2">${ti.kind === "chapter" ? "📖 Chapitre" : ti.kind === "bubble" ? "💬 Bulle" : "Bandeau"} · ${fmt(ti.start)} → ${fmt(ti.end)}</b>
+    const tiRows = titles.map((ti) => `<div class="sg" data-ti="${ti.id}"><div class="t"><b style="color:#bf5af2">${ti.kind === "chapter" ? "📖 Chapitre" : ti.kind === "bubble" ? "💬 Bulle" : ti.kind === "card" ? "🪪 Fiche" : ti.kind === "timeline" ? "🗓 Frise" : "Bandeau"} · ${fmt(ti.start)} → ${fmt(ti.end)}</b>
         <input data-a="ttext" value="${esc(ti.text)}" placeholder="Titre" style="width:100%;margin-top:6px;background:rgba(255,255,255,.08);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit">
-        <input data-a="tsub" value="${esc(ti.sub ?? "")}" placeholder="Sous-titre (facultatif)" style="width:100%;margin-top:4px;background:rgba(255,255,255,.06);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit;font-size:14px"></div>
+        <input data-a="tsub" value="${esc(ti.sub ?? "")}" placeholder="${ti.kind === "card" ? "Pouvoirs : … ; Première apparition : …" : ti.kind === "timeline" ? "1962 Création ; 1984 Secret Wars ; …" : "Sous-titre (facultatif)"}" style="width:100%;margin-top:4px;background:rgba(255,255,255,.06);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit;font-size:14px"></div>
         <button class="ib" data-a="tminus" aria-label="Plus court">−</button><button class="ib" data-a="tplus" aria-label="Plus long">+</button><button class="ib" data-a="there">Ici</button><button class="ib" data-a="tdel" aria-label="Supprimer">✕</button></div>`).join("");
-    body.innerHTML = `<div class="row" style="padding:0 0 10px"><button class="ib go" data-a="ins">🖼 Image / extrait</button><button class="ib" data-a="title">🅣 Bandeau</button><button class="ib" data-a="chapter">📖 Chapitre</button><button class="ib" data-a="bubble">💬 Bulle</button><button class="ib" data-a="annot">✏️ Annoter</button><button class="ib" data-a="sfx">💥 Onomatopée</button>${words && sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length ? `<button class="ib go" data-a="sfxAuto">💥 Placer les onomatopées dites (${sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length})</button>` : ""}</div>
+    body.innerHTML = `<div class="row" style="padding:0 0 10px"><button class="ib go" data-a="ins">🖼 Image / extrait</button><button class="ib" data-a="title">🅣 Bandeau</button><button class="ib" data-a="chapter">📖 Chapitre</button><button class="ib" data-a="bubble">💬 Bulle</button><button class="ib" data-a="card">🪪 Fiche perso</button><button class="ib" data-a="timeline">🗓 Frise</button><button class="ib" data-a="annot">✏️ Annoter</button><button class="ib" data-a="sfx">💥 Onomatopée</button>${words && sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length ? `<button class="ib go" data-a="sfxAuto">💥 Placer les onomatopées dites (${sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length})</button>` : ""}</div>
       ${ovRows || tiRows || marks.length ? ovRows + tiRows : `<div class="card"><b>Habillez votre vidéo</b><p>Insérez une case de comic, une couverture ou un extrait : il s’affiche par-dessus la vidéo au moment choisi (tête de lecture, ou les mots sélectionnés dans Texte), en plein écran, en incrustation, ou avec vous en petit dans un coin. Ajoutez un bandeau « Nom · Thème du jour ».</p></div>`}` + bankCard();
   }
   /**
@@ -474,10 +476,13 @@ export async function openEditor(o: EditorOptions) {
     const n = titles.filter((x) => x.kind === "chapter").length + 1;
     const ask = kind === "chapter" ? ["Chapitre — titre (ex. « Les origines de Venom »)", "Surtitre (ex. « Partie " + n + " »)", "Partie " + n]
       : kind === "bubble" ? ["Bulle — la réplique (ex. « Je suis Batman ! »)", "Qui parle ? (facultatif, ex. « Batman, Year One »)", ""]
+      : kind === "card" ? ["Fiche personnage — le nom (ex. « Venom »)", "Lignes « champ : valeur » séparées par ; ", "Vrai nom : Eddie Brock ; Première apparition : 1988 ; Pouvoirs : symbiote ; Éditeur : Marvel"]
+      : kind === "timeline" ? ["Frise — le titre (ex. « L’histoire de Venom »)", "Dates et événements séparés par ; ", "1984 Le costume noir ; 1988 Venom naît ; 2018 Le film"]
       : ["Bandeau — titre (ex. « Comics News »)", "Sous-titre (facultatif, ex. « Le nouveau Spider-Man »)", ""];
     const t = prompt(ask[0], "")?.trim(); if (!t) return;
     const sub = prompt(ask[1], ask[2])?.trim() || undefined;
-    const start = video.currentTime, len = kind === "chapter" ? 2.6 : kind === "bubble" ? Math.min(7, Math.max(2.5, t.split(/\s+/).length * 0.45)) : 4;
+    const nRows = (sub ?? "").split(/[;\n]/).filter((x) => x.trim()).length;
+    const start = video.currentTime, len = kind === "chapter" ? 2.6 : kind === "bubble" ? Math.min(7, Math.max(2.5, t.split(/\s+/).length * 0.45)) : kind === "card" ? 3 + nRows * 0.6 : kind === "timeline" ? 2.5 + nRows * 1.2 : 4;
     titles.push({ id: "ti" + Date.now().toString(36), text: t, sub, start, end: Math.min(duration, start + len), kind }); titles.sort((a, b) => a.start - b.start);
     titles.sort((a, b) => a.start - b.start); tab = "dress"; body.innerHTML = ""; commit();
   }
@@ -519,6 +524,11 @@ export async function openEditor(o: EditorOptions) {
     try { await mediaPut(id, f); } catch { toast("Stockage indisponible : image non gardée.", 4000); return; }
     setBank([...myBank(), { id, key, kind: f.type.startsWith("video/") ? "video" : "image" }]); body.innerHTML = ""; refresh();
   };
+  q<HTMLInputElement>("[data-r=withFile]").onchange = async (e) => {
+    const inp = e.target as HTMLInputElement, f = inp.files?.[0], ov = overlays.find((x) => x.id === inp.dataset.o); inp.value = ""; if (!f || !ov) return;
+    const id = "ov" + Date.now().toString(36) + "b"; await mediaPut(id, f).catch(() => {}); await loadOverlay(id, "image", f);
+    ov.with = id; ov.mode = "compare"; body.innerHTML = ""; commit(); toast("Avant / Après prêt : le rideau s’ouvre au milieu.", 2500);
+  };
   q<HTMLInputElement>("[data-r=ovFile]").onchange = (e) => { const f = (e.target as HTMLInputElement).files?.[0]; (e.target as HTMLInputElement).value = ""; if (f) insertMedia(f).catch((err) => toast("Insertion impossible : " + (err?.message ?? err), 5000)); };
   body.addEventListener("input", (e) => {
     const t = e.target as HTMLInputElement, a = t.dataset.a;
@@ -544,7 +554,7 @@ export async function openEditor(o: EditorOptions) {
     const mk = activeMarks(marks, t);
     if (ov || ti || fz || mk.length) {
       g.save(); g.translate((ccv.width - w) / 2, (ccv.height - h) / 2);
-      compose(g, w, h, t, ov, ov ? previewSrc(ov, t) : null, speaker);
+      compose(g, w, h, t, ov, ov ? previewSrc(ov, t) : null, speaker, ov?.with ? ovSrc.get(ov.with)?.img ?? null : null);
       drawTitle(g, w, h, t, ti); for (const m of mk) drawMark(g, w, h, fz ? t + (performance.now() - fz.t0) / 1000 : t, m); g.restore();
     }
     if (!lines.length || style.preset === "none") return;
@@ -987,6 +997,10 @@ export async function openEditor(o: EditorOptions) {
 
   /* ---------- Export ---------- */
   /** Options d'export (mémorisées), puis lancement. */
+  const TRANS: [Transition, string][] = [["none", "Aucun"], ["punch", "Coup de zoom"], ["flash", "Flash blanc"], ["whip", "Glissé"]];
+  const ASPECTS: [Aspect, string][] = [["source", "Original"], ["9:16", "9:16 TikTok"], ["1:1", "1:1 carré"], ["16:9", "16:9 YouTube"]];
+  let trans = ((): Transition => { try { return (localStorage.getItem("gs.trans") as Transition) || "none"; } catch { return "none"; } })();
+  let aspect = ((): Aspect => { try { return (localStorage.getItem("gs.aspect") as Aspect) || "source"; } catch { return "source"; } })();
   function doExport() {
     video.pause();
     const m = document.createElement("div"); m.className = "modal";
@@ -997,12 +1011,17 @@ export async function openEditor(o: EditorOptions) {
       <label class="opt"><input type="checkbox" data-x="voice" ${voice ? "checked" : ""}> Voix studio (bruit, écho, voix plus claire)</label>
       <label class="opt"><input type="checkbox" data-x="norm" ${norm ? "checked" : ""}> Volume optimisé pour les réseaux (≈ −14 LUFS)</label>
       <label class="opt"><input type="checkbox" data-x="q720" ${q720 ? "checked" : ""}> 720p (fichier ~2× plus léger)</label>
+      <div class="opt">Effet aux coupes <div class="chips" style="margin-top:6px">${TRANS.map(([k, l]) => `<button class="ib" data-tr="${k}" aria-pressed="${trans === k}">${l}</button>`).join("")}</div></div>
+      <div class="opt">Format <div class="chips" style="margin-top:6px">${ASPECTS.map(([k, l]) => `<button class="ib" data-ar="${k}" aria-pressed="${aspect === k}">${l}</button>`).join("")}</div></div>
       <div class="row" style="padding:0"><button class="ib go" data-x="run">Exporter</button><button class="ib" data-x="no">Annuler</button></div></div>`;
     root.appendChild(m);
+    m.addEventListener("click", (e) => { const b = (e.target as HTMLElement).closest<HTMLElement>("[data-tr],[data-ar]"); if (!b) return;
+      const at = b.dataset.tr ? "data-tr" : "data-ar"; m.querySelectorAll(`[${at}]`).forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      if (b.dataset.tr) trans = b.dataset.tr as Transition; else aspect = b.dataset.ar as Aspect; });
     m.querySelector<HTMLElement>("[data-x=no]")!.onclick = () => m.remove();
     const ccb = m.querySelector<HTMLElement>("[data-x=cc]"); if (ccb) ccb.onclick = () => { m.remove(); tab = "cc"; body.innerHTML = ""; refresh(); };
     m.querySelector<HTMLElement>("[data-x=run]")!.onclick = () => {
-      norm = m.querySelector<HTMLInputElement>("[data-x=norm]")!.checked; voice = m.querySelector<HTMLInputElement>("[data-x=voice]")!.checked; zooms = m.querySelector<HTMLInputElement>("[data-x=zooms]")!.checked; q720 = m.querySelector<HTMLInputElement>("[data-x=q720]")!.checked; save(); m.remove(); runExport();
+      norm = m.querySelector<HTMLInputElement>("[data-x=norm]")!.checked; voice = m.querySelector<HTMLInputElement>("[data-x=voice]")!.checked; zooms = m.querySelector<HTMLInputElement>("[data-x=zooms]")!.checked; q720 = m.querySelector<HTMLInputElement>("[data-x=q720]")!.checked; try { localStorage.setItem("gs.trans", trans); localStorage.setItem("gs.aspect", aspect); } catch { /* */ } save(); m.remove(); runExport();
     };
   }
   async function runExport(auto = false) {
@@ -1019,7 +1038,7 @@ export async function openEditor(o: EditorOptions) {
         if (!webCodecsAvailable()) throw new Error("WebCodecs indisponible");
         let gain = 1; if (norm) { await audioP; if (pcm) gain = loudnessGain(pcm, 16000, session.kept); }
         const captions = words && style.preset !== "none" ? { lines, style } : null;
-        const r = await exportEdited(o.file, session.cuts, { onProgress, signal: ac.signal, gain, captions, maxHeight: q720 ? 1280 : 0, voice, zoom: zooms ? zoomAt : null, intro: hook && !inCut((hook.start + hook.end) / 2) ? hook : null, freezes: freezes.filter((f) => !inCut(f.at)),
+        const r = await exportEdited(o.file, session.cuts, { onProgress, signal: ac.signal, gain, captions, maxHeight: q720 ? 1280 : 0, voice, zoom: zooms ? zoomAt : null, intro: hook && !inCut((hook.start + hook.end) / 2) ? hook : null, freezes: freezes.filter((f) => !inCut(f.at)), transition: trans, aspect,
           dress: overlays.length || titles.length || marks.length ? { overlays, titles, marks, images: new Map([...ovSrc].filter(([, e]) => e.img).map(([id, e]) => [id, e.img!])), videos: new Map([...ovSrc].filter(([, e]) => !e.img).map(([id, e]) => [id, e.blob])) } : null }); blob = r.blob; ext = r.ext; how = `${r.video.toUpperCase()}${r.audio ? " + " + r.audio.toUpperCase() : ""}`;
       } catch (e: any) {
         if (e?.name === "AbortError") throw e;
@@ -1116,6 +1135,14 @@ export async function openEditor(o: EditorOptions) {
       case "title": addTitle(); break;
       case "chapter": addTitle("chapter"); break;
       case "bubble": addTitle("bubble"); break;
+      case "card": addTitle("card"); break;
+      case "timeline": addTitle("timeline"); break;
+      case "oanim": case "owith": case "olabels": {
+        const ov = overlays.find((x) => x.id === t.closest<HTMLElement>("[data-o]")?.dataset.o); if (!ov) break;
+        if (a === "oanim") { const v = t.dataset.v as OverlayAnim; if (v === "none") delete ov.anim; else ov.anim = v; if (video.paused) { seek(Math.max(0, ov.start - 0.3)); video.play().catch(() => {}); stopAt = Math.min(duration, ov.start + 1.6); } }
+        if (a === "olabels") { const l = prompt("Étiquettes (gauche / droite) :", (ov.labels ?? ["Avant", "Après"]).join(" / ")); if (l == null) break; const [x, y] = l.split("/").map((z) => z.trim()); ov.labels = [x ?? "", y ?? ""]; }
+        if (a === "owith") { const inp = q<HTMLInputElement>("[data-r=withFile]"); inp.value = ""; inp.dataset.o = ov.id; inp.click(); break; }
+        body.innerHTML = ""; commit(); break; }
       case "annot": case "sfx": { video.pause(); fz = null; if (!video.videoWidth) break;
         const m = await markPick(a === "sfx" ? "sfx" : "draw"); if (!m) break;
         marks = [...marks, m].sort((x, y) => x.start - y.start); body.innerHTML = ""; commit(); toast(a === "sfx" ? "💥 Onomatopée ajoutée." : "✏️ Annotation ajoutée (2,5 s).", 2000); break; }
@@ -1158,7 +1185,7 @@ export async function openEditor(o: EditorOptions) {
         body.innerHTML = ""; commit(); break; }
       case "omode": case "ominus": case "oplus": case "ohere": case "odel": {
         const id = t.closest<HTMLElement>("[data-o]")?.dataset.o, ov = overlays.find((x) => x.id === id); if (!ov) break;
-        if (a === "omode") ov.mode = t.closest<HTMLElement>("[data-v]")!.dataset.v as OverlayMode;
+        if (a === "omode") { ov.mode = t.closest<HTMLElement>("[data-v]")!.dataset.v as OverlayMode; if (ov.mode === "compare" && !ov.with) { const inp = q<HTMLInputElement>("[data-r=withFile]"); inp.dataset.o = ov.id; inp.click(); } }
         if (a === "ominus") ov.end = Math.max(ov.start + 0.5, ov.end - 0.5);
         if (a === "oplus") ov.end = Math.min(duration, ov.end + 0.5);
         if (a === "ohere") { const d = ov.end - ov.start; ov.start = video.currentTime; ov.end = Math.min(duration, ov.start + d); }

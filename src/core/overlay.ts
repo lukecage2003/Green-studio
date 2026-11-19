@@ -1,12 +1,15 @@
 /** Habillage : images/extraits par-dessus la vidéo (plein écran, incrustation, « moi en petit ») et bandeaux titres.
  *  Le même dessin sert à l'aperçu (lecteur) et à l'export : ce que l'on voit est ce que l'on obtient. Temps = temps source. */
 
-export type OverlayMode = "full" | "pip" | "me";
+export type OverlayMode = "full" | "pip" | "me" | "compare";
+/** Animation d'une image / d'un extrait : entrée (ressort), mouvement continu ou sortie. */
+export type OverlayAnim = "none" | "slideL" | "slideR" | "slideUp" | "zoomIn" | "pop" | "spin" | "float" | "shake" | "panLR" | "panRL";
 /** Zoom sur un détail : facteur z (1–4) vers le point (x, y) de l'image source (0–1). */
 export interface ZoomTarget { z: number; x: number; y: number }
 /** freeze : l'extrait vidéo se fige à cet instant (s depuis son début) ; zoom : on s'approche d'un détail (après le gel, sinon dès l'apparition). */
 /** path : parcours de cases (page de comic) — la page entière, puis chaque case dans l'ordre. */
-export interface Overlay { id: string; kind: "image" | "video"; start: number; end: number; mode: OverlayMode; freeze?: number; zoom?: ZoomTarget; path?: ZoomTarget[] }
+/** anim : animation ; with / labels : avant / après (2e image et étiquettes des deux côtés). */
+export interface Overlay { id: string; kind: "image" | "video"; start: number; end: number; mode: OverlayMode; freeze?: number; zoom?: ZoomTarget; path?: ZoomTarget[]; anim?: OverlayAnim; with?: string; labels?: [string, string] }
 /** Arrêt sur image dans la vidéo principale : à l'instant `at` (temps source), l'image reste figée `dur` s, avec zoom éventuel. */
 export interface Freeze { id: string; at: number; dur: number; zoom?: ZoomTarget }
 
@@ -36,12 +39,69 @@ export function pathAt(path: ZoomTarget[], start: number, end: number, t: number
 }
 /** Durée conseillée d'un parcours (≈ 2,2 s par case). */
 export const pathDuration = (n: number) => 0.8 + n * 2.2;
+/**
+ * Ressort amorti (0 → 1 avec léger dépassement) : même idée que la fonction spring() de Remotion, écrite ici sans dépendance.
+ * d = durée de mise en place ; bounce = ampleur du rebond.
+ */
+export function spring(t: number, d = 0.55, bounce = 0.35): number {
+  if (t <= 0) return 0; if (t >= d * 1.6) return 1;
+  const x = t / d; return 1 - Math.exp(-5.2 * x) * Math.cos(x * Math.PI * (1.4 + bounce * 2.2)) * (1 - bounce * 0.25);
+}
+export const ANIMS: [OverlayAnim, string][] = [["none", "Aucune"], ["slideL", "→ Glisse de gauche"], ["slideR", "← Glisse de droite"], ["slideUp", "↑ Monte"], ["zoomIn", "Zoom"], ["pop", "Pop"],
+  ["spin", "Tourbillon"], ["float", "Flotte"], ["shake", "Tremble"], ["panLR", "Panoramique →"], ["panRL", "Panoramique ←"]];
+/** Transformation de l'image à l'instant t : décalage (fraction de l'image), échelle, rotation (rad), opacité. */
+export function animAt(ov: Overlay, t: number): { dx: number; dy: number; sc: number; rot: number; al: number } {
+  const age = t - ov.start, left = ov.end - t, e = spring(age), ex = Math.min(1, Math.max(0, 1 - left / 0.35)), ee = ex * ex;
+  const r = { dx: 0, dy: 0, sc: 1, rot: 0, al: 1 };
+  switch (ov.anim) {
+    case "slideL": r.dx = -(1 - e) + ee; break;
+    case "slideR": r.dx = (1 - e) - ee; break;
+    case "slideUp": r.dy = (1 - e) - ee; break;
+    case "zoomIn": r.sc = 0.35 + 0.65 * e + 0.25 * ee; r.al = Math.min(1, age / 0.2) * (1 - ee); break;
+    case "pop": r.sc = Math.max(0, spring(age, 0.45, 0.8)) * (1 - 0.6 * ee); r.rot = (1 - Math.min(1, age / 0.45)) * -0.15; r.al = 1 - ee; break;
+    case "spin": r.sc = e * (1 - ee) + 0.001; r.rot = (1 - e) * -2.4 + ee * 2.4; break;
+    case "float": r.dy = Math.sin(age * 1.8) * 0.012; r.rot = Math.sin(age * 1.3) * 0.02; r.sc = 1.02; break;
+    case "shake": { const k = Math.max(0, 1 - age / 0.6); r.dx = Math.sin(age * 55) * 0.025 * k; r.rot = Math.sin(age * 47) * 0.03 * k; break; }
+  }
+  return r;
+}
+/** Panoramique lent (cadrage qui se déplace dans l'image) pour panLR / panRL. */
+const panAt = (ov: Overlay, t: number): ZoomTarget | null => {
+  if (ov.anim !== "panLR" && ov.anim !== "panRL") return null;
+  const k = Math.min(1, Math.max(0, (t - ov.start) / Math.max(0.5, ov.end - ov.start))), x = ov.anim === "panLR" ? 0.15 + 0.7 * k : 0.85 - 0.7 * k;
+  return { z: 1.45, x, y: 0.5 };
+};
+/** Applique l'animation autour du rectangle (x, y, w, h) puis dessine. */
+function withAnim(ctx: Ctx, ov: Overlay, t: number, x: number, y: number, w: number, h: number, draw: () => void) {
+  if (!ov.anim || ov.anim === "none" || ov.anim === "panLR" || ov.anim === "panRL") { draw(); return; }
+  const m = animAt(ov, t); ctx.save(); ctx.globalAlpha *= Math.max(0, Math.min(1, m.al));
+  ctx.translate(x + w / 2 + m.dx * w, y + h / 2 + m.dy * h); ctx.rotate(m.rot); ctx.scale(Math.max(0.001, m.sc), Math.max(0.001, m.sc)); ctx.translate(-(x + w / 2), -(y + h / 2));
+  draw(); ctx.restore();
+}
+
+/** Avant / après : deux images côte à côte ; le rideau part de la droite et s'arrête au milieu, étiquettes en haut. */
+function drawCompare(ctx: Ctx, W: number, H: number, t: number, ov: Overlay, a: Src, b: Src | null, speaker: (x: number, y: number, w: number, h: number) => void) {
+  const al = fadeIn(ov, t), p = 0.5 + 0.42 * (1 - zoomEase(t - ov.start, 1.1)), xs = W * p;
+  if (al < 1) speaker(0, 0, W, H);
+  ctx.save(); ctx.globalAlpha = al;
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 0, xs, H); ctx.clip(); drawCover(ctx, a, 0, 0, xs, H); ctx.restore();
+  if (b) { ctx.save(); ctx.beginPath(); ctx.rect(xs, 0, W - xs, H); ctx.clip(); drawCover(ctx, b, xs, 0, W - xs, H); ctx.restore(); }
+  ctx.fillStyle = "#fff"; ctx.fillRect(xs - W * 0.006, 0, W * 0.012, H);
+  const rB = W * 0.075; ctx.beginPath(); ctx.arc(xs, H * 0.5, rB, 0, Math.PI * 2); ctx.fillStyle = "#111"; ctx.fill(); ctx.lineWidth = W * 0.008; ctx.strokeStyle = "#fff"; ctx.stroke();
+  ctx.fillStyle = "#fff"; ctx.font = `900 ${rB * 0.75}px ${FONT}`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("VS", xs, H * 0.5);
+  const [la, lb] = ov.labels ?? ["AVANT", "APRÈS"], fs = W * 0.05; ctx.font = `900 ${fs}px ${FONT}`;
+  const tag = (txt: string, cx: number, col: string) => { const tw = ctx.measureText(txt).width + fs; rounded(ctx, cx - tw / 2, H * 0.07, tw, fs * 1.6, fs * 0.5); ctx.fillStyle = col; ctx.fill(); ctx.fillStyle = "#fff"; ctx.fillText(txt, cx, H * 0.07 + fs * 0.8); };
+  if (la) tag(la.toUpperCase(), xs / 2, "rgba(232,32,42,.92)"); if (lb && b) tag(lb.toUpperCase(), xs + (W - xs) / 2, "rgba(10,132,255,.92)");
+  ctx.restore();
+}
+
 /** Temps à lire dans un extrait vidéo : il avance, puis reste figé à partir de `freeze`. */
 export const clipTime = (ov: Overlay, t: number) => Math.max(0, Math.min(t - ov.start, ov.freeze ?? Infinity));
 /** Progression du zoom d'un extrait à l'instant t (le zoom démarre au gel, sinon 0,3 s après l'apparition). */
 export const overlayZoomK = (ov: Overlay, t: number) => (ov.zoom ? zoomEase(t - ov.start - (ov.kind === "video" && ov.freeze != null ? ov.freeze : 0.3)) : 0);
 /** kind : bandeau (bas gauche), chapitre (carton plein écran), bulle (citation façon comic). */
-export interface Title { id: string; text: string; sub?: string; start: number; end: number; kind?: "lower" | "chapter" | "bubble" }
+/** card : fiche personnage (sub = « champ : valeur ; … ») ; timeline : frise (sub = « 1962 Création ; 1984 Secret Wars ; … »). */
+export interface Title { id: string; text: string; sub?: string; start: number; end: number; kind?: "lower" | "chapter" | "bubble" | "card" | "timeline" }
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 type Src = CanvasImageSource & { width?: number; height?: number; videoWidth?: number; videoHeight?: number; displayWidth?: number; displayHeight?: number };
@@ -71,22 +131,27 @@ export function drawCover(ctx: Ctx, src: Src, x: number, y: number, w: number, h
  * full : extrait plein écran ; pip : extrait dans une carte en haut, la personne reste visible ; me : extrait plein écran
  * et la personne en petit dans un coin.
  */
-export function compose(ctx: Ctx, W: number, H: number, t: number, ov: Overlay | null, src: Src | null, speaker: (x: number, y: number, w: number, h: number) => void) {
+export function compose(ctx: Ctx, W: number, H: number, t: number, ov: Overlay | null, src: Src | null, speaker: (x: number, y: number, w: number, h: number) => void, src2: Src | null = null) {
   if (!ov || !src) { speaker(0, 0, W, H); return; }
-  const pz = ov.path?.length ? pathAt(ov.path, ov.start, ov.end, t) : null;
+  if (ov.mode === "compare") { drawCompare(ctx, W, H, t, ov, src, src2, speaker); return; }
+  const pz = ov.path?.length ? pathAt(ov.path, ov.start, ov.end, t) : panAt(ov, t);
   const a = fadeIn(ov, t), kb = ov.freeze != null && t - ov.start >= ov.freeze ? Math.min(1, ov.freeze / Math.max(0.1, ov.end - ov.start)) : Math.min(1, Math.max(0, (t - ov.start) / Math.max(0.1, ov.end - ov.start))), zk = overlayZoomK(ov, t);
   if (ov.mode === "pip") {
     speaker(0, 0, W, H);
     const w = W * 0.88, h = Math.min(H * 0.42, w * 0.75), x = (W - w) / 2, y = H * 0.1 + (1 - a) * H * 0.03, r = W * 0.05;
     ctx.save(); ctx.globalAlpha = a; ctx.shadowColor = "rgba(0,0,0,.45)"; ctx.shadowBlur = W * 0.05; ctx.shadowOffsetY = W * 0.015;
-    rounded(ctx, x, y, w, h, r); ctx.fillStyle = "#000"; ctx.fill(); ctx.shadowColor = "transparent";
-    rounded(ctx, x, y, w, h, r); ctx.clip(); drawCover(ctx, src, x, y, w, h, pz ? 0 : kb, pz ?? ov.zoom, pz ? 1 : zk); ctx.restore();
-    ctx.save(); ctx.globalAlpha = a * 0.6; rounded(ctx, x, y, w, h, r); ctx.lineWidth = Math.max(1, W * 0.002); ctx.strokeStyle = "rgba(255,255,255,.5)"; ctx.stroke(); ctx.restore();
+    withAnim(ctx, ov, t, x, y, w, h, () => {
+      ctx.save(); rounded(ctx, x, y, w, h, r); ctx.fillStyle = "#000"; ctx.fill(); ctx.shadowColor = "transparent";
+      rounded(ctx, x, y, w, h, r); ctx.clip(); drawCover(ctx, src, x, y, w, h, pz ? 0 : kb, pz ?? ov.zoom, pz ? 1 : zk); ctx.restore();
+      ctx.save(); ctx.globalAlpha *= 0.6; rounded(ctx, x, y, w, h, r); ctx.lineWidth = Math.max(1, W * 0.002); ctx.strokeStyle = "rgba(255,255,255,.5)"; ctx.stroke(); ctx.restore();
+    });
+    ctx.restore();
     return;
   }
   // full / me : l'extrait remplit l'image (fondu depuis la personne)
-  if (a < 1) speaker(0, 0, W, H);
-  ctx.save(); ctx.globalAlpha = a; drawCover(ctx, src, 0, 0, W, H, pz ? 0 : kb, pz ?? ov.zoom, pz ? 1 : zk); ctx.restore();
+  const moving = !!ov.anim && ov.anim !== "none" && ov.anim !== "panLR" && ov.anim !== "panRL";
+  if (a < 1 || moving) speaker(0, 0, W, H); // l'image bouge : la personne reste visible derrière
+  ctx.save(); ctx.globalAlpha = a; withAnim(ctx, ov, t, 0, 0, W, H, () => { if (moving) { ctx.shadowColor = "rgba(0,0,0,.55)"; ctx.shadowBlur = W * 0.04; } drawCover(ctx, src, 0, 0, W, H, pz ? 0 : kb, pz ?? ov.zoom, pz ? 1 : zk); }); ctx.restore();
   if (ov.mode === "me") {
     const w = W * 0.36, h = w * 16 / 9, x = W - w - W * 0.05, y = H - h - H * 0.16, r = W * 0.06;
     ctx.save(); ctx.globalAlpha = a; ctx.shadowColor = "rgba(0,0,0,.5)"; ctx.shadowBlur = W * 0.05;
@@ -135,8 +200,50 @@ function drawBubble(ctx: Ctx, W: number, H: number, t: number, ti: Title) {
   if (sub) { ctx.font = `700 ${sfs}px ${FONT}`; ctx.fillStyle = "#444"; ctx.fillText(sub, 0, top + lines.length * lh + sfs * 0.3); }
   ctx.restore();
 }
+/** Fiche personnage : carte en verre sombre, nom en grand, lignes « champ : valeur » qui apparaissent une à une. */
+function drawCard(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
+  const a = fadeIn(ti, t, 0.3), e = spring(t - ti.start, 0.5, 0.25), rows = (ti.sub ?? "").split(/[;\n]/).map((x) => x.trim()).filter(Boolean).slice(0, 6);
+  const fs = W * 0.07, rfs = W * 0.04, pad = W * 0.05, cw = W * 0.84, ch = fs * 1.7 + rows.length * rfs * 1.75 + pad * 0.7, x = (W - cw) / 2 - (1 - e) * W, y = H * 0.12;
+  ctx.save(); ctx.globalAlpha = a; ctx.shadowColor = "rgba(0,0,0,.5)"; ctx.shadowBlur = W * 0.05;
+  rounded(ctx, x, y, cw, ch, W * 0.05); ctx.fillStyle = "rgba(16,16,20,.82)"; ctx.fill(); ctx.shadowColor = "transparent";
+  ctx.lineWidth = W * 0.004; ctx.strokeStyle = "rgba(255,255,255,.2)"; ctx.stroke();
+  ctx.fillStyle = accent; ctx.fillRect(x, y + W * 0.05, W * 0.012, fs * 1.2);
+  ctx.textBaseline = "middle"; ctx.fillStyle = "#fff"; ctx.font = `900 ${fs}px ${FONT}`; ctx.fillText(ti.text.toUpperCase(), x + pad, y + pad * 0.6 + fs * 0.6, cw - pad * 2);
+  ctx.font = `700 ${rfs}px ${FONT}`;
+  const col = Math.min(cw * 0.55, Math.max(cw * 0.25, ...rows.map((r) => (r.includes(":") ? ctx.measureText(r.split(":")[0].trim()).width : 0))) + rfs * 0.9);
+  rows.forEach((row, i) => {
+    const ra = Math.min(1, Math.max(0, (t - ti.start - 0.35 - i * 0.22) / 0.25)); if (ra <= 0) return;
+    const [k, ...v] = row.split(":"), ry = y + pad * 0.6 + fs * 1.55 + i * rfs * 1.75 + rfs * 0.5;
+    ctx.save(); ctx.globalAlpha = a * ra; ctx.translate((1 - ra) * W * 0.05, 0);
+    ctx.font = `700 ${rfs}px ${FONT}`; ctx.fillStyle = "rgba(235,235,245,.6)"; ctx.fillText(v.length ? k.trim() : "•", x + pad, ry);
+    ctx.font = `800 ${rfs}px ${FONT}`; ctx.fillStyle = "#fff"; ctx.fillText(v.length ? v.join(":").trim() : k.trim(), x + pad + (v.length ? col : rfs * 1.2), ry, cw - pad * 2 - (v.length ? col : rfs * 1.2));
+    ctx.restore();
+  });
+  ctx.restore();
+}
+/** Frise chronologique : ligne qui se trace, points datés qui apparaissent un à un (sub = « 1962 Création ; 1984 … »). */
+function drawTimeline(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
+  const a = fadeIn(ti, t, 0.3), ev = (ti.sub ?? "").split(/[;\n]/).map((x) => x.trim()).filter(Boolean).slice(0, 6), n = Math.max(1, ev.length);
+  const dur = Math.max(1, (ti.end - ti.start) * 0.7), y0 = H * 0.22, y1 = H * 0.22 + (n - 1) * H * 0.12, x0 = W * 0.16, p = Math.min(1, (t - ti.start) / dur);
+  ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = "rgba(0,0,0,.45)"; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "#fff"; ctx.font = `900 ${W * 0.065}px ${FONT}`; ctx.textBaseline = "middle"; ctx.fillText(ti.text.toUpperCase(), x0 - W * 0.06, H * 0.11, W * 0.86);
+  ctx.strokeStyle = "rgba(255,255,255,.35)"; ctx.lineWidth = W * 0.008; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0, y1); ctx.stroke();
+  ctx.strokeStyle = accent; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0, y0 + (y1 - y0) * p); ctx.stroke();
+  ev.forEach((e1, i) => {
+    const at = n > 1 ? i / (n - 1) : 0, ra = Math.min(1, Math.max(0, (p - at) * n * 1.5 + 0.3)); if (ra <= 0) return;
+    const y = y0 + (y1 - y0) * at, [d, ...rest] = e1.split(/\s+/), sc = spring(ra * 0.6, 0.35, 0.6);
+    ctx.save(); ctx.globalAlpha = a * Math.min(1, ra * 1.5);
+    ctx.beginPath(); ctx.arc(x0, y, W * 0.025 * sc, 0, Math.PI * 2); ctx.fillStyle = accent; ctx.fill(); ctx.lineWidth = W * 0.006; ctx.strokeStyle = "#fff"; ctx.stroke();
+    ctx.fillStyle = accent; ctx.font = `900 ${W * 0.055}px ${FONT}`; ctx.fillText(d, x0 + W * 0.06, y - W * 0.025);
+    ctx.fillStyle = "#fff"; ctx.font = `700 ${W * 0.045}px ${FONT}`; ctx.fillText(rest.join(" "), x0 + W * 0.06, y + W * 0.035, W * 0.74);
+    ctx.restore();
+  });
+  ctx.restore();
+}
 export function drawTitle(ctx: Ctx, W: number, H: number, t: number, ti: Title | null, accent = "#30d158") {
   if (!ti || !ti.text.trim()) return;
+  if (ti.kind === "card") return drawCard(ctx, W, H, t, ti, accent);
+  if (ti.kind === "timeline") return drawTimeline(ctx, W, H, t, ti, accent);
   if (ti.kind === "chapter") return drawChapter(ctx, W, H, t, ti, accent);
   if (ti.kind === "bubble") return drawBubble(ctx, W, H, t, ti);
   const a = fadeIn(ti, t, 0.3), fs = W * 0.052, sfs = W * 0.034, pad = W * 0.04, x0 = W * 0.05 - (1 - a) * W * 0.08, y1 = H * 0.79;

@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.18)
+# Green Studio 3.1 — état réel (beta.19)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,15 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.19
+- **Images animées** (Habillage → chaque image ou extrait) : glisse de gauche, glisse de droite, monte, zoom, pop, tourbillon, flotte, tremble, panoramique → / ←. Entrée sur un ressort amorti (léger rebond), sortie automatique dans le sens du mouvement ; la personne reste visible derrière. Toucher une animation la rejoue dans l'aperçu ; même rendu à l'export.
+- **Avant / Après** (mode d'affichage) : deux images côte à côte (« Comic » / « Film », étiquettes modifiables), rideau qui s'ouvre vers le milieu, pastille « VS ».
+- **Fiche personnage** : carte avec le nom et des lignes « champ : valeur » qui apparaissent une à une.
+- **Frise chronologique** : ligne qui se trace et dates qui apparaissent l'une après l'autre (« 1962 Création ; 1984 … »).
+- **Effets aux coupes** (export) : coup de zoom, flash blanc ou glissé.
+- **Format d'export** : original, 9:16, 1:1 ou 16:9 ; si le format diffère de la vidéo, elle est posée sur un fond flouté (flou obtenu par une mini-copie agrandie : quasi gratuit en calcul).
+- Test navigateur `anim.e2e` (export réel : animation, avant / après, fiche, frise, 16:9) ; 44 tests unitaires.
 
 ## 3.1.0-beta.18
 - **Analyse d'une vraie vidéo envoyée** (17 s, 24,8 i/s, son correct) : un **voile sombre rectangulaire** autour de la personne. Deux causes possibles, corrigées :

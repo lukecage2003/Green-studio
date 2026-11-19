@@ -477,3 +477,15 @@ test("assistant fond vert (côté plus sombre) et onomatopées placées sur les 
   assert.deepEqual(m.map((x) => x.text), ["BOOM !", "POW !"], "« bam » trop proche du « boum », « zap » coupé");
   assert.ok(m[0].x1 !== m[1].x1, "côtés alternés");
 });
+
+test("animations d'images : ressort, glissés, sorties", async () => {
+  const { spring, animAt } = await import("../src/core/overlay.ts");
+  assert.equal(spring(0), 0); assert.equal(spring(5), 1);
+  assert.ok(Math.max(...Array.from({ length: 60 }, (_, i) => spring(i / 60))) > 1, "léger dépassement (rebond)");
+  const ov = { id: "a", kind: "image" as const, start: 10, end: 14, mode: "full" as const, anim: "slideL" as const };
+  assert.ok(animAt(ov, 10).dx <= -0.99, "entre depuis la gauche"); assert.ok(Math.abs(animAt(ov, 12).dx) < 0.02, "posée au milieu");
+  assert.ok(animAt(ov, 13.99).dx > 0.9, "sort par la droite");
+  const up = animAt({ ...ov, anim: "slideUp" }, 10); assert.ok(up.dy >= 0.99 && up.dx === 0);
+  const pop = animAt({ ...ov, anim: "pop" }, 10); assert.ok(pop.sc < 0.05);
+  assert.deepEqual(animAt({ ...ov, anim: undefined }, 12), { dx: 0, dy: 0, sc: 1, rot: 0, al: 1 });
+});

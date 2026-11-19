@@ -97,12 +97,25 @@ export interface ExportOptions {
   zoom?: ((t: number) => number) | null;           // zooms dynamiques : facteur de zoom selon le temps source (1 = aucun)
   intro?: Range | null;                            // accroche : passage rejoué en ouverture, avant le montage
   freezes?: Freeze[];                              // arrêts sur image (temps source), avec zoom éventuel
+  transition?: Transition;                         // effet à chaque coupe : flash blanc, coup de zoom, glissé
+  aspect?: Aspect;                                 // format de sortie ; si différent de la source : fond flouté
   /** habillage : extraits (images / vidéos) et bandeaux titres, en temps source */
   dress?: { overlays: Overlay[]; titles: Title[]; marks?: Mark[]; images: Map<string, CanvasImageSource>; videos: Map<string, Blob>; accent?: string } | null;
 }
 
+export type Transition = "none" | "flash" | "punch" | "whip";
+export type Aspect = "source" | "9:16" | "1:1" | "16:9";
+/** Dimensions de sortie (paires) pour un format donné, à partir de la taille d'origine (déjà réduite). */
+export function aspectDims(w: number, h: number, a: Aspect = "source"): [number, number] {
+  const ev = (x: number) => Math.max(2, Math.round(x / 2) * 2), L = Math.max(w, h), S = Math.min(w, h);
+  if (a === "9:16") return [ev(L * 9 / 16), ev(L)];
+  if (a === "16:9") return [ev(L), ev(L * 9 / 16)];
+  if (a === "1:1") return [ev(S), ev(S)];
+  return [w, h];
+}
+
 export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOptions = {}): Promise<ExportResult> {
-  const { onProgress, signal, fade = 0.012, gain = 1, captions = null, maxHeight = 0, voice = false, zoom = null, dress = null, intro = null, freezes = [] } = opts;
+  const { onProgress, signal, fade = 0.012, gain = 1, captions = null, maxHeight = 0, voice = false, zoom = null, dress = null, intro = null, freezes = [], transition = "none", aspect = "source" } = opts;
   const vidSinks = new Map<string, { input: Input; sink: VideoSampleSink }>();
   const input = new Input({ source: new BlobSource(file), formats: FORMATS });
   let output: Output | null = null;
@@ -131,7 +144,7 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
     // Débit fixe et généreux selon la taille de sortie (le mode « qualité » automatique donnait ~1,6 Mbit/s, trop peu pour du visage + texte).
     const cw = await vt.getCodedWidth(), ch = await vt.getCodedHeight(), outH = Math.min(Math.max(cw, ch), maxHeight > 0 ? maxHeight : Infinity);
     const bitrate = outH >= 2400 ? 24e6 : outH >= 1800 ? 12e6 : outH >= 1200 ? 6e6 : QUALITY_HIGH;
-    const ow = Math.round(cw * Math.min(1, outH / Math.max(cw, ch)) / 2) * 2, oh = Math.round(ch * Math.min(1, outH / Math.max(cw, ch)) / 2) * 2;
+    const [ow, oh] = aspectDims(Math.round(cw * Math.min(1, outH / Math.max(cw, ch)) / 2) * 2, Math.round(ch * Math.min(1, outH / Math.max(cw, ch)) / 2) * 2, aspect);
     const vsrc = new VideoSampleSource({ codec: vcodec, bitrate, keyFrameInterval: 2, ...(await hwOpts(vcodec, ow, oh, bitrate)) });
     output.addVideoTrack(vsrc);
     const asrc = acodec ? new AudioSampleSource({ codec: acodec, bitrate: 192000 }) : null;
@@ -141,7 +154,28 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
     // Passage par un canvas seulement si nécessaire (sous-titres, redimensionnement) : sinon les images vont directement à l'encodeur.
     let cv: OffscreenCanvas | null = null, cx: OffscreenCanvasRenderingContext2D | null = null;
     const viaCanvas = (!!captions && captions.style.preset !== "none" && captions.lines.length > 0) || maxHeight > 0 || !!zoom || items.some((i) => i.fr)
-      || !!(dress && (dress.overlays.length || dress.titles.length || dress.marks?.length));
+      || !!(dress && (dress.overlays.length || dress.titles.length || dress.marks?.length)) || transition !== "none" || aspect !== "source";
+    /* Format de sortie différent de la source : la vidéo est posée au centre sur un fond flouté (la même image agrandie,
+       floutée en passant par une toute petite copie — bien moins coûteux qu'un filtre de flou à chaque image). */
+    let oc: OffscreenCanvas | null = null, ox: OffscreenCanvasRenderingContext2D | null = null, tiny: OffscreenCanvas | null = null;
+    /** Finition d'une image : effet de coupe (début de morceau), puis mise au format. */
+    const finish = (local: number, cut: boolean): OffscreenCanvas => {
+      const W = cv!.width, H = cv!.height;
+      if (cut && transition !== "none" && local < 0.28) {
+        const x = local / 0.28;
+        if (transition === "flash") { cx!.save(); cx!.globalAlpha = (1 - x) ** 1.5 * 0.92; cx!.fillStyle = "#fff"; cx!.fillRect(0, 0, W, H); cx!.restore(); }
+        else if (transition === "punch") { const k = 1 + 0.16 * (1 - x) ** 2; cx!.drawImage(cv!, W * (1 - 1 / k) / 2, H * (1 - 1 / k) / 2, W / k, H / k, 0, 0, W, H); }
+        else if (transition === "whip") { const d = W * 0.12 * (1 - x) ** 2; if (d > 1) { cx!.save(); for (let i = 1; i <= 3; i++) { cx!.globalAlpha = 0.3; cx!.drawImage(cv!, -d * i / 3, 0); } cx!.restore(); } }
+      }
+      if (ow === W && oh === H) return cv!;
+      if (!oc) { oc = new OffscreenCanvas(ow, oh); ox = oc.getContext("2d")!; tiny = new OffscreenCanvas(Math.max(8, Math.round(W / 24)), Math.max(8, Math.round(H / 24))); }
+      const tx = tiny!.getContext("2d")!; tx.drawImage(cv!, 0, 0, tiny!.width, tiny!.height);
+      const kc = Math.max(ow / W, oh / H), kf = Math.min(ow / W, oh / H);
+      ox!.imageSmoothingQuality = "low"; ox!.drawImage(tiny!, (ow - W * kc) / 2, (oh - H * kc) / 2, W * kc, H * kc);
+      ox!.fillStyle = "rgba(0,0,0,.35)"; ox!.fillRect(0, 0, ow, oh); ox!.imageSmoothingQuality = "high";
+      ox!.drawImage(cv!, (ow - W * kf) / 2, (oh - H * kf) / 2, W * kf, H * kf);
+      return oc;
+    };
     /** Image de l'extrait au temps t (vidéo : lue image par image, à fermer après usage). */
     const overlaySource = async (ov: Overlay, t: number): Promise<{ src: any; close?: () => void } | null> => {
       if (ov.kind === "image") { const im = dress!.images.get(ov.id); return im ? { src: im } : null; }
@@ -221,10 +255,10 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
             else s.draw(cx!, x, y, w, h);
           };
           const ov = dress ? activeAt(dress.overlays, s.timestamp) : null, os = ov ? await overlaySource(ov, s.timestamp) : null;
-          compose(cx!, cv.width, cv.height, s.timestamp, ov, os?.src ?? null, speaker); os?.close?.();
+          compose(cx!, cv.width, cv.height, s.timestamp, ov, os?.src ?? null, speaker, ov?.with ? (dress!.images.get(ov.with) as any) ?? null : null); os?.close?.();
           if (dress) { drawTitle(cx!, cv.width, cv.height, s.timestamp, activeAt(dress.titles, s.timestamp), dress.accent); for (const m of activeMarks(dress.marks ?? [], s.timestamp)) drawMark(cx!, cv.width, cv.height, s.timestamp, m); }
           if (captions) drawCaption(cx!, 0, 0, cv.width, cv.height, lineAt(captions.lines, s.timestamp), s.timestamp, captions.style);
-          o = new VideoSample(cv, { timestamp: t, duration: d }); s.close();
+          o = new VideoSample(finish(t - offset, offset > 0), { timestamp: t, duration: d }); s.close();
         } else { s.setTimestamp(t); s.setDuration(d); }
         await vsrc.add(o, first ? { keyFrame: true } : undefined); o.close();
         onProgress?.(Math.min(0.99, t / total));
@@ -243,10 +277,10 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
           const zk = zoomEase(k / 30);
           const speaker = (x: number, y: number, w: number, h: number) => { const r = zoomRect(s.displayWidth, s.displayHeight, w, h, f.zoom, zk); s.draw(cx!, r.sx, r.sy, r.sw, r.sh, x, y, w, h); };
           cx!.clearRect(0, 0, cv.width, cv.height);
-          compose(cx!, cv.width, cv.height, f.at, ov, os?.src ?? null, speaker);
+          compose(cx!, cv.width, cv.height, f.at, ov, os?.src ?? null, speaker, ov?.with ? (dress!.images.get(ov.with) as any) ?? null : null);
           if (dress) { drawTitle(cx!, cv.width, cv.height, f.at, activeAt(dress.titles, f.at), dress.accent); for (const m of activeMarks(dress.marks ?? [], f.at)) drawMark(cx!, cv.width, cv.height, f.at + k / 30, m); }
           if (captions) drawCaption(cx!, 0, 0, cv.width, cv.height, lineAt(captions.lines, f.at), f.at, captions.style);
-          const o = new VideoSample(cv, { timestamp: offset + k / 30, duration: 1 / 30 }); await vsrc.add(o, k === 0 ? { keyFrame: true } : undefined); o.close();
+          const o = new VideoSample(finish(k / 30, offset > 0), { timestamp: offset + k / 30, duration: 1 / 30 }); await vsrc.add(o, k === 0 ? { keyFrame: true } : undefined); o.close();
         }
         s.close(); os?.close?.(); lastV = offset + (n - 1) / 30;
         onProgress?.(Math.min(0.99, (offset + f.dur) / total)); continue;
