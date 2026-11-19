@@ -489,3 +489,25 @@ test("animations d'images : ressort, glissés, sorties", async () => {
   const pop = animAt({ ...ov, anim: "pop" }, 10); assert.ok(pop.sc < 0.05);
   assert.deepEqual(animAt({ ...ov, anim: undefined }, 12), { dx: 0, dy: 0, sc: 1, rot: 0, al: 1 });
 });
+
+test("accroche TikTok : salutation, blanc du début, phrases plus fortes", async () => {
+  const { hookCheck, staticGaps, emojiFor } = await import("../src/core/viral.ts");
+  let t = 1.4; const W = (s: string) => s.split(" ").map((x) => { const w = { text: x, start: +t.toFixed(2), end: +(t + 0.25).toFixed(2) }; t += 0.32; return w; });
+  const words = [...W("Salut tout le monde, aujourd'hui on parle de Venom."), ...W("Il est né en 1984 dans Secret Wars."), ...W("Pourquoi personne ne parle de son vrai créateur ?")];
+  const h = hookCheck(words, [], 20);
+  assert.ok(h.lead > 1.3 && h.issues.some((x) => /salutation/.test(x)) && h.issues.some((x) => /blanc/.test(x)), JSON.stringify(h.issues));
+  assert.ok(h.score < 50); assert.equal(h.candidates[0], "Pourquoi personne ne parle de son vrai créateur ?");
+  const direct = hookCheck(W("Personne ne sait que Venom a été un héros !"), [{ start: 0, end: t - 3.2 }], 30); assert.ok(direct.score >= 80, JSON.stringify(direct));
+  // passages statiques : changements à 2 s et 10 s sur 13 s → trou de 2 à 10 s
+  const g = staticGaps([2, 10], 13, [], 3.5); assert.equal(g.length, 1); assert.ok(Math.abs(g[0].start - 2.05) < 0.01 && Math.abs(g[0].end - 9.95) < 0.01);
+  assert.equal(staticGaps([3, 6, 9, 12], 14, [], 3.5).length, 0);
+  assert.equal(staticGaps([2, 10], 13, [{ start: 4, end: 9 }], 3.5).length, 0, "le passage coupé ne compte pas");
+  assert.equal(emojiFor("mort,"), "💀"); assert.equal(emojiFor("secrets"), "🤫"); assert.equal(emojiFor("table"), null);
+});
+
+test("vrai ou faux : question, compte à rebours, réponse", async () => {
+  const { quizPhase } = await import("../src/core/overlay.ts");
+  const q = { id: "q", text: "x", sub: "faux", start: 10, end: 16, kind: "quiz" as const };
+  assert.equal(quizPhase(q, 10.5).phase, "ask"); assert.deepEqual([quizPhase(q, 11.5).phase, quizPhase(q, 11.5).n], ["count", 3]);
+  assert.equal(quizPhase(q, 13.6).n, 1); assert.equal(quizPhase(q, 14.5).phase, "reveal");
+});

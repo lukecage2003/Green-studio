@@ -7,7 +7,7 @@ import {
 import { kept, type Range } from "./timeline.ts";
 import { Resampler, toMono, fadeGain, softLimit } from "./audio.ts";
 import { StudioVoice, loadDenoiser } from "./voice.ts";
-import { compose, drawTitle, activeAt, activeMarks, drawMark, clipTime, zoomRect, zoomEase, type Freeze, type Mark, type Overlay, type Title } from "./overlay.ts";
+import { compose, drawTitle, activeAt, activeMarks, drawMark, drawProgress, clipTime, zoomRect, zoomEase, type Freeze, type Mark, type Overlay, type Title } from "./overlay.ts";
 import { lineAt, drawCaption, type CapLine, type CaptionStyle } from "./captions.ts";
 
 const FORMATS = [MP4, QTFF, WEBM, MATROSKA]; // vidéos de téléphone (dont .mov iPhone) : module plus léger que ALL_FORMATS
@@ -99,12 +99,17 @@ export interface ExportOptions {
   freezes?: Freeze[];                              // arrêts sur image (temps source), avec zoom éventuel
   transition?: Transition;                         // effet à chaque coupe : flash blanc, coup de zoom, glissé
   aspect?: Aspect;                                 // format de sortie ; si différent de la source : fond flouté
+  progress?: boolean;                              // barre de progression fine en haut
+  look?: Look;                                     // étalonnage de toute l'image
   /** habillage : extraits (images / vidéos) et bandeaux titres, en temps source */
   dress?: { overlays: Overlay[]; titles: Title[]; marks?: Mark[]; images: Map<string, CanvasImageSource>; videos: Map<string, Blob>; accent?: string } | null;
 }
 
 export type Transition = "none" | "flash" | "punch" | "whip";
 export type Aspect = "source" | "9:16";
+export type Look = "none" | "cine" | "comics" | "noir";
+/** Filtres canvas de chaque look (appliqués une fois par image, sur l'image finale). */
+export const LOOKS: Record<Look, string> = { none: "none", cine: "contrast(1.1) saturate(1.08) brightness(.98)", comics: "contrast(1.2) saturate(1.38)", noir: "grayscale(1) contrast(1.28)" };
 /** Dimensions de sortie (paires) pour un format donné, à partir de la taille d'origine (déjà réduite). */
 export function aspectDims(w: number, h: number, a: Aspect = "source"): [number, number] {
   const ev = (x: number) => Math.max(2, Math.round(x / 2) * 2), L = Math.max(w, h);
@@ -113,7 +118,7 @@ export function aspectDims(w: number, h: number, a: Aspect = "source"): [number,
 }
 
 export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOptions = {}): Promise<ExportResult> {
-  const { onProgress, signal, fade = 0.012, gain = 1, captions = null, maxHeight = 0, voice = false, zoom = null, dress = null, intro = null, freezes = [], transition = "none", aspect = "source" } = opts;
+  const { onProgress, signal, fade = 0.012, gain = 1, captions = null, maxHeight = 0, voice = false, zoom = null, dress = null, intro = null, freezes = [], transition = "none", aspect = "source", progress = false, look = "none" } = opts;
   const vidSinks = new Map<string, { input: Input; sink: VideoSampleSink }>();
   const input = new Input({ source: new BlobSource(file), formats: FORMATS });
   let output: Output | null = null;
@@ -152,11 +157,12 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
     // Passage par un canvas seulement si nécessaire (sous-titres, redimensionnement) : sinon les images vont directement à l'encodeur.
     let cv: OffscreenCanvas | null = null, cx: OffscreenCanvasRenderingContext2D | null = null;
     const viaCanvas = (!!captions && captions.style.preset !== "none" && captions.lines.length > 0) || maxHeight > 0 || !!zoom || items.some((i) => i.fr)
-      || !!(dress && (dress.overlays.length || dress.titles.length || dress.marks?.length)) || transition !== "none" || aspect !== "source";
+      || !!(dress && (dress.overlays.length || dress.titles.length || dress.marks?.length)) || transition !== "none" || aspect !== "source" || progress || look !== "none";
     /* Format de sortie différent de la source : la vidéo est posée au centre sur un fond flouté (la même image agrandie,
        floutée en passant par une toute petite copie — bien moins coûteux qu'un filtre de flou à chaque image). */
     let oc: OffscreenCanvas | null = null, ox: OffscreenCanvasRenderingContext2D | null = null, tiny: OffscreenCanvas | null = null;
     /** Finition d'une image : effet de coupe (début de morceau), puis mise au format. */
+    let pOff = 0; // début du morceau en cours, temps de sortie (pour la barre de progression)
     const finish = (local: number, cut: boolean): OffscreenCanvas => {
       const W = cv!.width, H = cv!.height;
       if (cut && transition !== "none" && local < 0.28) {
@@ -165,6 +171,11 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
         else if (transition === "punch") { const k = 1 + 0.16 * (1 - x) ** 2; cx!.drawImage(cv!, W * (1 - 1 / k) / 2, H * (1 - 1 / k) / 2, W / k, H / k, 0, 0, W, H); }
         else if (transition === "whip") { const d = W * 0.12 * (1 - x) ** 2; if (d > 1) { cx!.save(); for (let i = 1; i <= 3; i++) { cx!.globalAlpha = 0.3; cx!.drawImage(cv!, -d * i / 3, 0); } cx!.restore(); } }
       }
+      if (look !== "none") { // étalonnage : l'image est redessinée sur elle-même à travers le filtre, puis vignettage
+        cx!.save(); cx!.filter = LOOKS[look]; cx!.drawImage(cv!, 0, 0); cx!.restore();
+        if (look === "cine" || look === "noir") { cx!.save(); const gr = cx!.createRadialGradient(W / 2, H * 0.45, Math.min(W, H) * 0.45, W / 2, H * 0.45, Math.max(W, H) * 0.75); gr.addColorStop(0, "rgba(0,0,0,0)"); gr.addColorStop(1, "rgba(0,0,0,.42)"); cx!.fillStyle = gr; cx!.fillRect(0, 0, W, H); cx!.restore(); }
+      }
+      if (progress) drawProgress(cx!, W, H, (pOff + local) / Math.max(0.1, total), dress?.accent);
       if (ow === W && oh === H) return cv!;
       if (!oc) { oc = new OffscreenCanvas(ow, oh); ox = oc.getContext("2d")!; tiny = new OffscreenCanvas(Math.max(8, Math.round(W / 24)), Math.max(8, Math.round(H / 24))); }
       const tx = tiny!.getContext("2d")!; tx.drawImage(cv!, 0, 0, tiny!.width, tiny!.height);
@@ -233,6 +244,13 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
     const audioTask = (async () => { for (let i = 0; i < items.length; i++) { if (audioErr) return; await audioItem(items[i], offs[i]); }
       const vEnd = vs as StudioVoice | null; if (vEnd && asrc) await vEmit(asrc, vEnd.flush()); })().catch((e) => { audioErr = e; });
     /** Une image source du morceau `seg` (placé à `offset` dans la vidéo finale) : habillage éventuel, puis encodage. */
+    /* Texte d'accroche géant : avec une accroche rejouée en ouverture, il s'affiche pendant cette ouverture (et pas plus loin). */
+    const hasIntro = !!intro && intro.end - intro.start > 0.3;
+    const titleAt = (ts: number, local: number, inIntro: boolean): [Title | null, number] => {
+      if (!dress) return [null, ts];
+      if (inIntro) { const h = dress.titles.find((x) => x.kind === "hook"); if (h) return [h, h.start + local]; }
+      return [activeAt(hasIntro ? dress.titles.filter((x) => x.kind !== "hook") : dress.titles, ts), ts];
+    };
     const frameOut = async (s: VideoSample, seg: Range, offset: number, first: boolean): Promise<boolean> => {
         const t = offset + Math.max(0, s.timestamp - seg.start);
         if (t <= lastV + 1e-4) { s.close(); return false; }
@@ -254,9 +272,9 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
           };
           const ov = dress ? activeAt(dress.overlays, s.timestamp) : null, os = ov ? await overlaySource(ov, s.timestamp) : null;
           compose(cx!, cv.width, cv.height, s.timestamp, ov, os?.src ?? null, speaker, ov?.with ? (dress!.images.get(ov.with) as any) ?? null : null); os?.close?.();
-          if (dress) { drawTitle(cx!, cv.width, cv.height, s.timestamp, activeAt(dress.titles, s.timestamp), dress.accent); for (const m of activeMarks(dress.marks ?? [], s.timestamp)) drawMark(cx!, cv.width, cv.height, s.timestamp, m); }
+          if (dress) { const [ti, tt] = titleAt(s.timestamp, t - offset, hasIntro && seg === items[0]); drawTitle(cx!, cv.width, cv.height, tt, ti, dress.accent); for (const m of activeMarks(dress.marks ?? [], s.timestamp)) drawMark(cx!, cv.width, cv.height, s.timestamp, m); }
           if (captions) drawCaption(cx!, 0, 0, cv.width, cv.height, lineAt(captions.lines, s.timestamp), s.timestamp, captions.style);
-          o = new VideoSample(finish(t - offset, offset > 0), { timestamp: t, duration: d }); s.close();
+          pOff = offset; o = new VideoSample(finish(t - offset, offset > 0), { timestamp: t, duration: d }); s.close();
         } else { s.setTimestamp(t); s.setDuration(d); }
         await vsrc.add(o, first ? { keyFrame: true } : undefined); o.close();
         onProgress?.(Math.min(0.99, t / total));
@@ -278,7 +296,7 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
           compose(cx!, cv.width, cv.height, f.at, ov, os?.src ?? null, speaker, ov?.with ? (dress!.images.get(ov.with) as any) ?? null : null);
           if (dress) { drawTitle(cx!, cv.width, cv.height, f.at, activeAt(dress.titles, f.at), dress.accent); for (const m of activeMarks(dress.marks ?? [], f.at)) drawMark(cx!, cv.width, cv.height, f.at + k / 30, m); }
           if (captions) drawCaption(cx!, 0, 0, cv.width, cv.height, lineAt(captions.lines, f.at), f.at, captions.style);
-          const o = new VideoSample(finish(k / 30, offset > 0), { timestamp: offset + k / 30, duration: 1 / 30 }); await vsrc.add(o, k === 0 ? { keyFrame: true } : undefined); o.close();
+          pOff = offset; const o = new VideoSample(finish(k / 30, offset > 0), { timestamp: offset + k / 30, duration: 1 / 30 }); await vsrc.add(o, k === 0 ? { keyFrame: true } : undefined); o.close();
         }
         s.close(); os?.close?.(); lastV = offset + (n - 1) / 30;
         onProgress?.(Math.min(0.99, (offset + f.dur) / total)); continue;

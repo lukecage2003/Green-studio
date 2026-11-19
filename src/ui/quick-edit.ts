@@ -3,7 +3,7 @@
 import { EditSession, wordsToRange, sourceToEdited, editedDuration, EPS, type Range, type Word } from "../core/timeline.ts";
 import { bestTakes, type TakeResult } from "../core/takes.ts";
 import { clipsOf, snapSplit, hitAt, trimEdge, wavePeaks } from "../core/derush.ts";
-import { compose, drawTitle, activeAt, activeMarks, drawMark, sfxFromWords, SFX, type Mark, clipTime, zoomRect, zoomEase, pathDuration, ANIMS, drawSafeZones, type OverlayAnim, type Overlay, type OverlayMode, type Title, type Freeze, type ZoomTarget } from "../core/overlay.ts";
+import { compose, drawTitle, activeAt, activeMarks, drawMark, sfxFromWords, SFX, type Mark, clipTime, zoomRect, zoomEase, pathDuration, ANIMS, drawSafeZones, drawProgress, type OverlayAnim, type Overlay, type OverlayMode, type Title, type Freeze, type ZoomTarget } from "../core/overlay.ts";
 
 /** Fichiers insérés (images, extraits) : gardés sur le téléphone (IndexedDB), retrouvés à la réouverture du projet. */
 const mediaDb = () => new Promise<IDBDatabase>((res, rej) => { const r = indexedDB.open("gs-media", 1); r.onupgradeneeded = () => r.result.createObjectStore("files"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
@@ -14,7 +14,8 @@ import { applyDictionary, findPhrase, type DictEntry } from "../core/dictionary.
 import { TICS, RHYTHM, type Rhythm, type SnapMode, snapToQuiet, withBounds, tightenWords, dropCrumbs, cleanTranscript, analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
 import { peaks as computePeaks, loudnessGain, speechBounds } from "../core/audio.ts";
 import { buildCaptions, drawCaption, lineAt, CAPTION_DEFAULT, PRESETS, type CapLine, type CaptionStyle, type CaptionPreset } from "../core/captions.ts";
-import { probe, extractAudio, exportEdited, webCodecsAvailable, extractClip, type Transition, type Aspect } from "../core/media.ts";
+import { probe, extractAudio, exportEdited, webCodecsAvailable, extractClip, LOOKS, type Transition, type Aspect, type Look } from "../core/media.ts";
+import { hookCheck, staticGaps } from "../core/viral.ts";
 import { StudioVoice, loadDenoiser } from "../core/voice.ts";
 import { exportRealtime } from "../core/export.ts";
 
@@ -111,7 +112,8 @@ const CSS = `
 /* outils d'habillage en tuiles, fenêtres plus nettes */
 .qe .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:0 0 12px}
 .qe .tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;height:68px;border-radius:18px;background:rgba(255,255,255,.07);border:.5px solid rgba(255,255,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.14);font-size:11.5px;font-weight:600;color:rgba(235,235,245,.85);transition:transform .12s,background .2s}
-.qe .tile span{font-size:22px;line-height:1}.qe .tile:active{transform:scale(.94)}
+.qe .tile span{font-size:22px;line-height:1}
+.qe .ring{flex:0 0 52px;height:52px;border-radius:50%;display:grid;place-items:center;font-size:18px;font-weight:800;border:4px solid var(--c);color:var(--c)}.qe .tile:active{transform:scale(.94)}
 .qe .tile[data-a=ins]{background:linear-gradient(160deg,rgba(48,209,88,.35),rgba(48,209,88,.12));border-color:rgba(48,209,88,.5);color:#fff}
 .qe .tile.on{background:rgba(255,45,85,.25);border-color:rgba(255,45,85,.7);color:#fff}
 .qe .modal .chips .ib{flex:0 1 auto;height:38px;border-radius:19px;font-size:14px;padding:0 16px}
@@ -232,6 +234,9 @@ export async function openEditor(o: EditorOptions) {
     if (tp.intro?.text && !titles.some((x) => x.id.startsWith("intro"))) titles.push({ id: "intro" + Date.now().toString(36), text: tp.intro.text, sub: tp.intro.sub, start: Math.min(0.3, duration / 4), end: Math.min(duration, 4.3) });
   }
   if (!saved) { const tp = loadTpls().find((x) => x.id === autoTplId()); if (tp) applyTpl(tp); }
+  const LOOKS_UI: [Look, string][] = [["none", "Naturel"], ["cine", "Ciné"], ["comics", "Comics"], ["noir", "Noir & blanc"]];
+  let look = ((): Look => { try { return (localStorage.getItem("gs.look") as Look) || "none"; } catch { return "none"; } })();
+  let prog = (() => { try { return localStorage.getItem("gs.prog") !== "0"; } catch { return true; } })();
   let safeOn = (() => { try { return localStorage.getItem("gs.safe") === "1"; } catch { return false; } })();
   const ovSrc = new Map<string, { blob: Blob; img?: ImageBitmap; vid?: HTMLVideoElement }>();
   async function loadOverlay(id: string, kind: Overlay["kind"], blob?: Blob | null) {
@@ -339,13 +344,22 @@ export async function openEditor(o: EditorOptions) {
       <p>Retirés quand ils sont isolés par une pause (« du coup, … »). Touchez-en un pour l’enlever de la liste.</p>
       <div class="chips">${l.map((t) => `<button class="ib" data-a="ticDel" data-v="${esc(t)}">${esc(t)} ✕</button>`).join("")}<button class="ib go" data-a="ticAdd">＋ Ajouter</button></div></details>`;
   }
+  /** Accroche (2 premières secondes) : note, problèmes, phrases plus fortes à mettre en ouverture. */
+  function hookCard() {
+    if (!words) return "";
+    const h = hookCheck(words, session.cuts, duration), col = h.score >= 80 ? "#30d158" : h.score >= 55 ? "#ffd60a" : "#ff453a";
+    return `<div class="card" data-hookc style="margin-bottom:10px"><div style="display:flex;align-items:center;gap:12px"><div class="ring" style="--c:${col}">${h.score}</div><div><b>Accroche (2 premières secondes)</b><p>${h.issues.length ? "TikTok décide en 1 à 2 s si on reste." : "Démarrage direct et intrigant. 🔥"}</p></div></div>
+      ${h.issues.map((x) => `<p>• ${esc(x)}</p>`).join("")}
+      <div class="chips">${h.lead > 0.5 ? `<button class="ib go" data-a="leadCut">✂ Couper le blanc du début</button>` : ""}<button class="ib" data-a="hookText">🅰 Texte d’accroche géant</button><button class="ib" data-a="loopEnd">🔁 Fin en boucle</button></div>
+      ${h.candidates.length ? `<p style="margin-top:4px">Phrases plus fortes pour ouvrir (rejouées au début) :</p>` + h.candidates.map((c) => `<div class="sg"><div class="t"><div style="white-space:normal">« ${esc(c)} »</div></div><button class="ib" data-a="hookUse" data-v="${esc(c)}">🎣 Ouvrir</button></div>`).join("") : ""}</div>`;
+  }
   function renderSugs() {
     if (!words) { body.innerHTML = `<div class="card"><p>Les suggestions apparaissent après la transcription (onglet Texte).</p></div>`; return; }
-    if (!sugs.length) { body.innerHTML = coachCard() + rhythmCard() + ticsCard() + `<div class="card"><p>Aucune répétition, hésitation ni silence long détecté. 👌</p>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}</div>`; return; }
+    if (!sugs.length) { body.innerHTML = hookCard() + coachCard() + rhythmCard() + ticsCard() + `<div class="card"><p>Aucune répétition, hésitation ni silence long détecté. 👌</p>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}</div>`; return; }
     const open = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range));
     const all = open.filter((s) => s.confidence >= AUTO_MIN).length, sil = open.filter((s) => s.type === "long_silence").length;
     const take = takeInfo ? `<div class="card" style="margin-bottom:10px"><b>Meilleure prise</b><p>${esc(takeSummary())}</p>${takeInfo.missing.length ? `<p>Non dit : ${takeInfo.missing.map((m) => "« " + esc(m) + " »").join(", ")}</p>` : ""}</div>` : "";
-    body.innerHTML = coachCard() + take + rhythmCard() + ticsCard() + `<div class="row" style="padding:0 0 8px"><button class="ib go" data-a="clean" ${all ? "" : "disabled"}>✨ Tout supprimer (${all})</button>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}
+    body.innerHTML = hookCard() + coachCard() + take + rhythmCard() + ticsCard() + `<div class="row" style="padding:0 0 8px"><button class="ib go" data-a="clean" ${all ? "" : "disabled"}>✨ Tout supprimer (${all})</button>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}
       <button class="ib" data-a="sil" ${sil ? "" : "disabled"}>Couper les silences (${sil})</button></div>` +
       sugs.map((s) => { const on = covered(s.range), ign = ignored.has(s.id);
         return `<div class="sg ${on ? "on" : ""} ${ign ? "ign" : ""}" data-s="${esc(s.id)}"><div class="t"><b>${LABEL[s.type]} · ${Math.round(s.confidence * 100)} %${on ? " · coupé" : ""}</b>
@@ -361,6 +375,19 @@ export async function openEditor(o: EditorOptions) {
       <p>Associez une image à un mot (« Iron Man », « Batman »…) : elle s’affiche toute seule quand vous le dites. L’Express les place aussi.</p>
       <div class="chips">${l.map((b) => `<button class="ib" data-a="bankDel" data-v="${b.id}">${esc(b.key)} ✕</button>`).join("")}<button class="ib go" data-a="bankAdd">＋ Ajouter</button>${l.length ? `<button class="ib" data-a="bankAuto">✨ Placer dans cette vidéo</button>` : ""}</div></details>`;
   }
+  /** Instants (temps source) où quelque chose change à l'écran. */
+  function visualChanges(): number[] {
+    const c: number[] = session.cuts.map((x) => x.end);
+    if (zooms) c.push(...zoomTimes());
+    for (const o of overlays) c.push(o.start, o.end); for (const t of titles) c.push(t.start, t.end); for (const m of marks) c.push(m.start); for (const f of freezes) c.push(f.at);
+    return c;
+  }
+  const gaps = () => staticGaps(visualChanges(), duration, session.cuts, 3.5);
+  function paceCard() {
+    const g = gaps(); if (!duration) return "";
+    return `<div class="card" style="margin-bottom:10px"><b>${g.length ? `⚠ ${g.length} passage${g.length > 1 ? "s" : ""} sans changement à l’écran` : "✓ Rythme visuel : ça bouge toutes les 3 s"}</b>
+      ${g.length ? `<p>Plus de 3,5 s sans rien de nouveau : on décroche. Touchez un passage (en rouge sur la timeline), puis ajoutez une image, un zoom ou une onomatopée.</p><div class="chips">${g.slice(0, 8).map((r) => `<button class="ib" data-a="gapGo" data-v="${r.start}">${fmt(r.start)}</button>`).join("")}</div>` : ""}</div>`;
+  }
   function renderDress() {
     const ovRows = overlays.map((ov) => `<div class="sg" data-o="${ov.id}"><div class="t"><b style="color:#64d2ff">${ov.kind === "image" ? "Image" : "Extrait vidéo"} · ${fmt(ov.start)} → ${fmt(ov.end)}</b>
         <div class="chips" style="margin-top:6px">${MODES.map(([m, l]) => `<button class="ib" data-a="omode" data-v="${m}" aria-pressed="${ov.mode === m}">${l}</button>`).join("")}</div>
@@ -373,11 +400,11 @@ export async function openEditor(o: EditorOptions) {
       + freezes.map((f) => `<div class="sg" data-fz="${f.id}"><div class="t"><b style="color:#ff9f0a">⏸ Arrêt sur image · ${fmt(f.at)} · ${f.dur.toFixed(1).replace(".", ",")} s</b>
         <div class="chips" style="margin-top:6px"><button class="ib" data-a="fzoom" aria-pressed="${!!f.zoom}">🔍 ${f.zoom ? `Zoom ${f.zoom.z.toFixed(1).replace(".", ",")}×` : "Zoomer"}</button><button class="ib" data-a="fplay">▶ Voir</button></div></div>
         <button class="ib" data-a="fminus" aria-label="Plus court">−</button><button class="ib" data-a="fplus" aria-label="Plus long">+</button><button class="ib" data-a="fhere">Ici</button><button class="ib" data-a="fdel" aria-label="Supprimer">✕</button></div>`).join("");
-    const tiRows = titles.map((ti) => `<div class="sg" data-ti="${ti.id}"><div class="t"><b style="color:#bf5af2">${ti.kind === "chapter" ? "📖 Chapitre" : ti.kind === "timeline" ? "🗓 Frise" : "Bandeau"} · ${fmt(ti.start)} → ${fmt(ti.end)}</b>
+    const tiRows = titles.map((ti) => `<div class="sg" data-ti="${ti.id}"><div class="t"><b style="color:#bf5af2">${ti.kind === "chapter" ? "📖 Chapitre" : ti.kind === "timeline" ? "🗓 Frise" : ti.kind === "hook" ? "🅰 Accroche" : ti.kind === "question" ? "👇 Question" : ti.kind === "rank" ? "🏆 Classement #" + esc(ti.sub ?? "") : ti.kind === "quiz" ? "❓ Vrai / Faux (" + esc(ti.sub ?? "") + ")" : "Bandeau"} · ${fmt(ti.start)} → ${fmt(ti.end)}</b>
         <input data-a="ttext" value="${esc(ti.text)}" placeholder="Titre" style="width:100%;margin-top:6px;background:rgba(255,255,255,.08);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit">
-        <input data-a="tsub" value="${esc(ti.sub ?? "")}" placeholder="${ti.kind === "timeline" ? "1962 Création ; 1984 Secret Wars ; …" : "Sous-titre (facultatif)"}" style="width:100%;margin-top:4px;background:rgba(255,255,255,.06);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit;font-size:14px"></div>
+        <input data-a="tsub" value="${esc(ti.sub ?? "")}" placeholder="${ti.kind === "quiz" ? "vrai ou faux" : ti.kind === "rank" ? "Numéro" : ti.kind === "timeline" ? "1962 Création ; 1984 Secret Wars ; …" : "Sous-titre (facultatif)"}" style="width:100%;margin-top:4px;background:rgba(255,255,255,.06);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit;font-size:14px"></div>
         <button class="ib" data-a="tminus" aria-label="Plus court">−</button><button class="ib" data-a="tplus" aria-label="Plus long">+</button><button class="ib" data-a="there">Ici</button><button class="ib" data-a="tdel" aria-label="Supprimer">✕</button></div>`).join("");
-    body.innerHTML = `<div class="tiles">${([["ins", "🖼", "Image"], ["title", "🅣", "Bandeau"], ["chapter", "📖", "Chapitre"], ["timeline", "🗓", "Frise"], ["annot", "✏️", "Annoter"], ["sfx", "💥", "Onomatopée"], ["freezeAdd", "🔍", "Pause zoom"], ["safe", "📱", "Zones TikTok"]] as const).map(([a, i, l]) => `<button class="tile${a === "safe" && safeOn ? " on" : ""}" data-a="${a}"><span>${i}</span>${l}</button>`).join("")}</div><div class="row" style="padding:0 0 10px">${words && sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length ? `<button class="ib go" data-a="sfxAuto">💥 Placer les onomatopées dites (${sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length})</button>` : ""}</div>
+    body.innerHTML = paceCard() + `<div class="tiles">${([["ins", "🖼", "Image"], ["title", "🅣", "Bandeau"], ["chapter", "📖", "Chapitre"], ["timeline", "🗓", "Frise"], ["hookText", "🅰", "Accroche"], ["rank", "🏆", "Classement"], ["quiz", "❓", "Vrai / Faux"], ["question", "👇", "Question fin"], ["annot", "✏️", "Annoter"], ["sfx", "💥", "Onomatopée"], ["freezeAdd", "🔍", "Pause zoom"], ["safe", "📱", "Zones TikTok"]] as const).map(([a, i, l]) => `<button class="tile${a === "safe" && safeOn ? " on" : ""}" data-a="${a}"><span>${i}</span>${l}</button>`).join("")}</div><div class="row" style="padding:0 0 10px">${words && sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length ? `<button class="ib go" data-a="sfxAuto">💥 Placer les onomatopées dites (${sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length})</button>` : ""}</div>
       ${ovRows || tiRows || marks.length ? ovRows + tiRows : `<div class="card"><b>Habillez votre vidéo</b><p>Insérez une case de comic, une couverture ou un extrait : il s’affiche par-dessus la vidéo au moment choisi (tête de lecture, ou les mots sélectionnés dans Texte), en plein écran, en incrustation, ou avec vous en petit dans un coin, et animez-la (glissé, pop, zoom…). « Zones TikTok » montre ce que l’appli TikTok recouvre.</p></div>`}` + bankCard();
   }
   /**
@@ -489,17 +516,30 @@ export async function openEditor(o: EditorOptions) {
     overlays.push({ id, kind, start, end, mode: "full" }); overlays.sort((a, b) => a.start - b.start);
     tab = "dress"; body.innerHTML = ""; commit(); toast("Inséré. Choisissez son affichage dans Habillage.", 2500);
   }
-  function addTitle(kind: Title["kind"] = "lower") {
+  function addTitle(kind: Title["kind"] = "lower", text?: string) {
     const n = titles.filter((x) => x.kind === "chapter").length + 1;
     const ask = kind === "chapter" ? ["Chapitre — titre (ex. « Les origines de Venom »)", "Surtitre (ex. « Partie " + n + " »)", "Partie " + n]
+      : kind === "hook" ? ["Texte d’accroche (affiché en géant au début, 6 mots max)", "", ""]
+      : kind === "question" ? ["Question de fin (pour les commentaires)", "", ""]
+      : kind === "rank" ? ["Classement — le nom (ex. « Venom »)", "Numéro (5, 4, 3…)", String(Math.max(1, 6 - titles.filter((x) => x.kind === "rank").length - 1))]
+      : kind === "quiz" ? ["Vrai ou faux — l’affirmation (ex. « Venom a déjà été un héros »)", "La réponse : vrai ou faux ?", "vrai"]
       : kind === "timeline" ? ["Frise — le titre (ex. « L’histoire de Venom »)", "Dates et événements séparés par ; ", "1984 Le costume noir ; 1988 Venom naît ; 2018 Le film"]
       : ["Bandeau — titre (ex. « Comics News »)", "Sous-titre (facultatif, ex. « Le nouveau Spider-Man »)", ""];
-    const t = prompt(ask[0], "")?.trim(); if (!t) return;
-    const sub = prompt(ask[1], ask[2])?.trim() || undefined;
+    const t = (text ?? prompt(ask[0], kind === "question" ? endQuestion() : "")?.trim()); if (!t) return;
+    const sub = ask[1] ? prompt(ask[1], ask[2])?.trim() || undefined : undefined;
     const nRows = (sub ?? "").split(/[;\n]/).filter((x) => x.trim()).length;
-    const start = video.currentTime, len = kind === "chapter" ? 2.6 : kind === "timeline" ? 2.5 + nRows * 1.2 : 4;
+    let start = video.currentTime; const len = kind === "chapter" ? 2.6 : kind === "timeline" ? 2.5 + nRows * 1.2 : kind === "hook" ? 1.8 : kind === "question" ? 3.5 : kind === "rank" ? 2.5 : kind === "quiz" ? 6 : 4;
+    if (kind === "hook") start = firstKept(); if (kind === "question") start = Math.max(0, lastKept() - len);
     titles.push({ id: "ti" + Date.now().toString(36), text: t, sub, start, end: Math.min(duration, start + len), kind }); titles.sort((a, b) => a.start - b.start);
     titles.sort((a, b) => a.start - b.start); tab = "dress"; body.innerHTML = ""; commit();
+  }
+  const keptWords = () => (words ?? []).filter((w) => !inCut((w.start + w.end) / 2) && /[\p{L}\p{N}]/u.test(w.text));
+  const firstKept = () => { const k = keptWords()[0]; return k ? Math.max(0, k.start - 0.05) : 0; };
+  const lastKept = () => { const k = keptWords(); return k.length ? Math.min(duration, k[k.length - 1].end + 0.1) : duration; };
+  /** Question de fin proposée : dernière question dite, sinon une formule qui fait réagir. */
+  function endQuestion() {
+    const q = (words ? keptWords().map((w) => w.text).join(" ") : "").split(/(?<=[.!?…])\s+/).filter((x) => x.endsWith("?")).pop();
+    return q && q.split(/\s+/).length <= 12 ? q : "Et vous, vous en pensez quoi ?";
   }
   /** Image de l'extrait pour l'aperçu (extrait vidéo calé sur la lecture). */
   function previewSrc(ov: Overlay, t: number) {
@@ -528,6 +568,7 @@ export async function openEditor(o: EditorOptions) {
       <label class="opt">Haut <input type="range" data-a="pos" min="0.12" max="0.88" step="0.01" value="${style.pos}"> Bas</label>
       <label class="opt"><input type="checkbox" data-a="upper" ${style.upper ? "checked" : ""}> MAJUSCULES</label>
       <label class="opt"><input type="checkbox" data-a="strong" ${style.strong !== false ? "checked" : ""}> Mots forts en couleur (noms propres, chiffres, « Mes mots »)</label>
+      <label class="opt"><input type="checkbox" data-a="emoji" ${style.emoji ? "checked" : ""}> Emojis sur les mots forts (mort 💀, secret 🤫, pouvoir 💪…)</label>
       <label class="opt">Couleur du mot actif <input type="color" data-a="color" value="${style.color}"></label>
       <p>Un mot mal transcrit ? Onglet Texte : touchez-le, puis ✎.</p></div>`;
   }
@@ -549,7 +590,7 @@ export async function openEditor(o: EditorOptions) {
     const t = e.target as HTMLInputElement, a = t.dataset.a;
     if (a === "ttext" || a === "tsub") { const ti = titles.find((x) => x.id === t.closest<HTMLElement>("[data-ti]")?.dataset.ti); if (ti) { if (a === "ttext") ti.text = t.value; else ti.sub = t.value || undefined; save(); } return; }
     if (a === "tplAuto") { try { localStorage.setItem("gs.tplAuto", t.value); } catch { /* */ } body.innerHTML = ""; renderCC(); return; }
-    if (a === "pos") setStyle({ pos: +t.value }); else if (a === "upper") setStyle({ upper: t.checked }); else if (a === "strong") setStyle({ strong: t.checked }); else if (a === "color") setStyle({ color: t.value });
+    if (a === "pos") setStyle({ pos: +t.value }); else if (a === "upper") setStyle({ upper: t.checked }); else if (a === "strong") setStyle({ strong: t.checked }); else if (a === "emoji") setStyle({ emoji: t.checked }); else if (a === "color") setStyle({ color: t.value });
   });
 
   /** Sous-titres en surimpression sur le lecteur (même rendu que l'export). */
@@ -573,6 +614,8 @@ export async function openEditor(o: EditorOptions) {
       drawTitle(g, w, h, t, ti); for (const m of mk) drawMark(g, w, h, fz ? t + (performance.now() - fz.t0) / 1000 : t, m); g.restore();
     }
     if (lines.length && style.preset !== "none") drawCaption(g, (ccv.width - w) / 2, (ccv.height - h) / 2, w, h, lineAt(lines, video.currentTime), video.currentTime, style);
+    if (prog && session.editedDuration > 0) { g.save(); g.translate((ccv.width - w) / 2, (ccv.height - h) / 2); drawProgress(g, w, h, sourceToEdited(t, duration, session.cuts) / session.editedDuration); g.restore(); }
+    { const f = LOOKS[look]; const fv = f === "none" ? "" : f; if (video.style.filter !== fv) { video.style.filter = fv; spare.style.filter = fv; } }
     if (safeOn) { g.save(); g.translate((ccv.width - w) / 2, (ccv.height - h) / 2); drawSafeZones(g, w, h); g.restore(); }
   }
 
@@ -639,6 +682,7 @@ export async function openEditor(o: EditorOptions) {
     g.fillStyle = "rgba(255,214,10,.95)"; for (const m of marks) g.fillRect(X(m.start), yT + 10 * dpr, Math.max(2, X(m.end) - X(m.start)), 3 * dpr);
     g.fillStyle = "#ff9f0a"; for (const f of freezes) { const fx = X(f.at); g.fillRect(fx - 1.5 * dpr, yT, 3 * dpr, hh); g.beginPath(); g.moveTo(fx - 5 * dpr, yT); g.lineTo(fx + 5 * dpr, yT); g.lineTo(fx, yT + 6 * dpr); g.fill(); }
     g.fillStyle = "rgba(191,90,242,.95)"; for (const ti of titles) g.fillRect(X(ti.start), yT + 6 * dpr, Math.max(2, X(ti.end) - X(ti.start)), 3 * dpr);
+    if (tab === "dress") { g.fillStyle = "rgba(255,69,58,.85)"; for (const r of gaps()) g.fillRect(X(r.start), yB - 9 * dpr, Math.max(2, X(r.end) - X(r.start)), 3 * dpr); }
     g.fillStyle = "#ffd60a"; for (const s of sugs) if (!ignored.has(s.id) && !covered(s.range)) g.fillRect(X(s.range.start), yB - 4 * dpr, Math.max(2, X(s.range.end) - X(s.range.start)), 3 * dpr);
     // sélection : cadre blanc + poignées
     if (sc) { const x = X(sc.start), w = X(sc.end) - x; g.lineWidth = 2 * dpr; g.strokeStyle = "#fff"; rr(x + dpr, yT, w - 2 * dpr, hh, 7 * dpr); g.stroke();
@@ -1025,16 +1069,19 @@ export async function openEditor(o: EditorOptions) {
       <label class="opt"><input type="checkbox" data-x="voice" ${voice ? "checked" : ""}> Voix studio (bruit, écho, voix plus claire)</label>
       <label class="opt"><input type="checkbox" data-x="norm" ${norm ? "checked" : ""}> Volume optimisé pour les réseaux (≈ −14 LUFS)</label>
       <label class="opt"><input type="checkbox" data-x="q720" ${q720 ? "checked" : ""}> 720p (envoi plus rapide, TikTok préfère 1080p)</label>
+      <label class="opt"><input type="checkbox" data-x="prog" ${prog ? "checked" : ""}> Barre de progression en haut (on reste jusqu’au bout)</label>
+      <div class="opt col">Look <div class="chips">${LOOKS_UI.map(([k, l]) => `<button class="ib" data-lk="${k}" aria-pressed="${look === k}">${l}</button>`).join("")}</div></div>
       <div class="opt col">Effet aux coupes <div class="chips">${TRANS.map(([k, l]) => `<button class="ib" data-tr="${k}" aria-pressed="${trans === k}">${l}</button>`).join("")}</div></div>
 
       <div class="row" style="padding:0"><button class="ib go" data-x="run">Exporter</button><button class="ib" data-x="no">Annuler</button></div></div>`;
     root.appendChild(m);
-    m.addEventListener("click", (e) => { const b = (e.target as HTMLElement).closest<HTMLElement>("[data-tr]"); if (!b) return;
-      m.querySelectorAll("[data-tr]").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); trans = b.dataset.tr as Transition; });
+    m.addEventListener("click", (e) => { const b = (e.target as HTMLElement).closest<HTMLElement>("[data-tr],[data-lk]"); if (!b) return;
+      const at = b.dataset.tr ? "data-tr" : "data-lk"; m.querySelectorAll(`[${at}]`).forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      if (b.dataset.tr) trans = b.dataset.tr as Transition; else look = b.dataset.lk as Look; });
     m.querySelector<HTMLElement>("[data-x=no]")!.onclick = () => m.remove();
     const ccb = m.querySelector<HTMLElement>("[data-x=cc]"); if (ccb) ccb.onclick = () => { m.remove(); tab = "cc"; body.innerHTML = ""; refresh(); };
     m.querySelector<HTMLElement>("[data-x=run]")!.onclick = () => {
-      norm = m.querySelector<HTMLInputElement>("[data-x=norm]")!.checked; voice = m.querySelector<HTMLInputElement>("[data-x=voice]")!.checked; zooms = m.querySelector<HTMLInputElement>("[data-x=zooms]")!.checked; q720 = m.querySelector<HTMLInputElement>("[data-x=q720]")!.checked; try { localStorage.setItem("gs.trans", trans); } catch { /* */ } save(); m.remove(); runExport();
+      norm = m.querySelector<HTMLInputElement>("[data-x=norm]")!.checked; voice = m.querySelector<HTMLInputElement>("[data-x=voice]")!.checked; zooms = m.querySelector<HTMLInputElement>("[data-x=zooms]")!.checked; q720 = m.querySelector<HTMLInputElement>("[data-x=q720]")!.checked; prog = m.querySelector<HTMLInputElement>("[data-x=prog]")!.checked; try { localStorage.setItem("gs.trans", trans); localStorage.setItem("gs.look", look); localStorage.setItem("gs.prog", prog ? "1" : "0"); } catch { /* */ } save(); m.remove(); runExport();
     };
   }
   async function runExport(auto = false) {
@@ -1051,7 +1098,7 @@ export async function openEditor(o: EditorOptions) {
         if (!webCodecsAvailable()) throw new Error("WebCodecs indisponible");
         let gain = 1; if (norm) { await audioP; if (pcm) gain = loudnessGain(pcm, 16000, session.kept); }
         const captions = words && style.preset !== "none" ? { lines, style } : null;
-        const r = await exportEdited(o.file, session.cuts, { onProgress, signal: ac.signal, gain, captions, maxHeight: q720 ? 1280 : 0, voice, zoom: zooms ? zoomAt : null, intro: hook && !inCut((hook.start + hook.end) / 2) ? hook : null, freezes: freezes.filter((f) => !inCut(f.at)), transition: trans, aspect,
+        const r = await exportEdited(o.file, session.cuts, { onProgress, signal: ac.signal, gain, captions, maxHeight: q720 ? 1280 : 0, voice, zoom: zooms ? zoomAt : null, intro: hook && !inCut((hook.start + hook.end) / 2) ? hook : null, freezes: freezes.filter((f) => !inCut(f.at)), transition: trans, aspect, progress: prog, look,
           dress: overlays.length || titles.length || marks.length ? { overlays, titles, marks, images: new Map([...ovSrc].filter(([, e]) => e.img).map(([id, e]) => [id, e.img!])), videos: new Map([...ovSrc].filter(([, e]) => !e.img).map(([id, e]) => [id, e.blob])) } : null }); blob = r.blob; ext = r.ext; how = `${r.video.toUpperCase()}${r.audio ? " + " + r.audio.toUpperCase() : ""}`;
       } catch (e: any) {
         if (e?.name === "AbortError") throw e;
@@ -1148,6 +1195,17 @@ export async function openEditor(o: EditorOptions) {
       case "title": addTitle(); break;
       case "chapter": addTitle("chapter"); break;
       case "timeline": addTitle("timeline"); break;
+      case "rank": addTitle("rank"); break;
+      case "quiz": addTitle("quiz"); break;
+      case "question": addTitle("question"); break;
+      case "hookText": { const h = words ? hookCheck(words, session.cuts, duration) : null, first = words ? keptWords().slice(0, 7).map((w) => w.text).join(" ").replace(/[,.…]+$/, "") : "";
+        const v = prompt("Texte d’accroche (affiché en géant au début, 6 mots max) :", h?.candidates[0]?.split(/\s+/).slice(0, 7).join(" ") ?? first)?.trim(); if (v) addTitle("hook", v); break; }
+      case "hookUse": { const f = findPhrase(words!, t.dataset.v!)[0]; if (!f) break; hook = { start: Math.max(0, words![f[0]].start - 0.05), end: Math.min(duration, words![f[1]].end + 0.2) }; commit(); toast("Cette phrase ouvrira la vidéo (rejouée au début).", 2500); break; }
+      case "leadCut": { const k = keptWords()[0]; if (k && k.start > 0.3) { session.addCut({ start: 0, end: Math.max(0, k.start - 0.08) }); commit(); toast("Blanc du début coupé.", 1800); } break; }
+      case "loopEnd": { const k = keptWords(); if (!k.length) break; const a = Math.max(0, k[0].start - 0.04), b = Math.min(duration, k[k.length - 1].end + 0.06);
+        if (a > 0.05) session.addCut({ start: 0, end: a }); if (b < duration - 0.05) session.addCut({ start: b, end: duration });
+        commit(); toast("Fin en boucle : la vidéo s’arrête net sur le dernier mot et repart sans blanc. Astuce : finissez par une phrase qui s’enchaîne avec la première.", 6000); break; }
+      case "gapGo": seek(+t.dataset.v! + 0.2); break;
       case "safe": safeOn = !safeOn; try { localStorage.setItem("gs.safe", safeOn ? "1" : "0"); } catch { /* */ } body.innerHTML = ""; refresh(); drawCC(); break;
       case "oanim": case "owith": case "olabels": {
         const ov = overlays.find((x) => x.id === t.closest<HTMLElement>("[data-o]")?.dataset.o); if (!ov) break;

@@ -101,7 +101,8 @@ export const clipTime = (ov: Overlay, t: number) => Math.max(0, Math.min(t - ov.
 export const overlayZoomK = (ov: Overlay, t: number) => (ov.zoom ? zoomEase(t - ov.start - (ov.kind === "video" && ov.freeze != null ? ov.freeze : 0.3)) : 0);
 /** kind : bandeau (bas gauche), chapitre (carton plein écran), bulle (citation façon comic). */
 /** timeline : frise (sub = « 1962 Création ; 1984 Secret Wars ; … »). */
-export interface Title { id: string; text: string; sub?: string; start: number; end: number; kind?: "lower" | "chapter" | "timeline" }
+/** hook : texte d'accroche géant ; question : question finale ; rank : classement (sub = numéro) ; quiz : vrai / faux (sub = « vrai » ou « faux »). */
+export interface Title { id: string; text: string; sub?: string; start: number; end: number; kind?: "lower" | "chapter" | "timeline" | "hook" | "question" | "rank" | "quiz" }
 /**
  * Zones masquées par l'interface TikTok (fractions de l'image 9:16) : onglets en haut, boutons à droite, légende en bas.
  * Tout ce que l'application place (bandeaux, sous-titres, incrustations) reste en dehors.
@@ -215,8 +216,75 @@ function drawTimeline(ctx: Ctx, W: number, H: number, t: number, ti: Title, acce
   });
   ctx.restore();
 }
+/** Texte en capitales sur plusieurs lignes, contour noir épais, lignes alternées blanc / couleur. */
+function bigText(ctx: Ctx, W: number, text: string, fs0: number, maxW: number, maxLines: number, alt: string) {
+  let fs = fs0, lines: string[] = [];
+  for (;;) { ctx.font = `900 ${fs}px ${FONT}`; lines = wrap(ctx, text.toUpperCase(), maxW); if (lines.length <= maxLines || fs < W * 0.05) break; fs *= 0.9; }
+  const lh = fs * 1.06, top = -((lines.length - 1) * lh) / 2; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
+  lines.forEach((l, i) => { ctx.lineWidth = fs * 0.2; ctx.strokeStyle = "#000"; ctx.strokeText(l, 0, top + i * lh); ctx.fillStyle = i % 2 ? alt : "#fff"; ctx.fillText(l, 0, top + i * lh); });
+  return { fs, h: lines.length * lh };
+}
+/** Accroche géante des premières secondes : « pop » sur ressort, léger penché, au tiers haut (sous les onglets TikTok). */
+function drawHook(ctx: Ctx, W: number, H: number, t: number, ti: Title) {
+  const age = t - ti.start, sc = Math.max(0.01, spring(age, 0.35, 0.7)), out = Math.min(1, Math.max(0, (ti.end - t) / 0.2));
+  ctx.save(); ctx.globalAlpha = out; ctx.translate(W / 2, H * 0.3); ctx.rotate(-0.04); ctx.scale(sc, sc); bigText(ctx, W, ti.text, W * 0.11, W * 0.86, 3, "#ffd60a"); ctx.restore();
+}
+/** Question finale (« Team Venom ou Team Carnage ? 👇 ») : carte blanche au centre, qui rebondit. */
+function drawQuestion(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
+  const age = t - ti.start, sc = Math.max(0.01, spring(age, 0.4, 0.6)), a = fadeIn(ti, t, 0.15), fs = W * 0.064, pad = W * 0.05;
+  ctx.save(); ctx.globalAlpha = a; ctx.font = `900 ${fs}px ${FONT}`;
+  const lines = wrap(ctx, ti.text, W * 0.74), lh = fs * 1.2, bw = Math.max(...lines.map((l) => ctx.measureText(l).width)) + pad * 2, bh = lines.length * lh + pad * 1.2;
+  ctx.translate(W / 2, H * 0.46); ctx.rotate(0.02); ctx.scale(sc, sc);
+  ctx.shadowColor = "rgba(0,0,0,.45)"; ctx.shadowBlur = W * 0.05; rounded(ctx, -bw / 2, -bh / 2, bw, bh, W * 0.05); ctx.fillStyle = "#fff"; ctx.fill(); ctx.shadowColor = "transparent";
+  ctx.lineWidth = W * 0.012; ctx.strokeStyle = accent; ctx.stroke();
+  ctx.fillStyle = "#111"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; lines.forEach((l, i) => ctx.fillText(l, 0, -bh / 2 + pad * 0.6 + lh / 2 + i * lh));
+  ctx.font = `${W * 0.09}px ${FONT}`; ctx.fillText("👇", 0, bh / 2 + W * 0.08 + Math.sin(age * 6) * W * 0.012);
+  ctx.restore();
+}
+/** Classement : grosse pastille « #3 » et le nom, qui arrivent de la gauche sous les onglets TikTok. */
+function drawRank(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
+  const age = t - ti.start, e = spring(age, 0.45, 0.4), out = Math.min(1, Math.max(0, (ti.end - t) / 0.25)), r = W * 0.11, cy = H * (TIKTOK_SAFE.top + 0.03) + r;
+  ctx.save(); ctx.globalAlpha = out; ctx.translate(-(1 - e) * W * 0.8, 0);
+  ctx.shadowColor = "rgba(0,0,0,.5)"; ctx.shadowBlur = W * 0.04; ctx.beginPath(); ctx.arc(W * 0.06 + r, cy, r, 0, Math.PI * 2); ctx.fillStyle = accent; ctx.fill(); ctx.shadowColor = "transparent";
+  ctx.lineWidth = W * 0.01; ctx.strokeStyle = "#fff"; ctx.stroke();
+  ctx.fillStyle = "#000"; ctx.font = `900 ${r * 1.05}px ${FONT}`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("#" + (ti.sub ?? "1").replace(/^#/, ""), W * 0.06 + r, cy + r * 0.04);
+  ctx.textAlign = "left"; ctx.font = `900 ${W * 0.075}px ${FONT}`; ctx.lineJoin = "round"; ctx.lineWidth = W * 0.016; ctx.strokeStyle = "#000";
+  const nx = W * 0.06 + r * 2 + W * 0.035, name = ti.text.toUpperCase(); ctx.strokeText(name, nx, cy, W * 0.78 - r * 2); ctx.fillStyle = "#fff"; ctx.fillText(name, nx, cy, W * 0.78 - r * 2);
+  ctx.restore();
+}
+/** Vrai ou faux : l'affirmation, « VRAI OU FAUX ? », compte à rebours 3-2-1, puis le tampon de la réponse. */
+export function quizPhase(ti: Title, t: number): { phase: "ask" | "count" | "reveal"; n: number; k: number } {
+  const age = t - ti.start, ask = 1.4, cnt = 3;
+  if (age < ask) return { phase: "ask", n: 0, k: age / ask };
+  if (age < ask + cnt) { const c = age - ask; return { phase: "count", n: 3 - Math.floor(c), k: c % 1 }; }
+  return { phase: "reveal", n: 0, k: age - ask - cnt };
+}
+function drawQuiz(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
+  const ph = quizPhase(ti, t), a = fadeIn(ti, t, 0.15), yes = /^v/i.test((ti.sub ?? "").trim());
+  ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = "rgba(0,0,0,.38)"; ctx.fillRect(0, 0, W, H);
+  ctx.save(); ctx.translate(W / 2, H * 0.27); bigText(ctx, W, ti.text, W * 0.075, W * 0.84, 4, accent); ctx.restore();
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  if (ph.phase === "ask") { const sc = Math.max(0.01, spring(ph.k * 1.4, 0.35, 0.6)); ctx.save(); ctx.translate(W / 2, H * 0.47); ctx.scale(sc, sc);
+    rounded(ctx, -W * 0.36, -W * 0.07, W * 0.72, W * 0.14, W * 0.07); ctx.fillStyle = "#111"; ctx.fill(); ctx.fillStyle = "#fff"; ctx.font = `900 ${W * 0.068}px ${FONT}`; ctx.fillText("VRAI OU FAUX ?", 0, 0); ctx.restore(); }
+  else if (ph.phase === "count") { const sc = 1.5 - 0.5 * Math.min(1, ph.k / 0.25); ctx.save(); ctx.globalAlpha = a * (1 - Math.max(0, ph.k - 0.75) * 4); ctx.translate(W / 2, H * 0.5); ctx.scale(sc, sc);
+    ctx.font = `900 ${W * 0.3}px ${FONT}`; ctx.lineWidth = W * 0.03; ctx.lineJoin = "round"; ctx.strokeStyle = "#000"; ctx.strokeText(String(ph.n), 0, 0); ctx.fillStyle = "#fff"; ctx.fillText(String(ph.n), 0, 0); ctx.restore();
+    ctx.beginPath(); ctx.arc(W / 2, H * 0.5, W * 0.22, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ph.k); ctx.lineWidth = W * 0.02; ctx.strokeStyle = accent; ctx.stroke(); }
+  else { const sc = Math.max(0.01, spring(ph.k, 0.3, 0.9)) * 1, col = yes ? "#30d158" : "#ff3b30"; ctx.save(); ctx.translate(W / 2, H * 0.5); ctx.rotate(-0.12); ctx.scale(sc, sc);
+    rounded(ctx, -W * 0.34, -W * 0.12, W * 0.68, W * 0.24, W * 0.05); ctx.lineWidth = W * 0.022; ctx.strokeStyle = col; ctx.stroke(); ctx.fillStyle = col + "33"; ctx.fill();
+    ctx.fillStyle = col; ctx.font = `900 ${W * 0.15}px ${FONT}`; ctx.fillText(yes ? "VRAI" : "FAUX", 0, W * 0.01); ctx.restore();
+    if (ph.k < 0.25) { ctx.fillStyle = `rgba(255,255,255,${(0.25 - ph.k) * 2.4})`; ctx.fillRect(0, 0, W, H); } }
+  ctx.restore();
+}
+/** Barre de progression fine en haut de l'image (la fin visible retient le spectateur). */
+export function drawProgress(ctx: Ctx, W: number, H: number, p: number, accent = "#30d158") {
+  const h = Math.max(3, H * 0.006); ctx.save(); ctx.fillStyle = "rgba(255,255,255,.25)"; ctx.fillRect(0, 0, W, h); ctx.fillStyle = accent; ctx.fillRect(0, 0, W * Math.max(0, Math.min(1, p)), h); ctx.restore();
+}
 export function drawTitle(ctx: Ctx, W: number, H: number, t: number, ti: Title | null, accent = "#30d158") {
   if (!ti || !ti.text.trim()) return;
+  if (ti.kind === "hook") return drawHook(ctx, W, H, t, ti);
+  if (ti.kind === "question") return drawQuestion(ctx, W, H, t, ti, accent);
+  if (ti.kind === "rank") return drawRank(ctx, W, H, t, ti, accent);
+  if (ti.kind === "quiz") return drawQuiz(ctx, W, H, t, ti, accent);
   if (ti.kind === "timeline") return drawTimeline(ctx, W, H, t, ti, accent);
   if (ti.kind === "chapter") return drawChapter(ctx, W, H, t, ti, accent);
   if (ti.kind && ti.kind !== "lower") return; // anciens types retirés (bulle, fiche)

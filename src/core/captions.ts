@@ -1,9 +1,10 @@
 /** Sous-titres animés : regroupement des mots en lignes courtes (style réseaux sociaux) et dessin sur canvas.
  *  Les temps sont ceux de la vidéo source : le même code sert à l'aperçu (lecteur) et à l'export (images source). */
 import type { Range, Word } from "./timeline.ts";
+import { emojiFor } from "./viral.ts";
 
 export type CaptionPreset = "none" | "karaoke" | "box" | "word" | "simple";
-export interface CaptionStyle { preset: CaptionPreset; pos: number; upper: boolean; color: string; strong?: boolean } // strong : mots forts en couleur
+export interface CaptionStyle { preset: CaptionPreset; pos: number; upper: boolean; color: string; strong?: boolean; emoji?: boolean } // emoji : emoji qui « pop » au-dessus du mot fort // strong : mots forts en couleur
 export const CAPTION_DEFAULT: CaptionStyle = { preset: "karaoke", pos: 0.66, upper: false, color: "#34e08b" };
 export const PRESETS: Record<CaptionPreset, string> = { none: "Aucun", karaoke: "Karaoké", word: "Mot par mot", box: "Encadré", simple: "Simple" };
 
@@ -57,6 +58,11 @@ export function drawCaption(ctx: Ctx, x: number, y: number, W: number, H: number
   if (k < 0) { k = -1; for (let i = 0; i < line.words.length; i++) if (line.words[i].start <= t) k = i; } // entre deux mots : le dernier prononcé
   ctx.save(); ctx.textBaseline = "middle"; ctx.lineJoin = "round"; ctx.miterLimit = 2;
   const cy = y + H * st.pos;
+  if (st.emoji) { // dernier mot prononcé de la ligne qui appelle un emoji : il saute au-dessus des sous-titres
+    let ei = -1, e: string | null = null; for (let i = 0; i <= k; i++) { const f = emojiFor(line.words[i].text); if (f) { ei = i; e = f; } }
+    if (e && ei >= 0) { const age = Math.max(0, t - line.words[ei].start), sc = age < 0.18 ? 0.4 + 0.75 * (age / 0.18) : 1.15 - 0.15 * Math.min(1, (age - 0.18) / 0.12), es = W * 0.11;
+      ctx.save(); ctx.translate(x + W / 2, cy - W * 0.15); ctx.rotate(Math.sin(age * 9) * 0.08 * Math.max(0, 1 - age)); ctx.scale(sc, sc); ctx.font = `${es}px ${FONT}`; ctx.textAlign = "center"; ctx.fillText(e, 0, 0); ctx.restore(); }
+  }
 
   if (st.preset === "word") { // un mot à la fois, gros, qui « pop »
     const w = line.words[Math.max(0, k)], fs = W * (st.strong !== false && w.em ? 0.128 : 0.11), age = Math.max(0, t - w.start), sc = 1 + 0.18 * Math.max(0, 1 - age / 0.12);

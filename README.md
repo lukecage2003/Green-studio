@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.20)
+# Green Studio 3.1 — état réel (beta.21)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,16 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.21 — rétention TikTok
+- **Accroche** (onglet Nettoyage) : note sur 100 des 2 premières secondes (blanc avant le premier mot, salutation, « euh », phrase trop longue, rien d'intrigant) ; « Couper le blanc du début » en un geste ; jusqu'à 3 phrases plus fortes de la vidéo proposées pour ouvrir (rejouées au début).
+- **Texte d'accroche géant** (🅰) : 1,8 s au début, pop sur ressort ; avec une phrase rejouée en ouverture, il s'affiche pendant cette ouverture.
+- **Fin en boucle** (🔁) : coupe net sur le dernier mot et démarre sans blanc, pour que TikTok enchaîne la relecture.
+- **Rythme visuel** (Habillage) : passages de plus de 3,5 s sans rien de nouveau à l'écran, en rouge sur la timeline, à toucher pour y aller.
+- **Classement** 🏆 (« #3 Venom »), **Vrai / Faux** ❓ (affirmation, « VRAI OU FAUX ? », compte à rebours 3-2-1, tampon de la réponse avec flash), **Question de fin** 👇 (dernière question dite, sinon « Et vous, vous en pensez quoi ? »).
+- **Emojis dans les sous-titres** (mort 💀, secret 🤫, pouvoir 💪, explosion 💥…), qui sautent au-dessus du mot.
+- **Barre de progression** fine en haut (activée par défaut) et **looks** Ciné / Comics / Noir & blanc, visibles dans l'aperçu et gravés à l'export.
+- Tests : 46 unitaires, `viral.e2e` (export réel : barre de progression, accroche géante).
 
 ## 3.1.0-beta.20 — 100 % TikTok
 - **Bulles et fiche personnage retirées** (les anciens projets qui en contenaient s'ouvrent sans elles).
