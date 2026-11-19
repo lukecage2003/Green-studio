@@ -11,15 +11,15 @@ async function mediaPut(id: string, b: Blob) { const db = await mediaDb(); await
 async function mediaGet(id: string): Promise<Blob | null> { const db = await mediaDb(); return new Promise((res) => { const q = db.transaction("files").objectStore("files").get(id); q.onsuccess = () => res(q.result ?? null); q.onerror = () => res(null); }); }
 import { takeReport } from "../core/coach.ts";
 import { applyDictionary, findPhrase, type DictEntry } from "../core/dictionary.ts";
-import { TICS, RHYTHM, type Rhythm, type SnapMode, snapToQuiet, withBounds, tightenWords, dropCrumbs, cleanTranscript, analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
+import { TICS, RHYTHM, type Rhythm, type SnapMode, snapToQuiet, refineCuts, withBounds, tightenWords, dropCrumbs, cleanTranscript, analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
 import { peaks as computePeaks, loudnessGain, speechBounds } from "../core/audio.ts";
 import { buildCaptions, drawCaption, lineAt, CAPTION_DEFAULT, PRESETS, type CapLine, type CaptionStyle, type CaptionPreset } from "../core/captions.ts";
 import { probe, extractAudio, exportEdited, webCodecsAvailable, extractClip, LOOKS, type Transition, type Aspect, type Look } from "../core/media.ts";
-import { hookCheck, staticGaps } from "../core/viral.ts";
+import { hookCheck, staticGaps, keptSentences } from "../core/viral.ts";
 import { StudioVoice, loadDenoiser } from "../core/voice.ts";
 import { exportRealtime } from "../core/export.ts";
 
-const LABEL: Record<IssueType, string> = { retake: "Reprise (« je reprends »)", filler_word: "Tic de langage", repetition: "Répétition", stutter: "Bégaiement", false_start: "Faux départ", hesitation: "Hésitation", long_silence: "Silence long", untranscribed: "Bégaiement / son non transcrit" };
+const LABEL: Record<IssueType, string> = { retake: "Reprise (« je reprends »)", filler_word: "Tic de langage", repetition: "Répétition", stutter: "Bégaiement", false_start: "Faux départ", hesitation: "Hésitation", long_silence: "Silence long", untranscribed: "Bégaiement / son non transcrit", breath: "Respiration" };
 const SAFE = 0.7;
 const fmt = (t: number) => { t = Math.max(0, t); const m = Math.floor(t / 60), s = Math.floor(t % 60); return `${m}:${String(s).padStart(2, "0")}`; };
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -355,11 +355,11 @@ export async function openEditor(o: EditorOptions) {
   }
   function renderSugs() {
     if (!words) { body.innerHTML = `<div class="card"><p>Les suggestions apparaissent après la transcription (onglet Texte).</p></div>`; return; }
-    if (!sugs.length) { body.innerHTML = hookCard() + coachCard() + rhythmCard() + ticsCard() + `<div class="card"><p>Aucune répétition, hésitation ni silence long détecté. 👌</p>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}</div>`; return; }
+    if (!sugs.length) { body.innerHTML = hookCard() + xpCard() + coachCard() + rhythmCard() + ticsCard() + `<div class="card"><p>Aucune répétition, hésitation ni silence long détecté. 👌</p>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}</div>`; return; }
     const open = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range));
     const all = open.filter((s) => s.confidence >= AUTO_MIN).length, sil = open.filter((s) => s.type === "long_silence").length;
     const take = takeInfo ? `<div class="card" style="margin-bottom:10px"><b>Meilleure prise</b><p>${esc(takeSummary())}</p>${takeInfo.missing.length ? `<p>Non dit : ${takeInfo.missing.map((m) => "« " + esc(m) + " »").join(", ")}</p>` : ""}</div>` : "";
-    body.innerHTML = hookCard() + coachCard() + take + rhythmCard() + ticsCard() + `<div class="row" style="padding:0 0 8px"><button class="ib go" data-a="clean" ${all ? "" : "disabled"}>✨ Tout supprimer (${all})</button>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}
+    body.innerHTML = hookCard() + xpCard() + coachCard() + take + rhythmCard() + ticsCard() + `<div class="row" style="padding:0 0 8px"><button class="ib go" data-a="clean" ${all ? "" : "disabled"}>✨ Tout supprimer (${all})</button>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}
       <button class="ib" data-a="sil" ${sil ? "" : "disabled"}>Couper les silences (${sil})</button></div>` +
       sugs.map((s) => { const on = covered(s.range), ign = ignored.has(s.id);
         return `<div class="sg ${on ? "on" : ""} ${ign ? "ign" : ""}" data-s="${esc(s.id)}"><div class="t"><b>${LABEL[s.type]} · ${Math.round(s.confidence * 100)} %${on ? " · coupé" : ""}</b>
@@ -590,7 +590,7 @@ export async function openEditor(o: EditorOptions) {
     const t = e.target as HTMLInputElement, a = t.dataset.a;
     if (a === "ttext" || a === "tsub") { const ti = titles.find((x) => x.id === t.closest<HTMLElement>("[data-ti]")?.dataset.ti); if (ti) { if (a === "ttext") ti.text = t.value; else ti.sub = t.value || undefined; save(); } return; }
     if (a === "tplAuto") { try { localStorage.setItem("gs.tplAuto", t.value); } catch { /* */ } body.innerHTML = ""; renderCC(); return; }
-    if (a === "pos") setStyle({ pos: +t.value }); else if (a === "upper") setStyle({ upper: t.checked }); else if (a === "strong") setStyle({ strong: t.checked }); else if (a === "emoji") setStyle({ emoji: t.checked }); else if (a === "color") setStyle({ color: t.value });
+    if (a === "pos") setStyle({ pos: +t.value }); else if (a === "upper") setStyle({ upper: t.checked }); else if (a === "strong") setStyle({ strong: t.checked }); else if (a === "emoji") setStyle({ emoji: t.checked }); else if (a === "xp") { const P = xp(); (P as any)[t.dataset.v!] = t.checked; try { localStorage.setItem("gs.xp", JSON.stringify(P)); } catch { /* */ } } else if (a === "color") setStyle({ color: t.value });
   });
 
   /** Sous-titres en surimpression sur le lecteur (même rendu que l'export). */
@@ -923,12 +923,39 @@ export async function openEditor(o: EditorOptions) {
     return n;
   }
   /** Express : nettoyage, images de la banque, export. */
-  const express = () => cleanAll().then(() => (myBank().length ? autoPlace() : 0)).catch(() => 0).then(() => runExport(true));
+  /** Réglages de l'Express (mémorisés) : ce qui est ajouté tout seul après le nettoyage. */
+  type XP = { loop: boolean; hookText: boolean; question: boolean; open: boolean };
+  const XP_DEF: XP = { loop: true, hookText: true, question: true, open: false };
+  const xp = (): XP => { try { return { ...XP_DEF, ...JSON.parse(localStorage.getItem("gs.xp") ?? "{}") }; } catch { return XP_DEF; } };
+  function xpCard() {
+    const P = xp(), row = (k: keyof XP, l: string) => `<label class="opt"><input type="checkbox" data-a="xp" data-v="${k}" ${P[k] ? "checked" : ""}> ${l}</label>`;
+    return `<details class="card" style="margin-bottom:10px"><summary><b>⚡ Express : finition automatique</b></summary><p>Après le nettoyage, l’Express ajoute tout seul :</p>
+      ${row("loop", "Fin en boucle (coupe net sur le dernier mot)")}${row("hookText", "Texte d’accroche géant au début")}${row("question", "Question de fin pour les commentaires")}${row("open", "Rejouer la phrase la plus forte en ouverture (si l’accroche est faible)")}</details>`;
+  }
+  /** Finition après nettoyage : boucle, accroche, question (selon les réglages). Renvoie ce qui a été fait. */
+  function autoPolish(): string[] {
+    const done: string[] = []; if (!words) return done; const P = xp(), k = keptWords(); if (!k.length) return done;
+    if (P.loop) { const a = Math.max(0, k[0].start - 0.04), b = Math.min(duration, k[k.length - 1].end + 0.06), add: Range[] = [];
+      if (a > 0.05) add.push({ start: 0, end: a }); if (b < duration - 0.05) add.push({ start: b, end: duration }); if (add.length) { session.addCuts(add); done.push("fin en boucle"); } }
+    const h = hookCheck(words, session.cuts, duration);
+    if (P.open && !hook && h.score < 60 && h.candidates[0]) { const f = findPhrase(words, h.candidates[0])[0]; if (f) { hook = { start: Math.max(0, words[f[0]].start - 0.05), end: Math.min(duration, words[f[1]].end + 0.2) }; done.push("phrase forte en ouverture"); } }
+    if (P.hookText && !titles.some((x) => x.kind === "hook")) {
+      const src = hook ? h.candidates[0] ?? "" : keptSentences(words, session.cuts)[0]?.text ?? "", txt = src.split(/\s+/).slice(0, 7).join(" ").replace(/[,.…;:]+$/, "");
+      if (txt.split(/\s+/).length >= 2) { addTitle("hook", txt); done.push("accroche"); } }
+    if (P.question && !titles.some((x) => x.kind === "question")) { addTitle("question", endQuestion()); done.push("question de fin"); }
+    commit(); return done;
+  }
+  const express = () => cleanAll().then(() => { const d = autoPolish(); if (d.length) toast("⚡ " + d.join(" · "), 3000); }).then(() => (myBank().length ? autoPlace() : 0)).catch(() => 0).then(() => runExport(true));
+  /** Coupes des suggestions, recalées au millimètre sur le son (si décodé). */
+  function precise(list: Suggestion[]): Range[] {
+    const r = list.map((x) => ({ ...x.range, mode: snapMode(x) }));
+    return pcm ? refineCuts(snapToQuiet(withBounds(r, words), pcm, 16000), words, pcm, 16000) : r;
+  }
   async function cleanAll() {
     await audioP; if (words) sugs = suggest(words);
     await aiJudge(); // phrases abandonnées : l'IA du téléphone tranche (si disponible), sinon elles restent de simples suggestions
     let r: Range[] = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range) && s.confidence >= AUTO_MIN).map((s) => ({ ...s.range, mode: snapMode(s) }));
-    if (pcm) r = snapToQuiet(withBounds(r, words), pcm, 16000); // bords de coupe sur le silence le plus proche (au centième de seconde)
+    if (pcm) r = refineCuts(snapToQuiet(withBounds(r, words), pcm, 16000), words, pcm, 16000); // bords sur le silence le plus proche, puis finition à l’échantillon (chutes et attaques protégées, passage par zéro)
     r.push(...takeCuts()); // reprises et hors-script retirés si la prise suit le script
     r.push(...((await edgeCuts()) ?? []));
     if (!r.length) { refresh(); toast("Aucun défaut à supprimer. 👌", 3000); return true; }
@@ -1273,11 +1300,11 @@ export async function openEditor(o: EditorOptions) {
       case "keepSel": if (sel && words) { session.restore({ start: sel.a > 0 ? words[sel.a - 1].end : 0, end: sel.b < words.length - 1 ? words[sel.b + 1].start : duration }); sel = null; commit(); } break;
       case "hearSel": if (sel && words) playRange(words[sel.a].start - 0.3, words[sel.b].end + 0.3); break;
       case "clearSel": sel = null; refresh(); break;
-      case "cut": if (sg) { session.addCut(sg.range); commit(); } break;
+      case "cut": if (sg) { session.addCuts(precise([sg])); commit(); } break;
       case "keep": if (sg) { session.restore(sg.range); commit(); } break;
       case "ign": if (sg) { ignored.has(sg.id) ? ignored.delete(sg.id) : ignored.add(sg.id); commit(); } break;
       case "hear": if (sg) playRange(sg.range.start - 1, sg.range.end + 1); break;
-      case "safe": { const r = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range) && s.confidence >= SAFE).map((s) => s.range); if (r.length) { session.addCuts(r); commit(); toast(`${r.length} coupe(s) appliquée(s). ↶ pour annuler.`, 3000); } break; }
+      case "safe": { const r = precise(sugs.filter((s) => !ignored.has(s.id) && !covered(s.range) && s.confidence >= SAFE)); if (r.length) { session.addCuts(r); commit(); toast(`${r.length} coupe(s) appliquée(s). ↶ pour annuler.`, 3000); } break; }
       case "clean": cleanAll(); break;
       case "take": bestTake(); break;
       case "verbPref": { const c = (t as HTMLInputElement).checked; try { localStorage.setItem("gs.verbatim", c ? "1" : "0"); } catch { /* */ } break; }

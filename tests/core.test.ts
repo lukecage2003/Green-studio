@@ -511,3 +511,18 @@ test("vrai ou faux : question, compte à rebours, réponse", async () => {
   assert.equal(quizPhase(q, 10.5).phase, "ask"); assert.deepEqual([quizPhase(q, 11.5).phase, quizPhase(q, 11.5).n], ["count", 3]);
   assert.equal(quizPhase(q, 13.6).n, 1); assert.equal(quizPhase(q, 14.5).phase, "reveal");
 });
+
+test("raccords au millimètre : chute et attaque protégées, passage par zéro, respirations", async () => {
+  const { refineCuts, detectBreaths } = await import("../src/core/speech-analysis.ts");
+  const rate = 16000, pcm = new Float32Array(rate * 4); let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) - 0.5;
+  for (let i = 0; i < pcm.length; i++) pcm[i] = rnd() * 0.002; // bruit de pièce
+  const tone = (a: number, b: number, amp: number) => { for (let i = Math.round(a * rate); i < Math.round(b * rate); i++) pcm[i] += Math.sin(i * 0.11) * amp; };
+  tone(0.5, 1.08, 0.4);   // mot 1 : 0,5–1,0 (avec une chute réelle jusqu'à 1,08)
+  tone(2.46, 3.0, 0.4);   // mot 2 : 2,5–3,0 (attaque réelle à 2,46)
+  for (let i = Math.round(1.6 * rate); i < Math.round(1.9 * rate); i++) pcm[i] += rnd() * 0.06; // souffle
+  const words = [{ text: "un", start: 0.5, end: 1.0 }, { text: "deux", start: 2.5, end: 3.0 }];
+  const [c] = refineCuts([{ start: 1.02, end: 2.48 }], words, pcm, rate);
+  assert.ok(c.start >= 1.08 && c.start < 1.2, `chute gardée : ${c.start}`); assert.ok(c.end <= 2.44 && c.end > 2.3, `attaque gardée : ${c.end}`);
+  for (const t of [c.start, c.end]) { const i = Math.round(t * rate); assert.ok(Math.abs(pcm[i]) < 0.01 || (pcm[i - 1] <= 0) !== (pcm[i] <= 0), "bord sur un passage par zéro"); }
+  const br = detectBreaths(words, pcm, rate); assert.equal(br.length, 1); assert.ok(Math.abs(br[0].start - 1.58) < 0.05 && Math.abs(br[0].end - 1.92) < 0.05, JSON.stringify(br));
+});

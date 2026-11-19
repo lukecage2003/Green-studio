@@ -89,8 +89,8 @@ function drawCompare(ctx: Ctx, W: number, H: number, t: number, ov: Overlay, a: 
   ctx.fillStyle = "#fff"; ctx.fillRect(xs - W * 0.006, 0, W * 0.012, H);
   const rB = W * 0.075; ctx.beginPath(); ctx.arc(xs, H * 0.5, rB, 0, Math.PI * 2); ctx.fillStyle = "#111"; ctx.fill(); ctx.lineWidth = W * 0.008; ctx.strokeStyle = "#fff"; ctx.stroke();
   ctx.fillStyle = "#fff"; ctx.font = `900 ${rB * 0.75}px ${FONT}`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("VS", xs, H * 0.5);
-  const [la, lb] = ov.labels ?? ["AVANT", "APRÈS"], fs = W * 0.05; ctx.font = `900 ${fs}px ${FONT}`;
-  const tag = (txt: string, cx: number, col: string) => { const tw = ctx.measureText(txt).width + fs; const ty = H * (TIKTOK_SAFE.top + 0.02); rounded(ctx, cx - tw / 2, ty, tw, fs * 1.6, fs * 0.5); ctx.fillStyle = col; ctx.fill(); ctx.fillStyle = "#fff"; ctx.fillText(txt, cx, ty + fs * 0.8); };
+  const [la, lb] = ov.labels ?? ["AVANT", "APRÈS"], fs = W * 0.042; font(ctx, 700, fs, 0.06);
+  const tag = (txt: string, cx: number, col: string) => { const tw = ctx.measureText(txt).width + fs * 2.2; const ty = H * (TIKTOK_SAFE.top + 0.02); glass(ctx, cx - tw / 2, ty, tw, fs * 1.6, fs * 0.8, W); ctx.beginPath(); ctx.arc(cx - tw / 2 + fs * 0.75, ty + fs * 0.8, fs * 0.2, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill(); ctx.fillStyle = "#fff"; ctx.fillText(txt, cx + fs * 0.2, ty + fs * 0.8); };
   if (la) tag(la.toUpperCase(), xs / 2, "rgba(232,32,42,.92)"); if (lb && b) tag(lb.toUpperCase(), xs + (W - xs) / 2, "rgba(10,132,255,.92)");
   ctx.restore();
 }
@@ -177,82 +177,152 @@ export function compose(ctx: Ctx, W: number, H: number, t: number, ov: Overlay |
   }
 }
 
-/** Bandeau titre (bas gauche) en verre sombre : glisse en entrant, s'efface en sortant. */
+/* ---------- Système visuel « pro » : verre dépoli, typographie Inter, mouvements sur ressort ---------- */
 /** Découpe un texte en lignes qui tiennent dans maxW (police déjà réglée). */
 function wrap(ctx: Ctx, text: string, maxW: number): string[] {
   const out: string[] = []; let line = "";
   for (const w of text.split(/\s+/)) { const tryL = line ? line + " " + w : w; if (line && ctx.measureText(tryL).width > maxW) { out.push(line); line = w; } else line = tryL; }
   if (line) out.push(line); return out;
 }
-/** Carton de chapitre : image assombrie, petit surtitre (« PARTIE 2 »), grand titre, trait d'accent ; entrée en zoom léger. */
-function drawChapter(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
-  const a = fadeIn(ti, t, 0.35), sc = 1.06 - 0.06 * a;
-  ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = "rgba(6,6,10,.62)"; ctx.fillRect(0, 0, W, H);
-  ctx.translate(W / 2, H * 0.46); ctx.scale(sc, sc); ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  const fs = W * 0.095, sfs = W * 0.042;
-  ctx.font = `900 ${fs}px ${FONT}`; const lines = wrap(ctx, ti.text.toUpperCase(), W * 0.84), lh = fs * 1.08, top = -((lines.length - 1) * lh) / 2;
-  if (ti.sub) { ctx.font = `800 ${sfs}px ${FONT}`; ctx.fillStyle = accent; ctx.fillText(ti.sub.toUpperCase(), 0, top - fs * 0.95); }
-  ctx.font = `900 ${fs}px ${FONT}`; ctx.lineJoin = "round"; ctx.lineWidth = fs * 0.12; ctx.strokeStyle = "rgba(0,0,0,.85)"; ctx.fillStyle = "#fff";
-  lines.forEach((l, i) => { ctx.strokeText(l, 0, top + i * lh); ctx.fillText(l, 0, top + i * lh); });
-  ctx.fillStyle = accent; const bw = W * 0.18 * a; ctx.fillRect(-bw / 2, top + (lines.length - 1) * lh + fs * 0.85, bw, W * 0.012);
+/** Verre dépoli réel (flou de l'image derrière) : seulement là où le canvas contient la vidéo (export). L'aperçu, posé sur le lecteur, utilise un verre teinté. */
+let glassBlur = false;
+export const setGlassBlur = (on: boolean) => { glassBlur = on; };
+const font = (ctx: Ctx, w: number, px: number, ls = -0.02) => { ctx.font = `${w} ${px}px ${FONT}`; try { (ctx as any).letterSpacing = `${(px * ls).toFixed(2)}px`; } catch { /* */ } };
+/** Plaque de verre : ombre douce, flou de l'arrière-plan, teinte, liseré lumineux en haut. */
+function glass(ctx: Ctx, x: number, y: number, w: number, h: number, r: number, W: number, tint = "rgba(30,30,34,.5)") {
+  // ombre seule (la forme est dessinée hors champ, seule son ombre tombe ici)
+  ctx.save(); ctx.shadowColor = "rgba(0,0,0,.32)"; ctx.shadowBlur = W * 0.06; ctx.shadowOffsetY = W * 0.014; ctx.shadowOffsetX = 1e4;
+  rounded(ctx, x - 1e4, y, w, h, r); ctx.fillStyle = "#000"; ctx.fill(); ctx.restore();
+  ctx.save(); rounded(ctx, x, y, w, h, r); ctx.clip();
+  if (glassBlur) {
+    const m = ctx.getTransform(), pts = [[x, y], [x + w, y], [x, y + h], [x + w, y + h]].map(([px, py]) => [m.a * px + m.c * py + m.e, m.b * px + m.d * py + m.f]);
+    const pad = W * 0.06, bx = Math.max(0, Math.min(...pts.map((p) => p[0])) - pad), by = Math.max(0, Math.min(...pts.map((p) => p[1])) - pad);
+    const cw = (ctx.canvas as any).width, ch = (ctx.canvas as any).height, bw = Math.min(cw, Math.max(...pts.map((p) => p[0])) + pad) - bx, bh = Math.min(ch, Math.max(...pts.map((p) => p[1])) + pad) - by;
+    if (bw > 2 && bh > 2) { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.filter = `blur(${Math.max(4, Math.round(W * 0.03))}px) saturate(1.5)`; ctx.drawImage(ctx.canvas as any, bx, by, bw, bh, bx, by, bw, bh); ctx.filter = "none"; ctx.setTransform(m); }
+    ctx.fillStyle = tint;
+  } else ctx.fillStyle = "rgba(28,28,32,.78)";
+  ctx.fillRect(x, y, w, h);
+  const g = ctx.createLinearGradient(0, y, 0, y + h); g.addColorStop(0, "rgba(255,255,255,.16)"); g.addColorStop(0.45, "rgba(255,255,255,0)"); ctx.fillStyle = g; ctx.fillRect(x, y, w, h);
+  ctx.restore();
+  ctx.save(); rounded(ctx, x + 0.5, y + 0.5, w - 1, h - 1, r); const s = ctx.createLinearGradient(0, y, 0, y + h); s.addColorStop(0, "rgba(255,255,255,.42)"); s.addColorStop(0.5, "rgba(255,255,255,.1)"); s.addColorStop(1, "rgba(255,255,255,.22)");
+  ctx.lineWidth = Math.max(1, W * 0.0022); ctx.strokeStyle = s; ctx.stroke(); ctx.restore();
+}
+/** Texte blanc net avec ombre portée douce (pas de contour noir). */
+function softText(ctx: Ctx, s: string, x: number, y: number, fs: number, color = "#fff", maxW?: number) {
+  ctx.save(); ctx.shadowColor = "rgba(0,0,0,.5)"; ctx.shadowBlur = fs * 0.45; ctx.shadowOffsetY = fs * 0.06; ctx.fillStyle = color;
+  maxW ? ctx.fillText(s, x, y, maxW) : ctx.fillText(s, x, y); ctx.restore();
+}
+/** Mot « fort » d'un titre (mis en couleur) : chiffre, nom propre, sinon le dernier mot long. */
+function keyWords(words: string[]): Set<number> {
+  const k = new Set<number>(); words.forEach((w, i) => { if (/\d/.test(w) || (i > 0 && /^\p{Lu}\p{Ll}/u.test(w))) k.add(i); });
+  if (!k.size) { let bi = words.length - 1; for (let i = words.length - 1; i >= 0; i--) if (words[i].replace(/\W/g, "").length >= 4) { bi = i; break; } k.add(bi); }
+  return k;
+}
+/**
+ * Titre « keynote » : mots qui montent un à un (ressort, 70 ms d'écart), blancs, mots forts en couleur, centrés en (0, 0).
+ * Renvoie la hauteur occupée.
+ */
+function revealWords(ctx: Ctx, W: number, text: string, age: number, fs0: number, maxW: number, maxLines: number, accent: string, weight = 800, upper = false): number {
+  let fs = fs0, lines: string[] = [];
+  const T = upper ? text.toUpperCase() : text;
+  for (;;) { font(ctx, weight, fs, -0.03); lines = wrap(ctx, T, maxW); if (lines.length <= maxLines || fs < W * 0.05) break; fs *= 0.92; }
+  const all = T.split(/\s+/), key = keyWords(all), lh = fs * 1.1, top = -((lines.length - 1) * lh) / 2; let wi = 0;
+  ctx.textBaseline = "middle"; ctx.textAlign = "left";
+  lines.forEach((l, li) => {
+    const ws = l.split(" "), sp = ctx.measureText(" ").width, widths = ws.map((w) => ctx.measureText(w).width), tw = widths.reduce((a, b) => a + b, 0) + sp * (ws.length - 1);
+    let x = -tw / 2;
+    ws.forEach((w, j) => {
+      const k = spring(age - wi * 0.07, 0.42, 0.25), a = Math.min(1, Math.max(0, (age - wi * 0.07) / 0.18));
+      if (a > 0) { ctx.save(); ctx.globalAlpha *= a; ctx.translate(0, (1 - k) * fs * 0.55); softText(ctx, w, x, top + li * lh, fs, key.has(wi) ? accent : "#fff"); ctx.restore(); }
+      x += widths[j] + sp; wi++;
+    });
+  });
+  return lines.length * lh;
+}
+/** Bandeau (haut gauche, sous les onglets TikTok) : plaque de verre, pastille de couleur, titre et sous-titre. */
+function drawLower(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
+  const age = t - ti.start, e = spring(age, 0.5, 0.2), out = Math.min(1, Math.max(0, (ti.end - t) / 0.25)), fs = W * 0.048, sfs = W * 0.032, pad = W * 0.04;
+  font(ctx, 700, fs); const tw = ctx.measureText(ti.text).width; font(ctx, 500, sfs, 0); const sw = ti.sub ? ctx.measureText(ti.sub).width : 0;
+  const dot = fs * 0.36, w = Math.min(W * 0.86, Math.max(tw, sw) + pad * 2 + dot * 2.2), h = fs * 1.35 + (ti.sub ? sfs * 1.45 : 0) + pad * 0.7, x = W * 0.05, y = H * (TIKTOK_SAFE.top + 0.015);
+  ctx.save(); ctx.globalAlpha = out * Math.min(1, age / 0.15); ctx.translate(0, (1 - e) * -H * 0.03);
+  glass(ctx, x, y, w, h, Math.min(h / 2, W * 0.05), W);
+  ctx.beginPath(); ctx.arc(x + pad + dot / 2, y + pad * 0.35 + fs * 0.68, dot / 2, 0, Math.PI * 2); ctx.fillStyle = accent; ctx.shadowColor = accent; ctx.shadowBlur = dot; ctx.fill(); ctx.shadowBlur = 0;
+  ctx.textBaseline = "middle"; ctx.textAlign = "left"; font(ctx, 700, fs); ctx.fillStyle = "#fff"; ctx.fillText(ti.text, x + pad + dot * 2, y + pad * 0.35 + fs * 0.68, w - pad * 2 - dot * 2);
+  if (ti.sub) { font(ctx, 500, sfs, 0); ctx.fillStyle = "rgba(235,235,245,.68)"; ctx.fillText(ti.sub, x + pad + dot * 2, y + pad * 0.35 + fs * 1.38 + sfs * 0.62, w - pad * 2 - dot * 2); }
   ctx.restore();
 }
-/** Frise chronologique : ligne qui se trace, points datés qui apparaissent un à un (sub = « 1962 Création ; 1984 … »). */
+/** Carton de chapitre : image assombrie en dégradé, petit surtitre espacé en couleur, titre qui se révèle mot à mot, filet qui s'étire. */
+function drawChapter(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
+  const a = fadeIn(ti, t, 0.3), age = t - ti.start;
+  ctx.save(); ctx.globalAlpha = a;
+  const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, "rgba(0,0,0,.45)"); g.addColorStop(0.5, "rgba(0,0,0,.7)"); g.addColorStop(1, "rgba(0,0,0,.45)"); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.translate(W / 2, H * 0.46);
+  const h = revealWords(ctx, W, ti.text, age - 0.1, W * 0.1, W * 0.84, 3, accent, 800);
+  if (ti.sub) { ctx.textAlign = "center"; font(ctx, 700, W * 0.032, 0.22); ctx.fillStyle = accent; ctx.globalAlpha = a * Math.min(1, age / 0.3); ctx.fillText(ti.sub.toUpperCase(), 0, -h / 2 - W * 0.06); }
+  const bw = W * 0.14 * spring(age - 0.25, 0.5, 0.1); ctx.globalAlpha = a; ctx.fillStyle = accent; rounded(ctx, -bw / 2, h / 2 + W * 0.04, bw, W * 0.008, W * 0.004); ctx.fill();
+  ctx.restore();
+}
+/** Frise chronologique : panneau de verre, ligne qui se trace, points lumineux, dates en couleur (sub = « 1962 Création ; 1984 … »). */
 function drawTimeline(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
   const a = fadeIn(ti, t, 0.3), ev = (ti.sub ?? "").split(/[;\n]/).map((x) => x.trim()).filter(Boolean).slice(0, 6), n = Math.max(1, ev.length);
-  const dur = Math.max(1, (ti.end - ti.start) * 0.7), y0 = H * 0.22, y1 = H * 0.22 + (n - 1) * H * 0.12, x0 = W * 0.16, p = Math.min(1, (t - ti.start) / dur);
-  ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = "rgba(0,0,0,.45)"; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = "#fff"; ctx.font = `900 ${W * 0.065}px ${FONT}`; ctx.textBaseline = "middle"; ctx.fillText(ti.text.toUpperCase(), x0 - W * 0.06, H * 0.155, W * 0.8);
-  ctx.strokeStyle = "rgba(255,255,255,.35)"; ctx.lineWidth = W * 0.008; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0, y1); ctx.stroke();
+  const dur = Math.max(1, (ti.end - ti.start) * 0.7), step = H * 0.105, x0 = W * 0.17, top = H * (TIKTOK_SAFE.top + 0.02), y0 = top + W * 0.2, y1 = y0 + (n - 1) * step, p = Math.min(1, (t - ti.start) / dur);
+  ctx.save(); ctx.globalAlpha = a;
+  glass(ctx, W * 0.05, top, W * 0.8, y1 - top + W * 0.14, W * 0.06, W);
+  ctx.textBaseline = "middle"; ctx.textAlign = "left"; font(ctx, 800, W * 0.056, -0.02); ctx.fillStyle = "#fff"; ctx.fillText(ti.text, W * 0.1, top + W * 0.09, W * 0.7);
+  ctx.lineCap = "round"; ctx.lineWidth = W * 0.006; ctx.strokeStyle = "rgba(255,255,255,.22)"; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0, y1); ctx.stroke();
   ctx.strokeStyle = accent; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0, y0 + (y1 - y0) * p); ctx.stroke();
   ev.forEach((e1, i) => {
     const at = n > 1 ? i / (n - 1) : 0, ra = Math.min(1, Math.max(0, (p - at) * n * 1.5 + 0.3)); if (ra <= 0) return;
-    const y = y0 + (y1 - y0) * at, [d, ...rest] = e1.split(/\s+/), sc = spring(ra * 0.6, 0.35, 0.6);
+    const y = y0 + (y1 - y0) * at, [d, ...rest] = e1.split(/\s+/), sc = spring(ra * 0.6, 0.35, 0.5);
     ctx.save(); ctx.globalAlpha = a * Math.min(1, ra * 1.5);
-    ctx.beginPath(); ctx.arc(x0, y, W * 0.025 * sc, 0, Math.PI * 2); ctx.fillStyle = accent; ctx.fill(); ctx.lineWidth = W * 0.006; ctx.strokeStyle = "#fff"; ctx.stroke();
-    ctx.fillStyle = accent; ctx.font = `900 ${W * 0.055}px ${FONT}`; ctx.fillText(d, x0 + W * 0.06, y - W * 0.025);
-    ctx.fillStyle = "#fff"; ctx.font = `700 ${W * 0.045}px ${FONT}`; ctx.fillText(rest.join(" "), x0 + W * 0.06, y + W * 0.035, W * 0.74);
+    ctx.beginPath(); ctx.arc(x0, y, W * 0.018 * sc, 0, Math.PI * 2); ctx.fillStyle = accent; ctx.shadowColor = accent; ctx.shadowBlur = W * 0.03; ctx.fill(); ctx.shadowBlur = 0;
+    ctx.beginPath(); ctx.arc(x0, y, W * 0.007 * sc, 0, Math.PI * 2); ctx.fillStyle = "#fff"; ctx.fill();
+    ctx.translate((1 - ra) * W * 0.04, 0);
+    font(ctx, 800, W * 0.046, -0.01); ctx.fillStyle = accent; ctx.fillText(d, x0 + W * 0.05, y - W * 0.024);
+    font(ctx, 600, W * 0.04, -0.01); ctx.fillStyle = "rgba(255,255,255,.92)"; ctx.fillText(rest.join(" "), x0 + W * 0.05, y + W * 0.03, W * 0.6);
     ctx.restore();
   });
   ctx.restore();
 }
-/** Texte en capitales sur plusieurs lignes, contour noir épais, lignes alternées blanc / couleur. */
-function bigText(ctx: Ctx, W: number, text: string, fs0: number, maxW: number, maxLines: number, alt: string) {
-  let fs = fs0, lines: string[] = [];
-  for (;;) { ctx.font = `900 ${fs}px ${FONT}`; lines = wrap(ctx, text.toUpperCase(), maxW); if (lines.length <= maxLines || fs < W * 0.05) break; fs *= 0.9; }
-  const lh = fs * 1.06, top = -((lines.length - 1) * lh) / 2; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
-  lines.forEach((l, i) => { ctx.lineWidth = fs * 0.2; ctx.strokeStyle = "#000"; ctx.strokeText(l, 0, top + i * lh); ctx.fillStyle = i % 2 ? alt : "#fff"; ctx.fillText(l, 0, top + i * lh); });
-  return { fs, h: lines.length * lh };
+/** Accroche des premières secondes : grand titre « keynote », mots qui montent un à un, mot fort en couleur. */
+function drawHook(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
+  const age = t - ti.start, out = Math.min(1, Math.max(0, (ti.end - t) / 0.22));
+  ctx.save(); ctx.globalAlpha = out;
+  const g = ctx.createRadialGradient(W / 2, H * 0.3, 0, W / 2, H * 0.3, W * 0.75); g.addColorStop(0, "rgba(0,0,0,.42)"); g.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.globalAlpha = out * Math.min(1, age / 0.2); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H * 0.62); ctx.globalAlpha = out;
+  ctx.translate(W / 2, H * 0.3); revealWords(ctx, W, ti.text, age, W * 0.105, W * 0.86, 3, accent, 900);
+  ctx.restore();
 }
-/** Accroche géante des premières secondes : « pop » sur ressort, léger penché, au tiers haut (sous les onglets TikTok). */
-function drawHook(ctx: Ctx, W: number, H: number, t: number, ti: Title) {
-  const age = t - ti.start, sc = Math.max(0.01, spring(age, 0.35, 0.7)), out = Math.min(1, Math.max(0, (ti.end - t) / 0.2));
-  ctx.save(); ctx.globalAlpha = out; ctx.translate(W / 2, H * 0.3); ctx.rotate(-0.04); ctx.scale(sc, sc); bigText(ctx, W, ti.text, W * 0.11, W * 0.86, 3, "#ffd60a"); ctx.restore();
+/** Chevron animé (invitation à commenter). */
+function chevron(ctx: Ctx, x: number, y: number, s: number, color: string) {
+  ctx.save(); ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.lineWidth = s * 0.22; ctx.strokeStyle = color;
+  ctx.beginPath(); ctx.moveTo(x - s, y - s * 0.4); ctx.lineTo(x, y + s * 0.45); ctx.lineTo(x + s, y - s * 0.4); ctx.stroke(); ctx.restore();
 }
-/** Question finale (« Team Venom ou Team Carnage ? 👇 ») : carte blanche au centre, qui rebondit. */
+/** Question de fin : plaque de verre centrée, petit libellé « À VOUS », la question, chevron qui invite aux commentaires. */
 function drawQuestion(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
-  const age = t - ti.start, sc = Math.max(0.01, spring(age, 0.4, 0.6)), a = fadeIn(ti, t, 0.15), fs = W * 0.064, pad = W * 0.05;
-  ctx.save(); ctx.globalAlpha = a; ctx.font = `900 ${fs}px ${FONT}`;
-  const lines = wrap(ctx, ti.text, W * 0.74), lh = fs * 1.2, bw = Math.max(...lines.map((l) => ctx.measureText(l).width)) + pad * 2, bh = lines.length * lh + pad * 1.2;
-  ctx.translate(W / 2, H * 0.46); ctx.rotate(0.02); ctx.scale(sc, sc);
-  ctx.shadowColor = "rgba(0,0,0,.45)"; ctx.shadowBlur = W * 0.05; rounded(ctx, -bw / 2, -bh / 2, bw, bh, W * 0.05); ctx.fillStyle = "#fff"; ctx.fill(); ctx.shadowColor = "transparent";
-  ctx.lineWidth = W * 0.012; ctx.strokeStyle = accent; ctx.stroke();
-  ctx.fillStyle = "#111"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; lines.forEach((l, i) => ctx.fillText(l, 0, -bh / 2 + pad * 0.6 + lh / 2 + i * lh));
-  ctx.font = `${W * 0.09}px ${FONT}`; ctx.fillText("👇", 0, bh / 2 + W * 0.08 + Math.sin(age * 6) * W * 0.012);
+  const age = t - ti.start, sc = 0.9 + 0.1 * spring(age, 0.45, 0.35), a = fadeIn(ti, t, 0.2), fs = W * 0.06, pad = W * 0.06;
+  font(ctx, 750, fs, -0.02); const lines = wrap(ctx, ti.text, W * 0.7), lh = fs * 1.22, bw = Math.min(W * 0.86, Math.max(...lines.map((l) => ctx.measureText(l).width)) + pad * 2), bh = lines.length * lh + pad * 1.6 + W * 0.04;
+  ctx.save(); ctx.globalAlpha = a; ctx.translate(W / 2, H * 0.46); ctx.scale(sc, sc);
+  glass(ctx, -bw / 2, -bh / 2, bw, bh, W * 0.06, W);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; font(ctx, 700, W * 0.028, 0.2); ctx.fillStyle = accent; ctx.fillText("À VOUS", 0, -bh / 2 + pad * 0.75);
+  font(ctx, 750, fs, -0.02); ctx.fillStyle = "#fff"; lines.forEach((l, i) => ctx.fillText(l, 0, -bh / 2 + pad * 0.75 + W * 0.045 + lh * 0.55 + i * lh));
   ctx.restore();
+  ctx.save(); ctx.globalAlpha = a * (0.6 + 0.4 * Math.sin(age * 5)); chevron(ctx, W / 2, H * 0.46 + bh / 2 * sc + W * 0.07 + Math.sin(age * 5) * W * 0.012, W * 0.035, "#fff"); ctx.restore();
 }
-/** Classement : grosse pastille « #3 » et le nom, qui arrivent de la gauche sous les onglets TikTok. */
+/** Classement : plaque de verre sous les onglets, grand numéro en couleur, nom en blanc ; glisse depuis la gauche. */
 function drawRank(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
-  const age = t - ti.start, e = spring(age, 0.45, 0.4), out = Math.min(1, Math.max(0, (ti.end - t) / 0.25)), r = W * 0.11, cy = H * (TIKTOK_SAFE.top + 0.03) + r;
-  ctx.save(); ctx.globalAlpha = out; ctx.translate(-(1 - e) * W * 0.8, 0);
-  ctx.shadowColor = "rgba(0,0,0,.5)"; ctx.shadowBlur = W * 0.04; ctx.beginPath(); ctx.arc(W * 0.06 + r, cy, r, 0, Math.PI * 2); ctx.fillStyle = accent; ctx.fill(); ctx.shadowColor = "transparent";
-  ctx.lineWidth = W * 0.01; ctx.strokeStyle = "#fff"; ctx.stroke();
-  ctx.fillStyle = "#000"; ctx.font = `900 ${r * 1.05}px ${FONT}`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("#" + (ti.sub ?? "1").replace(/^#/, ""), W * 0.06 + r, cy + r * 0.04);
-  ctx.textAlign = "left"; ctx.font = `900 ${W * 0.075}px ${FONT}`; ctx.lineJoin = "round"; ctx.lineWidth = W * 0.016; ctx.strokeStyle = "#000";
-  const nx = W * 0.06 + r * 2 + W * 0.035, name = ti.text.toUpperCase(); ctx.strokeText(name, nx, cy, W * 0.78 - r * 2); ctx.fillStyle = "#fff"; ctx.fillText(name, nx, cy, W * 0.78 - r * 2);
+  const age = t - ti.start, e = spring(age, 0.5, 0.2), out = Math.min(1, Math.max(0, (ti.end - t) / 0.25)), num = (ti.sub ?? "1").replace(/^#/, "");
+  const nfs = W * 0.15, fs = W * 0.06, pad = W * 0.045; font(ctx, 800, nfs, -0.04); const nw = ctx.measureText(num).width; font(ctx, 750, fs, -0.02); const tw = Math.min(W * 0.5, ctx.measureText(ti.text).width);
+  const h = nfs * 1.05 + pad * 0.6, w = pad * 2.4 + nw + W * 0.12 + tw, x = W * 0.05, y = H * (TIKTOK_SAFE.top + 0.015);
+  ctx.save(); ctx.globalAlpha = out * Math.min(1, age / 0.12); ctx.translate(-(1 - e) * W * 0.25, 0);
+  glass(ctx, x, y, w, h, W * 0.055, W);
+  ctx.textBaseline = "middle"; ctx.textAlign = "left"; font(ctx, 600, W * 0.032, 0.04); const nn = ctx.measureText("N°").width; ctx.fillStyle = "rgba(255,255,255,.55)"; ctx.fillText("N°", x + pad, y + h * 0.62);
+  const nx = x + pad + nn + W * 0.012; font(ctx, 800, nfs, -0.04); ctx.fillStyle = accent; ctx.fillText(num, nx, y + h * 0.56);
+  ctx.fillStyle = "rgba(255,255,255,.18)"; ctx.fillRect(nx + nw + W * 0.03, y + h * 0.22, Math.max(1, W * 0.003), h * 0.56);
+  font(ctx, 750, fs, -0.02); ctx.fillStyle = "#fff"; ctx.fillText(ti.text, nx + nw + W * 0.06, y + h * 0.54, W * 0.5);
   ctx.restore();
 }
-/** Vrai ou faux : l'affirmation, « VRAI OU FAUX ? », compte à rebours 3-2-1, puis le tampon de la réponse. */
+/** Vrai ou faux : l'affirmation, « VRAI OU FAUX ? », compte à rebours 3-2-1, puis la réponse. */
 export function quizPhase(ti: Title, t: number): { phase: "ask" | "count" | "reveal"; n: number; k: number } {
   const age = t - ti.start, ask = 1.4, cnt = 3;
   if (age < ask) return { phase: "ask", n: 0, k: age / ask };
@@ -260,48 +330,47 @@ export function quizPhase(ti: Title, t: number): { phase: "ask" | "count" | "rev
   return { phase: "reveal", n: 0, k: age - ask - cnt };
 }
 function drawQuiz(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
-  const ph = quizPhase(ti, t), a = fadeIn(ti, t, 0.15), yes = /^v/i.test((ti.sub ?? "").trim());
-  ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = "rgba(0,0,0,.38)"; ctx.fillRect(0, 0, W, H);
-  ctx.save(); ctx.translate(W / 2, H * 0.27); bigText(ctx, W, ti.text, W * 0.075, W * 0.84, 4, accent); ctx.restore();
-  ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  if (ph.phase === "ask") { const sc = Math.max(0.01, spring(ph.k * 1.4, 0.35, 0.6)); ctx.save(); ctx.translate(W / 2, H * 0.47); ctx.scale(sc, sc);
-    rounded(ctx, -W * 0.36, -W * 0.07, W * 0.72, W * 0.14, W * 0.07); ctx.fillStyle = "#111"; ctx.fill(); ctx.fillStyle = "#fff"; ctx.font = `900 ${W * 0.068}px ${FONT}`; ctx.fillText("VRAI OU FAUX ?", 0, 0); ctx.restore(); }
-  else if (ph.phase === "count") { const sc = 1.5 - 0.5 * Math.min(1, ph.k / 0.25); ctx.save(); ctx.globalAlpha = a * (1 - Math.max(0, ph.k - 0.75) * 4); ctx.translate(W / 2, H * 0.5); ctx.scale(sc, sc);
-    ctx.font = `900 ${W * 0.3}px ${FONT}`; ctx.lineWidth = W * 0.03; ctx.lineJoin = "round"; ctx.strokeStyle = "#000"; ctx.strokeText(String(ph.n), 0, 0); ctx.fillStyle = "#fff"; ctx.fillText(String(ph.n), 0, 0); ctx.restore();
-    ctx.beginPath(); ctx.arc(W / 2, H * 0.5, W * 0.22, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ph.k); ctx.lineWidth = W * 0.02; ctx.strokeStyle = accent; ctx.stroke(); }
-  else { const sc = Math.max(0.01, spring(ph.k, 0.3, 0.9)) * 1, col = yes ? "#30d158" : "#ff3b30"; ctx.save(); ctx.translate(W / 2, H * 0.5); ctx.rotate(-0.12); ctx.scale(sc, sc);
-    rounded(ctx, -W * 0.34, -W * 0.12, W * 0.68, W * 0.24, W * 0.05); ctx.lineWidth = W * 0.022; ctx.strokeStyle = col; ctx.stroke(); ctx.fillStyle = col + "33"; ctx.fill();
-    ctx.fillStyle = col; ctx.font = `900 ${W * 0.15}px ${FONT}`; ctx.fillText(yes ? "VRAI" : "FAUX", 0, W * 0.01); ctx.restore();
-    if (ph.k < 0.25) { ctx.fillStyle = `rgba(255,255,255,${(0.25 - ph.k) * 2.4})`; ctx.fillRect(0, 0, W, H); } }
-  ctx.restore();
+  const ph = quizPhase(ti, t), a = fadeIn(ti, t, 0.2), yes = /^v/i.test((ti.sub ?? "").trim()), age = t - ti.start;
+  ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = "rgba(0,0,0,.35)"; ctx.fillRect(0, 0, W, H);
+  // affirmation sur plaque de verre
+  const fs = W * 0.058, pad = W * 0.06; font(ctx, 750, fs, -0.02); const lines = wrap(ctx, ti.text, W * 0.72), lh = fs * 1.2, bw = W * 0.86, bh = lines.length * lh + pad * 1.5 + W * 0.04, by = H * (TIKTOK_SAFE.top + 0.03);
+  glass(ctx, (W - bw) / 2, by, bw, bh, W * 0.06, W);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; font(ctx, 700, W * 0.028, 0.2); ctx.fillStyle = accent; ctx.fillText("VRAI OU FAUX ?", W / 2, by + pad * 0.7);
+  font(ctx, 750, fs, -0.02); ctx.fillStyle = "#fff"; lines.forEach((l, i) => ctx.fillText(l, W / 2, by + pad * 0.7 + W * 0.045 + lh * 0.55 + i * lh));
+  const cy = by + bh + (H * (1 - TIKTOK_SAFE.bottom) - by - bh) / 2, R = W * 0.17;
+  if (ph.phase === "ask") { /* la question seule */ }
+  else if (ph.phase === "count") {
+    ctx.lineCap = "round"; ctx.lineWidth = W * 0.012; ctx.strokeStyle = "rgba(255,255,255,.18)"; ctx.beginPath(); ctx.arc(W / 2, cy, R, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = accent; ctx.beginPath(); ctx.arc(W / 2, cy, R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - ph.k)); ctx.stroke();
+    const sc = 0.85 + 0.15 * spring(ph.k, 0.3, 0.4); ctx.save(); ctx.translate(W / 2, cy); ctx.scale(sc, sc); font(ctx, 200, R * 1.15, -0.02); ctx.fillStyle = "#fff"; ctx.fillText(String(ph.n), 0, R * 0.04); ctx.restore();
+  } else {
+    const col = yes ? "#30d158" : "#ff453a", sc = Math.max(0.01, spring(ph.k, 0.4, 0.45));
+    ctx.save(); ctx.translate(W / 2, cy); ctx.scale(sc, sc);
+    ctx.shadowColor = col; ctx.shadowBlur = W * 0.08; ctx.beginPath(); ctx.arc(0, -R * 0.25, R * 0.55, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill(); ctx.shadowBlur = 0;
+    ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.lineWidth = R * 0.12; ctx.strokeStyle = "#fff"; ctx.beginPath();
+    if (yes) { ctx.moveTo(-R * 0.24, -R * 0.25); ctx.lineTo(-R * 0.06, -R * 0.07); ctx.lineTo(R * 0.26, -R * 0.42); } else { ctx.moveTo(-R * 0.2, -R * 0.45); ctx.lineTo(R * 0.2, -R * 0.05); ctx.moveTo(R * 0.2, -R * 0.45); ctx.lineTo(-R * 0.2, -R * 0.05); }
+    ctx.stroke(); font(ctx, 800, R * 0.42, -0.02); ctx.fillStyle = "#fff"; softText(ctx, yes ? "Vrai" : "Faux", 0, R * 0.6, R * 0.42);
+    ctx.restore();
+  }
+  void age; ctx.restore();
 }
-/** Barre de progression fine en haut de l'image (la fin visible retient le spectateur). */
+/** Barre de progression fine et arrondie en haut, avec un léger halo. */
 export function drawProgress(ctx: Ctx, W: number, H: number, p: number, accent = "#30d158") {
-  const h = Math.max(3, H * 0.006); ctx.save(); ctx.fillStyle = "rgba(255,255,255,.25)"; ctx.fillRect(0, 0, W, h); ctx.fillStyle = accent; ctx.fillRect(0, 0, W * Math.max(0, Math.min(1, p)), h); ctx.restore();
+  const h = Math.max(3, H * 0.0045), m = W * 0.02, y = H * 0.008, w = W - m * 2, q = Math.max(0, Math.min(1, p));
+  ctx.save(); rounded(ctx, m, y, w, h, h / 2); ctx.fillStyle = "rgba(255,255,255,.22)"; ctx.fill();
+  if (q > 0) { ctx.shadowColor = accent; ctx.shadowBlur = h * 3; rounded(ctx, m, y, Math.max(h, w * q), h, h / 2); ctx.fillStyle = accent; ctx.fill(); }
+  ctx.restore();
 }
 export function drawTitle(ctx: Ctx, W: number, H: number, t: number, ti: Title | null, accent = "#30d158") {
   if (!ti || !ti.text.trim()) return;
-  if (ti.kind === "hook") return drawHook(ctx, W, H, t, ti);
+  if (ti.kind === "hook") return drawHook(ctx, W, H, t, ti, accent);
   if (ti.kind === "question") return drawQuestion(ctx, W, H, t, ti, accent);
   if (ti.kind === "rank") return drawRank(ctx, W, H, t, ti, accent);
   if (ti.kind === "quiz") return drawQuiz(ctx, W, H, t, ti, accent);
   if (ti.kind === "timeline") return drawTimeline(ctx, W, H, t, ti, accent);
   if (ti.kind === "chapter") return drawChapter(ctx, W, H, t, ti, accent);
   if (ti.kind && ti.kind !== "lower") return; // anciens types retirés (bulle, fiche)
-  const a = fadeIn(ti, t, 0.3), fs = W * 0.052, sfs = W * 0.034, pad = W * 0.04, x0 = W * 0.05 - (1 - a) * W * 0.08, y1 = 0; // en haut, sous les onglets TikTok
-  ctx.save(); ctx.globalAlpha = a;
-  ctx.font = `800 ${fs}px ${FONT}`; const tw = ctx.measureText(ti.text).width;
-  ctx.font = `600 ${sfs}px ${FONT}`; const sw = ti.sub ? ctx.measureText(ti.sub).width : 0;
-  const w = Math.min(W * 0.84, Math.max(tw, sw) + pad * 2 + W * 0.02), h = fs * 1.5 + (ti.sub ? sfs * 1.5 : 0) + pad * 0.6;
-  ctx.translate(0, H * (TIKTOK_SAFE.top + 0.015) + h);
-  ctx.shadowColor = "rgba(0,0,0,.35)"; ctx.shadowBlur = W * 0.04;
-  rounded(ctx, x0, y1 - h, w, h, W * 0.045); ctx.fillStyle = "rgba(20,20,24,.72)"; ctx.fill(); ctx.shadowColor = "transparent";
-  ctx.lineWidth = Math.max(1, W * 0.0015); ctx.strokeStyle = "rgba(255,255,255,.22)"; ctx.stroke();
-  ctx.fillStyle = accent; rounded(ctx, x0 + pad * 0.55, y1 - h + pad * 0.45, W * 0.01, h - pad * 0.9, W * 0.005); ctx.fill();
-  ctx.textBaseline = "middle"; ctx.fillStyle = "#fff"; ctx.font = `800 ${fs}px ${FONT}`;
-  ctx.fillText(ti.text, x0 + pad + W * 0.01, y1 - h + pad * 0.3 + fs * 0.75, w - pad * 2);
-  if (ti.sub) { ctx.font = `600 ${sfs}px ${FONT}`; ctx.fillStyle = "rgba(235,235,245,.75)"; ctx.fillText(ti.sub, x0 + pad + W * 0.01, y1 - h + pad * 0.3 + fs * 1.5 + sfs * 0.7, w - pad * 2); }
-  ctx.restore();
+  drawLower(ctx, W, H, t, ti, accent);
 }
 
 /* ---------- Annotations et onomatopées (temps source, coordonnées 0–1 de l'image) ---------- */

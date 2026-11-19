@@ -7,7 +7,7 @@ import {
 import { kept, type Range } from "./timeline.ts";
 import { Resampler, toMono, fadeGain, softLimit } from "./audio.ts";
 import { StudioVoice, loadDenoiser } from "./voice.ts";
-import { compose, drawTitle, activeAt, activeMarks, drawMark, drawProgress, clipTime, zoomRect, zoomEase, type Freeze, type Mark, type Overlay, type Title } from "./overlay.ts";
+import { compose, drawTitle, activeAt, activeMarks, drawMark, drawProgress, setGlassBlur, clipTime, zoomRect, zoomEase, type Freeze, type Mark, type Overlay, type Title } from "./overlay.ts";
 import { lineAt, drawCaption, type CapLine, type CaptionStyle } from "./captions.ts";
 
 const FORMATS = [MP4, QTFF, WEBM, MATROSKA]; // vidéos de téléphone (dont .mov iPhone) : module plus léger que ALL_FORMATS
@@ -119,6 +119,9 @@ export function aspectDims(w: number, h: number, a: Aspect = "source"): [number,
 
 export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOptions = {}): Promise<ExportResult> {
   const { onProgress, signal, fade = 0.012, gain = 1, captions = null, maxHeight = 0, voice = false, zoom = null, dress = null, intro = null, freezes = [], transition = "none", aspect = "source", progress = false, look = "none" } = opts;
+  setGlassBlur(true); // l'image filmée est dans le canvas d'export : le verre peut flouter ce qu'il y a derrière
+  try { return await exportInner(); } finally { setGlassBlur(false); }
+  async function exportInner(): Promise<ExportResult> {
   const vidSinks = new Map<string, { input: Input; sink: VideoSampleSink }>();
   const input = new Input({ source: new BlobSource(file), formats: FORMATS });
   let output: Output | null = null;
@@ -331,6 +334,7 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
     return { blob: raw.type === mime ? raw : new Blob([raw], { type: mime }), ext, mime, video: vcodec, audio: acodec };
   } catch (e) { await output?.cancel().catch(() => {}); throw e; }
   finally { input.dispose?.(); for (const e of vidSinks.values()) e.input.dispose?.(); }
+}
 }
 
 /**

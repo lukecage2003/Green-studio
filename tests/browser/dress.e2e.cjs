@@ -39,7 +39,7 @@ const { chromium } = require('playwright'); const assert = require('assert');
   };
   const isMag = (c) => c[0] > 180 && c[1] < 90 && c[2] > 180, isGreen = (c) => c[1] > c[0] + 40 && c[1] > c[2] + 20;
   const full = await exportPx('export plein écran :'); assert.ok(isMag(full.centre) && isMag(full.coin), 'image en plein écran');
-  assert.ok(!isMag(full.bandeau) && full.bandeau[0] < 90, 'bandeau sombre en haut à gauche (sous les onglets TikTok)');
+  assert.ok(!isMag(full.bandeau) && full.bandeau[0] < 200, 'bandeau en verre teinté en haut à gauche (sous les onglets TikTok)');
   await p.click('.qe [data-a=omode][data-v=me]');
   const me = await exportPx('export moi en petit :'); assert.ok(isMag(me.centre), 'image en fond'); assert.ok(isGreen(me.coin), 'la personne en petit dans le coin');
   // Modèle d'émission : enregistré ici, appliqué automatiquement à la vidéo suivante (bandeau d'ouverture compris)

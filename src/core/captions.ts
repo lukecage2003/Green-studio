@@ -3,10 +3,10 @@
 import type { Range, Word } from "./timeline.ts";
 import { emojiFor } from "./viral.ts";
 
-export type CaptionPreset = "none" | "karaoke" | "box" | "word" | "simple";
+export type CaptionPreset = "none" | "pro" | "karaoke" | "box" | "word" | "simple";
 export interface CaptionStyle { preset: CaptionPreset; pos: number; upper: boolean; color: string; strong?: boolean; emoji?: boolean } // emoji : emoji qui « pop » au-dessus du mot fort // strong : mots forts en couleur
-export const CAPTION_DEFAULT: CaptionStyle = { preset: "karaoke", pos: 0.66, upper: false, color: "#34e08b" };
-export const PRESETS: Record<CaptionPreset, string> = { none: "Aucun", karaoke: "Karaoké", word: "Mot par mot", box: "Encadré", simple: "Simple" };
+export const CAPTION_DEFAULT: CaptionStyle = { preset: "pro", pos: 0.66, upper: false, color: "#ffd60a" };
+export const PRESETS: Record<CaptionPreset, string> = { none: "Aucun", pro: "Pro", karaoke: "Karaoké", word: "Mot par mot", box: "Encadré", simple: "Simple" };
 
 export interface CapLine { start: number; end: number; words: (Word & { em?: boolean })[] } // em : mot fort (nom propre, chiffre, mot du dictionnaire)
 
@@ -48,7 +48,7 @@ export function lineAt(lines: CapLine[], t: number): CapLine | null {
 }
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
-const FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
+const FONT = "'Inter Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
 
 /** Dessine la ligne active dans le rectangle (x, y, W, H) de l'image. */
 export function drawCaption(ctx: Ctx, x: number, y: number, W: number, H: number, line: CapLine | null, t: number, st: CaptionStyle) {
@@ -64,6 +64,28 @@ export function drawCaption(ctx: Ctx, x: number, y: number, W: number, H: number
       ctx.save(); ctx.translate(x + W / 2, cy - W * 0.15); ctx.rotate(Math.sin(age * 9) * 0.08 * Math.max(0, 1 - age)); ctx.scale(sc, sc); ctx.font = `${es}px ${FONT}`; ctx.textAlign = "center"; ctx.fillText(e, 0, 0); ctx.restore(); }
   }
 
+  if (st.preset === "pro") { // style « keynote » : blanc net, ombre douce, mot dit en couleur, mots à venir en transparence
+    const fs = W * 0.066; ctx.font = `800 ${fs}px ${FONT}`; try { (ctx as any).letterSpacing = `${(-fs * 0.02).toFixed(2)}px`; } catch { /* */ }
+    ctx.textAlign = "left";
+    const words = line.words.map((w) => txt(w.text)), ws = words.map((s) => ctx.measureText(s).width), sp = ctx.measureText(" ").width * 1.05;
+    const rows: number[][] = []; const maxW = W * 0.8; let row: number[] = [], rw = 0;
+    ws.forEach((w, i) => { const add = (row.length ? sp : 0) + w; if (row.length && rw + add > maxW) { rows.push(row); row = []; rw = 0; } row.push(i); rw += (row.length > 1 ? sp : 0) + w; });
+    if (row.length) rows.push(row);
+    const lh = fs * 1.18, top = cy - ((rows.length - 1) * lh) / 2, appear = Math.min(1, Math.max(0, (t - line.start) / 0.12));
+    ctx.globalAlpha *= appear; ctx.translate(0, (1 - appear) * fs * 0.25);
+    rows.forEach((r, ri) => {
+      const width = r.reduce((s, i, j) => s + ws[i] + (j ? sp : 0), 0), ry = top + ri * lh; let cx = x + (W - width) / 2;
+      for (const i of r) {
+        const w = line.words[i], said = t >= w.start, active = i === k, age = Math.max(0, t - w.start), pop = active ? 1 + 0.07 * Math.max(0, 1 - age / 0.18) : 1;
+        ctx.save(); ctx.translate(cx + ws[i] / 2, ry); ctx.scale(pop, pop); ctx.translate(-(cx + ws[i] / 2), -ry);
+        ctx.shadowColor = "rgba(0,0,0,.55)"; ctx.shadowBlur = fs * 0.4; ctx.shadowOffsetY = fs * 0.05;
+        ctx.globalAlpha *= said ? 1 : 0.42;
+        ctx.fillStyle = active || (said && st.strong !== false && w.em) ? st.color : "#fff"; ctx.fillText(words[i], cx, ry);
+        ctx.restore(); cx += ws[i] + sp;
+      }
+    });
+    ctx.restore(); return;
+  }
   if (st.preset === "word") { // un mot à la fois, gros, qui « pop »
     const w = line.words[Math.max(0, k)], fs = W * (st.strong !== false && w.em ? 0.128 : 0.11), age = Math.max(0, t - w.start), sc = 1 + 0.18 * Math.max(0, 1 - age / 0.12);
     ctx.font = `900 ${fs}px ${FONT}`; ctx.textAlign = "center"; ctx.translate(x + W / 2, cy); ctx.scale(sc, sc);

@@ -1,7 +1,8 @@
 /** SpeechAnalysisEngine : suggestions de coupes à partir des mots horodatés. Ne supprime jamais rien : propose seulement. */
 import type { Range, Word } from "./timeline.ts";
+import { normalize } from "./timeline.ts";
 
-export type IssueType = "retake" | "filler_word" | "repetition" | "stutter" | "false_start" | "hesitation" | "long_silence" | "untranscribed";
+export type IssueType = "retake" | "filler_word" | "repetition" | "stutter" | "false_start" | "hesitation" | "long_silence" | "untranscribed" | "breath";
 export interface Suggestion { id: string; type: IssueType; range: Range; firstWord: number; lastWord: number; excerpt: string; confidence: number }
 
 /** Tics de langage par défaut (modifiables par l'utilisateur). */
@@ -365,6 +366,93 @@ export function analyzeAudio(words: Word[], pcm: Float32Array, rate: number, tak
     if (!range || range.end - range.start < 0.15 || taken2(range.start, range.end)) continue;
     out.push({ id: `filled-${Math.round(range.start * 100)}`, type: "hesitation", firstWord: Math.max(0, words.findIndex((w) => w.end >= range!.start)), lastWord: Math.max(0, words.findIndex((w) => w.end >= range!.start)),
       range, confidence: conf, excerpt: `[${why}, ${(range.end - range.start).toFixed(1).replace(".", ",")} s]` });
+  }
+  // 3. Respirations entre deux phrases : souffle (bruit large, sans voix) assez fort pour s'entendre au montage
+  for (const b of detectBreaths(words, pcm, rate)) if (!taken.some((t) => t.range.start <= b.start + 0.02 && t.range.end >= b.end - 0.02) && !out.some((o) => o.range.start < b.end && o.range.end > b.start))
+    out.push({ id: `breath-${b.i}`, type: "breath", firstWord: b.i, lastWord: b.i, range: { start: b.start, end: b.end }, confidence: 0.6, excerpt: `[respiration ${(b.end - b.start).toFixed(1).replace(".", ",")} s] avant « ${words[b.i]?.text ?? ""} »` });
+  return out;
+}
+
+/* ---------- Raccords au millimètre ---------- */
+/** Énergie moyenne par trame (hop en secondes, 5 ms par défaut). */
+export function frameEnergy(pcm: Float32Array, rate: number, hop = 0.005): Float32Array {
+  const fr = Math.max(1, Math.round(rate * hop)), n = Math.floor(pcm.length / fr), e = new Float32Array(n);
+  for (let k = 0; k < n; k++) { let a = 0; for (let i = k * fr; i < (k + 1) * fr; i++) a += pcm[i] * pcm[i]; e[k] = a / fr; }
+  return e;
+}
+/** Bruit de fond : 10e centile des énergies non nulles. */
+export function noiseFloor(e: Float32Array): number {
+  const v = Array.from(e).filter((x) => x > 0).sort((a, b) => a - b); return Math.max(1e-10, v[Math.floor(v.length * 0.1)] ?? 1e-10);
+}
+
+/** Pipeline « Tout supprimer » (hors IA et script) : partagé par l'appli et les bancs d'essai. */
+export function autoCuts(words: Word[], pcm: Float32Array, rate: number, rhythm: Rhythm = "punchy", min = 0.5, refine = true): { cuts: Range[]; sugs: number } {
+  const R = RHYTHM[rhythm], t = analyze(words, { longSilence: R.longSilence, keepPause: R.keepPause }), a = analyzeAudio(words, pcm, rate, t);
+  const sugs = [...t, ...a].sort((x, y) => x.range.start - y.range.start), dur = pcm.length / rate;
+  const r = sugs.filter((s) => s.confidence >= min).map((s) => ({ ...s.range, mode: snapModeOf(s) }));
+  const q = snapToQuiet(withBounds(r, words), pcm, rate), snapped = refine ? refineCuts(q, words, pcm, rate) : q;
+  return { cuts: dropCrumbs(normalize(snapped, dur), words, dur), sugs: sugs.length };
+}
+/** Bord à recaler selon le type de défaut (même règle que l'appli). */
+export function snapModeOf(s: Suggestion): SnapMode {
+  return s.id.startsWith("swallowed-") || (/avant «/.test(s.excerpt) && s.type === "long_silence") ? "pre" : s.type === "long_silence" ? "both" : "out";
+}
+/**
+ * Finition des raccords, au niveau de l'échantillon :
+ *  - la chute du mot gardé avant la coupe n'est jamais rognée (on attend que l'énergie retombe au bruit de fond, 35 ms au moins) ;
+ *  - l'attaque du mot gardé après la coupe est protégée (consonnes « p, t, k » comprises : 25 ms avant le début d'énergie) ;
+ *  - chaque bord est posé sur un passage par zéro (pas de « clic » au raccord).
+ */
+export function refineCuts(cuts: Range[], words: Word[] | null, pcm: Float32Array, rate: number): Range[] {
+  const hop = 0.005, e = frameEnergy(pcm, rate, hop), fl = noiseFloor(e), n = e.length, quiet = fl * 4;
+  const E = (t: number) => e[Math.min(n - 1, Math.max(0, Math.floor(t / hop)))];
+  const zc = (t: number, lo: number, hi: number) => { // passage par zéro le plus proche (± 4 ms) dans [lo, hi]
+    const c = Math.round(t * rate), w = Math.round(0.004 * rate);
+    for (let d = 0; d <= w; d++) for (const i of [c - d, c + d]) { if (i <= 0 || i >= pcm.length) continue; const ti = i / rate; if (ti < lo || ti > hi) continue; if ((pcm[i - 1] <= 0) !== (pcm[i] <= 0)) return ti; }
+    return Math.min(hi, Math.max(lo, t));
+  };
+  const all = cuts.map((c) => ({ ...c }));
+  const isCut = (w: Word) => { const m = (w.start + w.end) / 2; return all.some((c) => m >= c.start && m < c.end); };
+  const keptW = words ? words.filter((w) => !isCut(w) && /[\p{L}\p{N}]/u.test(w.text)) : [];
+  return all.map((c) => {
+    let s = c.start, en = c.end;
+    const prev = keptW.filter((w) => w.end <= c.start + 0.12 && (w.start + w.end) / 2 < c.start).pop(), next = keptW.find((w) => w.start >= c.end - 0.12 && (w.start + w.end) / 2 > c.end);
+    if (prev) { // fin du mot précédent : jusqu'au retour au calme (max 150 ms), au moins 35 ms après la fin du mot
+      let t = Math.max(prev.end + 0.035, s - 0.15); const lim = Math.min(en - 0.02, prev.end + 0.3);
+      while (t < lim && E(t) > quiet) t += hop;
+      if (t >= lim) { let bv = Infinity; for (let u = prev.end + 0.035; u < lim; u += hop) if (E(u) < bv) { bv = E(u); t = u; } } // jamais calme (bruit de pièce) : le point le plus bas
+      s = Math.max(s, Math.min(lim, t));
+    }
+    if (next) { // début du mot suivant : on remonte jusqu'au calme (max 120 ms), avec 25 ms de marge
+      let t = next.start; const lim = Math.max(s + 0.02, next.start - 0.2);
+      while (t > lim && E(t - hop) > quiet) t -= hop;
+      if (t <= lim) { let bv = Infinity; for (let u = next.start - 0.025; u > lim; u -= hop) if (E(u) < bv) { bv = E(u); t = u + 0.025; } }
+      en = Math.min(en, Math.max(lim, Math.min(t - 0.025, next.start - 0.02)));
+    }
+    if (en - s < 0.03) return { start: c.start, end: c.end };
+    return { start: zc(s, s - 0.004, en), end: zc(en, s, en + 0.004) };
+  });
+}
+
+/**
+ * Respirations : dans les blancs entre deux mots, plage de souffle (énergie nettement au-dessus du bruit de fond, beaucoup de
+ * passages par zéro comme un bruit, mais bien plus faible que la voix). i = indice du mot qui suit.
+ */
+export function detectBreaths(words: Word[], pcm: Float32Array, rate: number): { start: number; end: number; i: number }[] {
+  const hop = 0.01, fr = Math.round(rate * hop), n = Math.floor(pcm.length / fr), rms = new Float32Array(n), zcr = new Float32Array(n);
+  for (let k = 0; k < n; k++) { let a = 0, z = 0; for (let i = k * fr; i < (k + 1) * fr; i++) { a += pcm[i] * pcm[i]; if (i > k * fr && (pcm[i] >= 0) !== (pcm[i - 1] >= 0)) z++; } rms[k] = Math.sqrt(a / fr); zcr[k] = z / fr; }
+  const so = Array.from(rms).sort((x, y) => x - y), floor = Math.max(1e-5, so[Math.floor(n * 0.1)] ?? 0), peak = so[Math.floor(n * 0.995)] ?? 1;
+  const out: { start: number; end: number; i: number }[] = [];
+  for (let i = 1; i < words.length; i++) {
+    const a = words[i - 1].end + 0.04, b = (words[i].pre ?? words[i].start) - 0.04; if (b - a < 0.14) continue;
+    let best: [number, number] | null = null, s0 = -1, miss = 0;
+    for (let k = Math.ceil(a / hop); k <= Math.floor(b / hop) + 1; k++) {
+      const on = k * hop < b && rms[k] > floor * 2.5 && rms[k] < peak * 0.22 && zcr[k] > 0.11;
+      if (on) { if (s0 < 0) s0 = k; miss = 0; } else if (s0 >= 0 && ++miss > 2) { const e = k - miss + 1; if (!best || e - s0 > best[1] - best[0]) best = [s0, e]; s0 = -1; miss = 0; }
+    }
+    if (!best) continue;
+    const st = best[0] * hop, en = best[1] * hop; if (en - st < 0.12 || en - st > 0.9) continue;
+    out.push({ start: Math.max(a, st - 0.02), end: Math.min(b, en + 0.02), i });
   }
   return out;
 }

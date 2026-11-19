@@ -53,7 +53,7 @@ const FAKE = `self.onmessage = (e) => { if (e.data.type === 'run') self.postMess
     const count = (o, fx0, fx1, fy0, fy1, f) => { const d = o.g.getImageData(Math.round(o.c.width * fx0), Math.round(o.c.height * fy0), Math.max(1, Math.round(o.c.width * (fx1 - fx0))), Math.max(1, Math.round(o.c.height * (fy1 - fy0)))).data; let n = 0; for (let q = 0; q < d.length; q += 4) if (f(d[q], d[q + 1], d[q + 2])) n++; return n; };
     const green = (r, g, b) => g > 150 && r < 120 && b < 140, white = (r, g, b) => r > 220 && g > 220 && b > 220;
     const mid = await shot(dur * 0.5);
-    return { dur, barGauche: count(mid, 0.02, 0.4, 0, 0.004, green), barDroite: count(mid, 0.6, 0.98, 0, 0.004, green), accroche: count(await shot(0.5), 0.1, 0.9, 0.22, 0.38, white) };
+    return { dur, barGauche: count(mid, 0.03, 0.4, 0.008, 0.012, green), barDroite: count(mid, 0.6, 0.97, 0.008, 0.012, green), accroche: count(await shot(0.5), 0.1, 0.9, 0.22, 0.38, white) };
   });
   console.log('export :', JSON.stringify(r));
   assert.ok(r.barGauche > 20 && r.barDroite === 0, 'barre de progression à mi-parcours'); assert.ok(r.accroche > 300, 'texte d’accroche géant au début');

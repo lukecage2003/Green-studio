@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.21)
+# Green Studio 3.1 — état réel (beta.22)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,14 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.22 — raccords au millimètre, visuels « pro »
+- **Raccords au millimètre** (`refineCuts`) : après le recalage sur le silence (10 ms), chaque bord est fini à l'échantillon : la chute du mot gardé avant la coupe n'est jamais rognée (on attend le retour au bruit de fond, 35 ms au moins), l'attaque du mot suivant est protégée (25 ms avant le début d'énergie, consonnes « p, t, k » comprises), et le bord est posé sur un passage par zéro (pas de clic). Appliqué à « Tout supprimer », à l'Express et aux coupes une par une.
+  - Mesuré sur deux vraies prises (`scripts/cut-quality.ts`) : attaques rognées 2 → 0 et 4 → 0, chutes rognées 2 → 0 et 2 → 0, raccords bruyants 4 → 1 et 4 → 3 (les restants : bruit de pièce continu).
+- **Respirations** : souffle audible entre deux phrases détecté et proposé à la coupe (type « Respiration »).
+- **Express : finition automatique** (réglable dans Nettoyage) : fin en boucle, texte d'accroche, question de fin, et en option la phrase la plus forte rejouée en ouverture.
+- **Nouveau système visuel** : verre dépoli réel (l'image derrière est floutée à l'export), typographie Inter, ombres douces au lieu des contours noirs, titres qui se révèlent mot à mot sur ressort, mot fort en couleur. Refaits : bandeau, chapitre, frise, accroche, question de fin, classement, vrai / faux (anneau fin, chiffres légers, réponse ✓ / ✕), barre de progression, étiquettes Avant / Après.
+- **Sous-titres « Pro »** (par défaut pour les nouveaux projets) : blanc net, mot dit en couleur, mots à venir en transparence, jaune par défaut.
 
 ## 3.1.0-beta.21 — rétention TikTok
 - **Accroche** (onglet Nettoyage) : note sur 100 des 2 premières secondes (blanc avant le premier mot, salutation, « euh », phrase trop longue, rien d'intrigant) ; « Couper le blanc du début » en un geste ; jusqu'à 3 phrases plus fortes de la vidéo proposées pour ouvrir (rejouées au début).
