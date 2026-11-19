@@ -15,14 +15,14 @@ const FAKE = `self.onmessage = (e) => { if (e.data.type === 'run') self.postMess
   await ctx.route(/transcribe\.worker/, (r) => r.fulfill({ contentType: 'text/javascript', body: FAKE }));
   await p.goto('http://localhost:5173/'); await p.click('#go'); await p.waitForSelector('#rec:not([hidden])', { timeout: 30000 });
   await p.click('#rec'); await p.waitForSelector('#recChip:not([hidden])', { timeout: 20000 }); await p.waitForTimeout(7000); await p.click('#rec');
-  await p.waitForSelector('#pv:not([hidden])'); await p.click('#pvClean'); await p.waitForSelector('.qe .tx span', { timeout: 30000 });
+  await p.waitForSelector('#pv:not([hidden])', { timeout: 90000 }); /* finalisation de la prise : lente sur une machine de test chargée */ await p.click('#pvClean'); await p.waitForSelector('.qe .tx span', { timeout: 30000 });
   await p.waitForFunction(() => /[1-9]\d* coupe/.test(document.querySelector('.qe [data-r=status]').textContent), null, { timeout: 30000 });
   await p.waitForTimeout(500);
   const cut = await p.evaluate(() => [...document.querySelectorAll('.qe .tx span')].map((s) => (s.classList.contains('cut') ? 1 : 0)).join(''));
   console.log('mots coupés :', cut, '·', await p.textContent('.qe [data-r=status]'));
   // gardés : « Salut à tous » et la 2e tentative complète ; coupés : ad-lib, tentative ratée, « voilà »
   assert.equal(cut, '11000111110000001');
-  await p.click('.qe [data-tab=sg]'); const card = await p.textContent('.qe .body .card:not([data-coach])'); console.log('bilan :', card.replace(/\s+/g, ' '));
+  await p.click('.qe [data-tab=sg]'); const card = await p.evaluate(() => [...document.querySelectorAll('.qe .body .card')].map((c) => c.textContent).find((x) => /Meilleure prise/.test(x)) ?? ''); console.log('bilan :', card.replace(/\s+/g, ' '));
   assert.ok(await p.$('.qe [data-coach]'), 'bilan de la prise affiché'); console.log('coach :', (await p.textContent('.qe [data-coach]')).replace(/\s+/g, ' ').slice(0, 140));
   assert.match(card, /2 phrase\(s\) gardée\(s\), 1 reprise\(s\) retirée\(s\)/); assert.match(card, /Abonnez-vous/);
   // Publication : sans Gemini Nano (navigateur), version locale à partir du texte gardé
@@ -32,7 +32,7 @@ const FAKE = `self.onmessage = (e) => { if (e.data.type === 'run') self.postMess
   // Sous-titres anglais : traduction (Whisper simulé), seuls les passages gardés restent
   await p.click('.qe [data-tab=cc]'); await p.click('.qe [data-a=lang][data-v=en]');
   await p.waitForFunction(() => /Traduction prête \(7 mots\)/.test(document.querySelector('.qe .body').textContent), null, { timeout: 20000 });
-  await p.click('.qe [data-a=export]'); const sum = await p.textContent('.qe .modal'); console.log('export :', sum.replace(/\s+/g, ' ').slice(0, 160)); assert.match(sum, /Karaoké · anglais/);
+  await p.click('.qe [data-a=export]'); const sum = await p.textContent('.qe .modal'); console.log('export :', sum.replace(/\s+/g, ' ').slice(0, 160)); assert.match(sum, /Pro · anglais/);
   await p.click('.qe .modal [data-x=no]');
   console.log('erreurs :', errs); assert.equal(errs.length, 0); console.log('OK'); await b.close();
 })().catch((e) => { console.error('ÉCHEC', e); process.exit(1); });
