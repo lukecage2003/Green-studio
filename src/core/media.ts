@@ -104,13 +104,11 @@ export interface ExportOptions {
 }
 
 export type Transition = "none" | "flash" | "punch" | "whip";
-export type Aspect = "source" | "9:16" | "1:1" | "16:9";
+export type Aspect = "source" | "9:16";
 /** Dimensions de sortie (paires) pour un format donné, à partir de la taille d'origine (déjà réduite). */
 export function aspectDims(w: number, h: number, a: Aspect = "source"): [number, number] {
-  const ev = (x: number) => Math.max(2, Math.round(x / 2) * 2), L = Math.max(w, h), S = Math.min(w, h);
+  const ev = (x: number) => Math.max(2, Math.round(x / 2) * 2), L = Math.max(w, h);
   if (a === "9:16") return [ev(L * 9 / 16), ev(L)];
-  if (a === "16:9") return [ev(L), ev(L * 9 / 16)];
-  if (a === "1:1") return [ev(S), ev(S)];
   return [w, h];
 }
 

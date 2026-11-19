@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.19)
+# Green Studio 3.1 — état réel (beta.20)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,13 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.20 — 100 % TikTok
+- **Bulles et fiche personnage retirées** (les anciens projets qui en contenaient s'ouvrent sans elles).
+- **Zones TikTok** (Habillage → 📱) : l'aperçu montre ce que l'appli TikTok recouvre (onglets en haut, boutons à droite, légende en bas). Tout ce que Green Studio place reste en dehors : bandeau en haut sous les onglets, sous-titres remontés (66 % de la hauteur), « moi en petit » à gauche, incrustation et étiquettes Avant / Après sous les onglets.
+- **Export TikTok uniquement** : toujours en 9:16, MP4 H.264 ; une vidéo horizontale est posée sur un fond flouté. Plus de choix 1:1 / 16:9.
+- **Publication TikTok** : légende de 150 caractères qui finit par une question, 5 hashtags (3 sur le sujet + #comics #pourtoi), textes de couverture courts ; la couverture est en 1080×1920 avec le texte dans la partie visible de la grille du profil.
+- **Design** : outils d'habillage en tuiles, onglet « Nettoyage », fiches d'image plus lisibles (réglages pleine largeur, animations en bande défilante), fenêtre d'export « Exporter pour TikTok » plus claire.
 
 ## 3.1.0-beta.19
 - **Images animées** (Habillage → chaque image ou extrait) : glisse de gauche, glisse de droite, monte, zoom, pop, tourbillon, flotte, tremble, panoramique → / ←. Entrée sur un ressort amorti (léger rebond), sortie automatique dans le sens du mouvement ; la personne reste visible derrière. Toucher une animation la rejoue dans l'aperçu ; même rendu à l'export.

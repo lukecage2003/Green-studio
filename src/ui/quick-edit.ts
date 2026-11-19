@@ -3,7 +3,7 @@
 import { EditSession, wordsToRange, sourceToEdited, editedDuration, EPS, type Range, type Word } from "../core/timeline.ts";
 import { bestTakes, type TakeResult } from "../core/takes.ts";
 import { clipsOf, snapSplit, hitAt, trimEdge, wavePeaks } from "../core/derush.ts";
-import { compose, drawTitle, activeAt, activeMarks, drawMark, sfxFromWords, SFX, type Mark, clipTime, zoomRect, zoomEase, pathDuration, ANIMS, type OverlayAnim, type Overlay, type OverlayMode, type Title, type Freeze, type ZoomTarget } from "../core/overlay.ts";
+import { compose, drawTitle, activeAt, activeMarks, drawMark, sfxFromWords, SFX, type Mark, clipTime, zoomRect, zoomEase, pathDuration, ANIMS, drawSafeZones, type OverlayAnim, type Overlay, type OverlayMode, type Title, type Freeze, type ZoomTarget } from "../core/overlay.ts";
 
 /** Fichiers insérés (images, extraits) : gardés sur le téléphone (IndexedDB), retrouvés à la réouverture du projet. */
 const mediaDb = () => new Promise<IDBDatabase>((res, rej) => { const r = indexedDB.open("gs-media", 1); r.onupgradeneeded = () => r.result.createObjectStore("files"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
@@ -44,7 +44,7 @@ const CSS = `
 .qe .tabs .grow{flex:0 0 34px;font-size:16px;transition:transform .25s}.qe.big .tabs .grow{transform:rotate(180deg)}
 .qe .tbar{flex:0 0 auto;display:flex;gap:2px;overflow-x:auto;scrollbar-width:none;padding:6px 8px calc(6px + env(safe-area-inset-bottom,0px));border-top:1px solid rgba(255,255,255,.08);background:rgba(18,18,20,.96)}
 .qe .tbar::-webkit-scrollbar{display:none}
-.qe .tb{flex:0 0 auto;width:66px;height:54px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;border-radius:12px;color:#f2f2f7;font-size:11px;font-weight:600;position:relative}
+.qe .tb{flex:0 0 auto;min-width:62px;padding:0 6px;height:54px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;border-radius:12px;color:#f2f2f7;font-size:11px;font-weight:600;position:relative}
 .qe .tb .ic{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .qe .tb:active{background:rgba(255,255,255,.1)}.qe .tb:disabled{opacity:.35}.qe .tb[hidden]{display:none}
 .qe .tb[data-a=del]:not(:disabled){color:#ff6961}.qe .tb[data-a=rest]{color:#64d2ff}.qe .tb[data-a=clean]{color:var(--accent)}
@@ -108,6 +108,22 @@ const CSS = `
 .qe .vw{border-radius:24px}.qe canvas.wave{border-radius:14px;background:rgba(255,255,255,.06)}
 .qe .modal .card{background:rgba(28,28,32,.62);-webkit-backdrop-filter:blur(44px) saturate(190%);backdrop-filter:blur(44px) saturate(190%);border:.5px solid rgba(255,255,255,.2);border-radius:32px;box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 24px 60px rgba(0,0,0,.5)}
 .qe .selbar{background:rgba(40,40,46,.55);-webkit-backdrop-filter:blur(30px) saturate(185%);backdrop-filter:blur(30px) saturate(185%);border:.5px solid rgba(255,255,255,.2);border-radius:26px;box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 14px 40px rgba(0,0,0,.5)}
+/* outils d'habillage en tuiles, fenêtres plus nettes */
+.qe .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:0 0 12px}
+.qe .tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;height:68px;border-radius:18px;background:rgba(255,255,255,.07);border:.5px solid rgba(255,255,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.14);font-size:11.5px;font-weight:600;color:rgba(235,235,245,.85);transition:transform .12s,background .2s}
+.qe .tile span{font-size:22px;line-height:1}.qe .tile:active{transform:scale(.94)}
+.qe .tile[data-a=ins]{background:linear-gradient(160deg,rgba(48,209,88,.35),rgba(48,209,88,.12));border-color:rgba(48,209,88,.5);color:#fff}
+.qe .tile.on{background:rgba(255,45,85,.25);border-color:rgba(255,45,85,.7);color:#fff}
+.qe .modal .chips .ib{flex:0 1 auto;height:38px;border-radius:19px;font-size:14px;padding:0 16px}
+.qe .opt.col{flex-direction:column;align-items:stretch;gap:8px}
+.qe .modal .card>b{font-size:20px;letter-spacing:-.01em}
+.qe .sg .chips.anim{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin-right:-6px;padding-bottom:2px}.qe .sg .chips.anim::-webkit-scrollbar{display:none}
+.qe .sg .chips .ib{height:30px;font-size:13px;padding:0 11px}
+.qe .tabs button{font-size:13.5px;letter-spacing:-.01em}
+.qe .tbar .tb span{white-space:nowrap}
+.qe .sg[data-o],.qe .sg[data-ti],.qe .sg[data-mk],.qe .sg[data-fz]{flex-wrap:wrap;justify-content:flex-end;row-gap:8px}
+.qe .sg[data-o] .t,.qe .sg[data-ti] .t,.qe .sg[data-mk] .t,.qe .sg[data-fz] .t{flex:1 0 100%}
+.qe .sg .t div.chips{white-space:normal;overflow:visible;font-size:inherit;cursor:default}.qe .sg .t div.chips.anim{white-space:nowrap;overflow-x:auto}
 .lib ul{margin:0 12px}.lib li:first-child{border-radius:20px 20px 0 0}.lib li:last-child{border-radius:0 0 20px 20px}.lib li:only-child{border-radius:20px}
 `;
 
@@ -170,7 +186,7 @@ export async function openEditor(o: EditorOptions) {
       <button class="ib icon" data-a="undo" aria-label="Annuler">↶</button><button class="ib icon" data-a="redo" aria-label="Rétablir">↷</button></div>
     <div class="tl"><canvas class="wave" aria-label="Timeline : glissez pour vous déplacer, pincez pour zoomer, touchez un clip pour le sélectionner"></canvas>
       <div class="tlz"><button data-a="zout" aria-label="Dézoomer">−</button><button data-a="zin" aria-label="Zoomer">＋</button><button data-a="fit" aria-label="Voir toute la vidéo">⤢</button></div></div>
-    <div class="tabs" role="tablist"><button role="tab" data-tab="tx" aria-selected="true">Texte</button><button role="tab" data-tab="sg" aria-selected="false">Suggestions</button><button role="tab" data-tab="cc" aria-selected="false">Sous-titres</button><button role="tab" data-tab="dress" aria-selected="false">Habillage</button><button class="grow" data-a="grow" aria-label="Agrandir la zone de travail">⌃</button></div>
+    <div class="tabs" role="tablist"><button role="tab" data-tab="tx" aria-selected="true">Texte</button><button role="tab" data-tab="sg" aria-selected="false">Nettoyage</button><button role="tab" data-tab="cc" aria-selected="false">Sous-titres</button><button role="tab" data-tab="dress" aria-selected="false">Habillage</button><button class="grow" data-a="grow" aria-label="Agrandir la zone de travail">⌃</button></div>
     <input type="file" data-r="ovFile" accept="image/*,video/*" hidden><input type="file" data-r="withFile" accept="image/*" hidden><input type="file" data-r="bankFile" accept="image/*,video/*" hidden>
     <div class="body" data-r="body"></div>
     <nav class="tbar" aria-label="Outils">
@@ -203,7 +219,7 @@ export async function openEditor(o: EditorOptions) {
   let pcm: Float32Array | null = null, audioErr = "";
   let style: CaptionStyle = { ...CAPTION_DEFAULT, ...(saved?.style ?? {}) }, norm = saved?.norm ?? true, q720 = saved?.q720 ?? false, voice = saved?.voice ?? true, zooms = saved?.zooms ?? true, /* zooms actifs par défaut : montage dynamique */ lines: CapLine[] = [];
   (root.querySelector("[data-a=zooms]") as HTMLInputElement).checked = zooms;
-  let overlays: Overlay[] = saved?.overlays ?? [], titles: Title[] = saved?.titles ?? [];
+  let overlays: Overlay[] = saved?.overlays ?? [], titles: Title[] = (saved?.titles ?? []).filter((x: any) => x.kind !== "bubble" && x.kind !== "card");
   let splits: number[] = saved?.splits ?? [], tight = saved?.tight ?? false; // tight : débuts de mots déjà recalés sur le son
   let marks: Mark[] = saved?.marks ?? []; // annotations (flèches, cercles) et onomatopées
   let freezes: Freeze[] = saved?.freezes ?? [], fz: { f: Freeze; t0: number } | null = null, lastT = 0; // arrêts sur image ; celui en cours de lecture
@@ -216,6 +232,7 @@ export async function openEditor(o: EditorOptions) {
     if (tp.intro?.text && !titles.some((x) => x.id.startsWith("intro"))) titles.push({ id: "intro" + Date.now().toString(36), text: tp.intro.text, sub: tp.intro.sub, start: Math.min(0.3, duration / 4), end: Math.min(duration, 4.3) });
   }
   if (!saved) { const tp = loadTpls().find((x) => x.id === autoTplId()); if (tp) applyTpl(tp); }
+  let safeOn = (() => { try { return localStorage.getItem("gs.safe") === "1"; } catch { return false; } })();
   const ovSrc = new Map<string, { blob: Blob; img?: ImageBitmap; vid?: HTMLVideoElement }>();
   async function loadOverlay(id: string, kind: Overlay["kind"], blob?: Blob | null) {
     blob ??= await mediaGet(id); if (!blob) return;
@@ -250,7 +267,7 @@ export async function openEditor(o: EditorOptions) {
     const ed = session.editedDuration, removed = duration - ed;
     setStatus(`Montage ${fmt(ed)} / ${fmt(duration)} · ${session.cuts.length} coupe(s)${removed > 0.5 ? ` · −${Math.round(removed)} s` : ""}${hook ? " · accroche en ouverture" : ""}${freezes.length ? ` · ${freezes.length} arrêt(s) sur image` : ""}`);
     const open = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range)).length;
-    q("[data-tab=sg]").textContent = `Suggestions${sugs.length ? ` (${open})` : ""}`;
+    q("[data-tab=sg]").textContent = `Nettoyage${sugs.length ? ` (${open})` : ""}`;
     root.querySelectorAll<HTMLElement>("[data-tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
     { const cw = capLang === "en" && enWords ? enWords : words; lines = cw ? buildCaptions(cw, session.cuts, { strong: myDict().map((d) => d.to) }) : []; }
     if (tab === "tx") renderText(); else if (tab === "sg") renderSugs(); else if (tab === "dress") renderDress(); else renderCC();
@@ -356,12 +373,12 @@ export async function openEditor(o: EditorOptions) {
       + freezes.map((f) => `<div class="sg" data-fz="${f.id}"><div class="t"><b style="color:#ff9f0a">⏸ Arrêt sur image · ${fmt(f.at)} · ${f.dur.toFixed(1).replace(".", ",")} s</b>
         <div class="chips" style="margin-top:6px"><button class="ib" data-a="fzoom" aria-pressed="${!!f.zoom}">🔍 ${f.zoom ? `Zoom ${f.zoom.z.toFixed(1).replace(".", ",")}×` : "Zoomer"}</button><button class="ib" data-a="fplay">▶ Voir</button></div></div>
         <button class="ib" data-a="fminus" aria-label="Plus court">−</button><button class="ib" data-a="fplus" aria-label="Plus long">+</button><button class="ib" data-a="fhere">Ici</button><button class="ib" data-a="fdel" aria-label="Supprimer">✕</button></div>`).join("");
-    const tiRows = titles.map((ti) => `<div class="sg" data-ti="${ti.id}"><div class="t"><b style="color:#bf5af2">${ti.kind === "chapter" ? "📖 Chapitre" : ti.kind === "bubble" ? "💬 Bulle" : ti.kind === "card" ? "🪪 Fiche" : ti.kind === "timeline" ? "🗓 Frise" : "Bandeau"} · ${fmt(ti.start)} → ${fmt(ti.end)}</b>
+    const tiRows = titles.map((ti) => `<div class="sg" data-ti="${ti.id}"><div class="t"><b style="color:#bf5af2">${ti.kind === "chapter" ? "📖 Chapitre" : ti.kind === "timeline" ? "🗓 Frise" : "Bandeau"} · ${fmt(ti.start)} → ${fmt(ti.end)}</b>
         <input data-a="ttext" value="${esc(ti.text)}" placeholder="Titre" style="width:100%;margin-top:6px;background:rgba(255,255,255,.08);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit">
-        <input data-a="tsub" value="${esc(ti.sub ?? "")}" placeholder="${ti.kind === "card" ? "Pouvoirs : … ; Première apparition : …" : ti.kind === "timeline" ? "1962 Création ; 1984 Secret Wars ; …" : "Sous-titre (facultatif)"}" style="width:100%;margin-top:4px;background:rgba(255,255,255,.06);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit;font-size:14px"></div>
+        <input data-a="tsub" value="${esc(ti.sub ?? "")}" placeholder="${ti.kind === "timeline" ? "1962 Création ; 1984 Secret Wars ; …" : "Sous-titre (facultatif)"}" style="width:100%;margin-top:4px;background:rgba(255,255,255,.06);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit;font-size:14px"></div>
         <button class="ib" data-a="tminus" aria-label="Plus court">−</button><button class="ib" data-a="tplus" aria-label="Plus long">+</button><button class="ib" data-a="there">Ici</button><button class="ib" data-a="tdel" aria-label="Supprimer">✕</button></div>`).join("");
-    body.innerHTML = `<div class="row" style="padding:0 0 10px"><button class="ib go" data-a="ins">🖼 Image / extrait</button><button class="ib" data-a="title">🅣 Bandeau</button><button class="ib" data-a="chapter">📖 Chapitre</button><button class="ib" data-a="bubble">💬 Bulle</button><button class="ib" data-a="card">🪪 Fiche perso</button><button class="ib" data-a="timeline">🗓 Frise</button><button class="ib" data-a="annot">✏️ Annoter</button><button class="ib" data-a="sfx">💥 Onomatopée</button>${words && sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length ? `<button class="ib go" data-a="sfxAuto">💥 Placer les onomatopées dites (${sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length})</button>` : ""}</div>
-      ${ovRows || tiRows || marks.length ? ovRows + tiRows : `<div class="card"><b>Habillez votre vidéo</b><p>Insérez une case de comic, une couverture ou un extrait : il s’affiche par-dessus la vidéo au moment choisi (tête de lecture, ou les mots sélectionnés dans Texte), en plein écran, en incrustation, ou avec vous en petit dans un coin. Ajoutez un bandeau « Nom · Thème du jour ».</p></div>`}` + bankCard();
+    body.innerHTML = `<div class="tiles">${([["ins", "🖼", "Image"], ["title", "🅣", "Bandeau"], ["chapter", "📖", "Chapitre"], ["timeline", "🗓", "Frise"], ["annot", "✏️", "Annoter"], ["sfx", "💥", "Onomatopée"], ["freezeAdd", "🔍", "Pause zoom"], ["safe", "📱", "Zones TikTok"]] as const).map(([a, i, l]) => `<button class="tile${a === "safe" && safeOn ? " on" : ""}" data-a="${a}"><span>${i}</span>${l}</button>`).join("")}</div><div class="row" style="padding:0 0 10px">${words && sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length ? `<button class="ib go" data-a="sfxAuto">💥 Placer les onomatopées dites (${sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length})</button>` : ""}</div>
+      ${ovRows || tiRows || marks.length ? ovRows + tiRows : `<div class="card"><b>Habillez votre vidéo</b><p>Insérez une case de comic, une couverture ou un extrait : il s’affiche par-dessus la vidéo au moment choisi (tête de lecture, ou les mots sélectionnés dans Texte), en plein écran, en incrustation, ou avec vous en petit dans un coin, et animez-la (glissé, pop, zoom…). « Zones TikTok » montre ce que l’appli TikTok recouvre.</p></div>`}` + bankCard();
   }
   /**
    * Cadrage du zoom : l'image (vidéo figée, extrait ou image) s'affiche ; on touche le détail à agrandir, on pince ou on glisse
@@ -475,14 +492,12 @@ export async function openEditor(o: EditorOptions) {
   function addTitle(kind: Title["kind"] = "lower") {
     const n = titles.filter((x) => x.kind === "chapter").length + 1;
     const ask = kind === "chapter" ? ["Chapitre — titre (ex. « Les origines de Venom »)", "Surtitre (ex. « Partie " + n + " »)", "Partie " + n]
-      : kind === "bubble" ? ["Bulle — la réplique (ex. « Je suis Batman ! »)", "Qui parle ? (facultatif, ex. « Batman, Year One »)", ""]
-      : kind === "card" ? ["Fiche personnage — le nom (ex. « Venom »)", "Lignes « champ : valeur » séparées par ; ", "Vrai nom : Eddie Brock ; Première apparition : 1988 ; Pouvoirs : symbiote ; Éditeur : Marvel"]
       : kind === "timeline" ? ["Frise — le titre (ex. « L’histoire de Venom »)", "Dates et événements séparés par ; ", "1984 Le costume noir ; 1988 Venom naît ; 2018 Le film"]
       : ["Bandeau — titre (ex. « Comics News »)", "Sous-titre (facultatif, ex. « Le nouveau Spider-Man »)", ""];
     const t = prompt(ask[0], "")?.trim(); if (!t) return;
     const sub = prompt(ask[1], ask[2])?.trim() || undefined;
     const nRows = (sub ?? "").split(/[;\n]/).filter((x) => x.trim()).length;
-    const start = video.currentTime, len = kind === "chapter" ? 2.6 : kind === "bubble" ? Math.min(7, Math.max(2.5, t.split(/\s+/).length * 0.45)) : kind === "card" ? 3 + nRows * 0.6 : kind === "timeline" ? 2.5 + nRows * 1.2 : 4;
+    const start = video.currentTime, len = kind === "chapter" ? 2.6 : kind === "timeline" ? 2.5 + nRows * 1.2 : 4;
     titles.push({ id: "ti" + Date.now().toString(36), text: t, sub, start, end: Math.min(duration, start + len), kind }); titles.sort((a, b) => a.start - b.start);
     titles.sort((a, b) => a.start - b.start); tab = "dress"; body.innerHTML = ""; commit();
   }
@@ -557,8 +572,8 @@ export async function openEditor(o: EditorOptions) {
       compose(g, w, h, t, ov, ov ? previewSrc(ov, t) : null, speaker, ov?.with ? ovSrc.get(ov.with)?.img ?? null : null);
       drawTitle(g, w, h, t, ti); for (const m of mk) drawMark(g, w, h, fz ? t + (performance.now() - fz.t0) / 1000 : t, m); g.restore();
     }
-    if (!lines.length || style.preset === "none") return;
-    drawCaption(g, (ccv.width - w) / 2, (ccv.height - h) / 2, w, h, lineAt(lines, video.currentTime), video.currentTime, style);
+    if (lines.length && style.preset !== "none") drawCaption(g, (ccv.width - w) / 2, (ccv.height - h) / 2, w, h, lineAt(lines, video.currentTime), video.currentTime, style);
+    if (safeOn) { g.save(); g.translate((ccv.width - w) / 2, (ccv.height - h) / 2); drawSafeZones(g, w, h); g.restore(); }
   }
 
   let selBar: HTMLElement | null = null;
@@ -902,14 +917,14 @@ export async function openEditor(o: EditorOptions) {
   /** Écoute comparée : 6 s à partir de la tête de lecture, son d'origine puis voix studio. */
   /** Miniature : image à la tête de lecture, assombrie en bas, grand titre sur 2–3 lignes (blanc / jaune, contour noir), légèrement penché. */
   async function thumbnail(text: string): Promise<Blob> {
-    const W = video.videoWidth || 1080, H = video.videoHeight || 1920, c = document.createElement("canvas"); c.width = W; c.height = H;
-    const g = c.getContext("2d")!; g.drawImage(video, 0, 0, W, H);
+    const W = 1080, H = 1920, c = document.createElement("canvas"); c.width = W; c.height = H;
+    const g = c.getContext("2d")!, vw = video.videoWidth || W, vh = video.videoHeight || H, k = Math.max(W / vw, H / vh); g.drawImage(video, (W - vw * k) / 2, (H - vh * k) / 2, vw * k, vh * k);
     const gr = g.createLinearGradient(0, H * 0.45, 0, H); gr.addColorStop(0, "rgba(0,0,0,0)"); gr.addColorStop(1, "rgba(0,0,0,.88)"); g.fillStyle = gr; g.fillRect(0, H * 0.45, W, H * 0.55);
     await document.fonts?.ready;
     let fs = W * 0.13; const FONT = "'Inter Variable', system-ui, sans-serif", T = text.toUpperCase();
     const wrapL = () => { g.font = `900 ${fs}px ${FONT}`; const out: string[] = []; let l = ""; for (const w of T.split(/\s+/)) { const tr = l ? l + " " + w : w; if (l && g.measureText(tr).width > W * 0.88) { out.push(l); l = w; } else l = tr; } if (l) out.push(l); return out; };
     let lines = wrapL(); while (lines.length > 3 && fs > W * 0.07) { fs *= 0.9; lines = wrapL(); }
-    g.save(); g.translate(W / 2, H * 0.8); g.rotate(-0.035); g.textAlign = "center"; g.textBaseline = "middle"; g.lineJoin = "round";
+    g.save(); g.translate(W / 2, H * 0.68); g.rotate(-0.035); // dans le recadrage 3:4 de la grille du profil TikTok g.textAlign = "center"; g.textBaseline = "middle"; g.lineJoin = "round";
     const lh = fs * 1.05, top = -((lines.length - 1) * lh) / 2;
     lines.forEach((l, i) => { g.lineWidth = fs * 0.2; g.strokeStyle = "#000"; g.strokeText(l, 0, top + i * lh); g.fillStyle = i % 2 ? "#ffd60a" : "#fff"; g.fillText(l, 0, top + i * lh); });
     g.restore();
@@ -930,13 +945,13 @@ export async function openEditor(o: EditorOptions) {
     let temp = 0.6;
     const show = (d: import("../core/writer.ts").Draft) => {
       const row = (label: string, v: string) => v ? `<div class="sg" style="margin:6px 0"><div class="t"><b>${label}</b><div style="white-space:pre-wrap">${esc(v)}</div></div><button class="ib" data-copy="${esc(v)}">Copier</button></div>` : "";
-      const all = [d.titles[0], "", d.description, "", d.hashtags.join(" ")].filter((x) => x != null).join("\n").trim();
+      const all = [d.description, d.hashtags.join(" ")].filter(Boolean).join(" ").trim();
       st.textContent = d.by === "ia" ? "Rédigé par Gemini Nano, sur votre téléphone." : "Version simple (l’IA de Google n’est pas disponible sur cet appareil).";
-      res.innerHTML = d.titles.map((t, i) => row(`Titre ${i + 1}`, t)).join("") + row("Description", d.description) + row("Hashtags", d.hashtags.join(" "))
+      res.innerHTML = row("Légende TikTok", d.description) + d.titles.map((t, i) => row(`Texte de couverture ${i + 1}`, t)).join("") + row("Hashtags", d.hashtags.join(" "))
         + row("Accroche (à dire en premier)", d.hook)
         + (d.hook && findPhrase(words!, d.hook).length ? `<div class="row" style="padding:0 0 6px"><button class="ib ${hook ? "go" : ""}" data-x="hook" data-v="${esc(d.hook)}">${hook ? "✓ Accroche en ouverture (toucher pour retirer)" : "🎣 Rejouer cette phrase en ouverture"}</button></div>` : "")
-        + `<div class="row" style="padding:6px 0 0"><button class="ib" data-x="thumb" data-v="${esc(d.titles[0] ?? "")}">🖼 Miniature avec ce titre</button></div>`
-        + `<div class="row" style="padding:6px 0 0"><button class="ib go" data-copy="${esc(all)}">Copier titre + description + hashtags</button>${N.isNative() ? `<button class="ib" data-x="share" data-v="${esc(all)}">Partager</button>` : ""}</div>`;
+        + `<div class="row" style="padding:6px 0 0"><button class="ib" data-x="thumb" data-v="${esc(d.titles[0] ?? "")}">🖼 Couverture TikTok avec ce texte</button></div>`
+        + `<div class="row" style="padding:6px 0 0"><button class="ib go" data-copy="${esc(all)}">Copier légende + hashtags</button>${N.isNative() ? `<button class="ib" data-x="share" data-v="${esc(all)}">Partager</button>` : ""}</div>`;
       m.querySelector<HTMLElement>("[data-x=again]")!.hidden = d.by !== "ia";
     };
     const run = async () => {
@@ -998,30 +1013,28 @@ export async function openEditor(o: EditorOptions) {
   /* ---------- Export ---------- */
   /** Options d'export (mémorisées), puis lancement. */
   const TRANS: [Transition, string][] = [["none", "Aucun"], ["punch", "Coup de zoom"], ["flash", "Flash blanc"], ["whip", "Glissé"]];
-  const ASPECTS: [Aspect, string][] = [["source", "Original"], ["9:16", "9:16 TikTok"], ["1:1", "1:1 carré"], ["16:9", "16:9 YouTube"]];
   let trans = ((): Transition => { try { return (localStorage.getItem("gs.trans") as Transition) || "none"; } catch { return "none"; } })();
-  let aspect = ((): Aspect => { try { return (localStorage.getItem("gs.aspect") as Aspect) || "source"; } catch { return "source"; } })();
+  const aspect: Aspect = "9:16"; // TikTok : toujours en vertical (une vidéo horizontale est posée sur un fond flouté)
   function doExport() {
     video.pause();
     const m = document.createElement("div"); m.className = "modal";
     const cc = !words ? "aucun (pas de transcription)" : style.preset === "none" ? "désactivés" : PRESETS[style.preset] + (capLang === "en" ? (enWords ? " · anglais" : " · anglais (traduction pas prête : français)") : "");
-    m.innerHTML = `<div class="card"><b>Exporter le montage</b><p>${fmt(session.editedDuration)} · ${session.cuts.length} coupe(s)</p>
+    m.innerHTML = `<div class="card"><b>Exporter pour TikTok</b><p>${fmt(session.editedDuration)} · ${session.cuts.length} coupe(s) · 9:16 · MP4 H.264${session.editedDuration > 60 ? " · plus d’1 min : pensez à une accroche forte" : ""}</p>
       <div class="opt">Sous-titres : ${esc(cc)} ${words ? `<button class="ib" data-x="cc">Modifier</button>` : ""}</div>
       <label class="opt"><input type="checkbox" data-x="zooms" ${zooms ? "checked" : ""}> Zooms dynamiques (à chaque coupe et fin de phrase)</label>
       <label class="opt"><input type="checkbox" data-x="voice" ${voice ? "checked" : ""}> Voix studio (bruit, écho, voix plus claire)</label>
       <label class="opt"><input type="checkbox" data-x="norm" ${norm ? "checked" : ""}> Volume optimisé pour les réseaux (≈ −14 LUFS)</label>
-      <label class="opt"><input type="checkbox" data-x="q720" ${q720 ? "checked" : ""}> 720p (fichier ~2× plus léger)</label>
-      <div class="opt">Effet aux coupes <div class="chips" style="margin-top:6px">${TRANS.map(([k, l]) => `<button class="ib" data-tr="${k}" aria-pressed="${trans === k}">${l}</button>`).join("")}</div></div>
-      <div class="opt">Format <div class="chips" style="margin-top:6px">${ASPECTS.map(([k, l]) => `<button class="ib" data-ar="${k}" aria-pressed="${aspect === k}">${l}</button>`).join("")}</div></div>
+      <label class="opt"><input type="checkbox" data-x="q720" ${q720 ? "checked" : ""}> 720p (envoi plus rapide, TikTok préfère 1080p)</label>
+      <div class="opt col">Effet aux coupes <div class="chips">${TRANS.map(([k, l]) => `<button class="ib" data-tr="${k}" aria-pressed="${trans === k}">${l}</button>`).join("")}</div></div>
+
       <div class="row" style="padding:0"><button class="ib go" data-x="run">Exporter</button><button class="ib" data-x="no">Annuler</button></div></div>`;
     root.appendChild(m);
-    m.addEventListener("click", (e) => { const b = (e.target as HTMLElement).closest<HTMLElement>("[data-tr],[data-ar]"); if (!b) return;
-      const at = b.dataset.tr ? "data-tr" : "data-ar"; m.querySelectorAll(`[${at}]`).forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
-      if (b.dataset.tr) trans = b.dataset.tr as Transition; else aspect = b.dataset.ar as Aspect; });
+    m.addEventListener("click", (e) => { const b = (e.target as HTMLElement).closest<HTMLElement>("[data-tr]"); if (!b) return;
+      m.querySelectorAll("[data-tr]").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); trans = b.dataset.tr as Transition; });
     m.querySelector<HTMLElement>("[data-x=no]")!.onclick = () => m.remove();
     const ccb = m.querySelector<HTMLElement>("[data-x=cc]"); if (ccb) ccb.onclick = () => { m.remove(); tab = "cc"; body.innerHTML = ""; refresh(); };
     m.querySelector<HTMLElement>("[data-x=run]")!.onclick = () => {
-      norm = m.querySelector<HTMLInputElement>("[data-x=norm]")!.checked; voice = m.querySelector<HTMLInputElement>("[data-x=voice]")!.checked; zooms = m.querySelector<HTMLInputElement>("[data-x=zooms]")!.checked; q720 = m.querySelector<HTMLInputElement>("[data-x=q720]")!.checked; try { localStorage.setItem("gs.trans", trans); localStorage.setItem("gs.aspect", aspect); } catch { /* */ } save(); m.remove(); runExport();
+      norm = m.querySelector<HTMLInputElement>("[data-x=norm]")!.checked; voice = m.querySelector<HTMLInputElement>("[data-x=voice]")!.checked; zooms = m.querySelector<HTMLInputElement>("[data-x=zooms]")!.checked; q720 = m.querySelector<HTMLInputElement>("[data-x=q720]")!.checked; try { localStorage.setItem("gs.trans", trans); } catch { /* */ } save(); m.remove(); runExport();
     };
   }
   async function runExport(auto = false) {
@@ -1134,9 +1147,8 @@ export async function openEditor(o: EditorOptions) {
       case "ins": q<HTMLInputElement>("[data-r=ovFile]").click(); break;
       case "title": addTitle(); break;
       case "chapter": addTitle("chapter"); break;
-      case "bubble": addTitle("bubble"); break;
-      case "card": addTitle("card"); break;
       case "timeline": addTitle("timeline"); break;
+      case "safe": safeOn = !safeOn; try { localStorage.setItem("gs.safe", safeOn ? "1" : "0"); } catch { /* */ } body.innerHTML = ""; refresh(); drawCC(); break;
       case "oanim": case "owith": case "olabels": {
         const ov = overlays.find((x) => x.id === t.closest<HTMLElement>("[data-o]")?.dataset.o); if (!ov) break;
         if (a === "oanim") { const v = t.dataset.v as OverlayAnim; if (v === "none") delete ov.anim; else ov.anim = v; if (video.paused) { seek(Math.max(0, ov.start - 0.3)); video.play().catch(() => {}); stopAt = Math.min(duration, ov.start + 1.6); } }

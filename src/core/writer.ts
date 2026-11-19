@@ -15,15 +15,15 @@ const fold = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,
 /** Consigne pour le modèle (court : Gemini Nano a une petite fenêtre). */
 export function buildPrompt(transcript: string): string {
   const t = transcript.replace(/\s+/g, " ").trim().slice(0, 2400);
-  return `Tu es un expert des vidéos courtes (TikTok, Reels, Shorts). Voici la transcription d'une vidéo en français :
+  return `Tu es un expert TikTok (vidéos comics : théories, histoires, explications). Voici la transcription d'une vidéo en français :
 """${t}"""
 Écris en français, sans inventer de faits absents de la transcription. Réponds EXACTEMENT avec ces 6 lignes, rien d'autre :
-TITRE1: (titre accrocheur, 60 caractères max)
-TITRE2: (autre angle)
-TITRE3: (question qui intrigue)
-DESCRIPTION: (2 phrases qui donnent envie de regarder)
-HASHTAGS: (6 hashtags pertinents séparés par des espaces)
-ACCROCHE: (la phrase de la transcription la plus forte pour commencer la vidéo, recopiée telle quelle)`;
+TITRE1: (texte de couverture TikTok, 6 mots max, intrigant)
+TITRE2: (autre texte de couverture, autre angle)
+TITRE3: (texte de couverture en question)
+DESCRIPTION: (légende TikTok de 150 caractères max, qui finit par une question pour faire réagir en commentaire)
+HASHTAGS: (5 hashtags : 3 précis sur le sujet, puis #comics et #pourtoi)
+ACCROCHE: (la phrase de la transcription la plus forte pour ouvrir la vidéo, recopiée telle quelle)`;
 }
 
 /** Lit la réponse du modèle ; null si elle est inutilisable. */
@@ -51,14 +51,16 @@ export function localDraft(transcript: string): Draft {
   }
   const top = [...freq.values()].sort((a, b) => b.n - a.n || b.w.length - a.w.length).slice(0, 6);
   const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-  const hashtags = top.map((t) => "#" + fold(t.w).replace(/[^a-z0-9]/g, "")).filter((h) => h.length > 2);
+  const hashtags = top.map((t) => "#" + fold(t.w).replace(/[^a-z0-9]/g, "")).filter((h) => h.length > 2).slice(0, 3);
   const ss = sentences(transcript);
   // accroche : parmi les 5 premières phrases, celle avec question / chiffre / mot fort, courte de préférence
   const strong = /\?|!|\d|jamais|toujours|secret|erreur|pourquoi|comment|incroyable|meilleur|pire|personne|vrai|faux/i;
   const hook = [...ss.slice(0, 5)].sort((a, b) => (strong.test(b) ? 1 : 0) - (strong.test(a) ? 1 : 0) || a.length - b.length)[0] ?? ss[0] ?? "";
   const k = top.map((t) => cap(t.w));
-  const titles = k.length ? [k.slice(0, 3).join(", "), `${k[0]} : ce qu'il faut savoir`, `Et si on parlait de ${/^\p{Lu}/u.test(top[0].w) ? top[0].w : top[0].w.toLowerCase()} ?`] : []; // nom propre : majuscule gardée
-  const description = ss.slice(0, 2).join(" ").slice(0, 220);
+  const titles = k.length ? [`${k[0]} : la vérité`, `Ce que personne ne dit sur ${k[0]}`, `${k[0]} : vous saviez ?`] : []; // nom propre : majuscule gardée
+  const q = ss.find((s) => s.endsWith("?")), base = ss[0] ?? "";
+  const description = ((base.length > 110 ? base.slice(0, 107).replace(/\s+\S*$/, "") + "…" : base) + " " + (q && q !== base ? q : "Et vous, vous en pensez quoi ? 👇")).trim().slice(0, 150);
+  for (const h of ["#comics", "#pourtoi"]) if (!hashtags.includes(h)) hashtags.push(h);
   return { titles, description, hashtags, hook, by: "local" };
 }
 

@@ -1,9 +1,9 @@
-// Test navigateur « Animations, Avant / Après, fiche, frise, format, effets de coupe » : node tests/browser/anim.e2e.cjs (serveur `npx vite --port 5173` lancé).
+// Test navigateur « Animations, Avant / Après, frise, zones TikTok, effets de coupe » : node tests/browser/anim.e2e.cjs (serveur `npx vite --port 5173` lancé).
 const { chromium } = require('playwright'); const assert = require('assert');
 (async () => {
   const b = await chromium.launch(); const ctx = await b.newContext({ viewport: { width: 412, height: 915 } }); const p = await ctx.newPage(); const errs = [];
   p.on('pageerror', (e) => errs.push(e.message));
-  p.on('dialog', (d) => { const m = d.message(); d.accept(/Étiquettes/.test(m) ? 'Comic / Film' : /Fiche/.test(m) ? 'Venom' : /Frise/.test(m) ? 'Histoire' : /séparé/.test(m) ? d.defaultValue() : 'x'); });
+  p.on('dialog', (d) => { const m = d.message(); d.accept(/Étiquettes/.test(m) ? 'Comic / Film' : /Frise/.test(m) ? 'Histoire' : /séparé/.test(m) ? d.defaultValue() : 'x'); });
   await ctx.addInitScript(() => { localStorage.setItem('gs.autoClean', '0'); localStorage.setItem('gs.onb', '1'); });
   await p.goto('http://localhost:5173/');
   const [vid, mag, cyan] = await p.evaluate(async () => {
@@ -29,29 +29,29 @@ const { chromium } = require('playwright'); const assert = require('assert');
   await p.click(`.qe [data-o="${oid}"] [data-a=omode][data-v=compare]`);
   await p.setInputFiles('.qe [data-r=withFile]', { name: 'c.png', mimeType: 'image/png', buffer: Buffer.from(cyan, 'base64') });
   await p.waitForSelector(`.qe [data-o="${oid}"] [data-a=olabels]`); await p.click(`.qe [data-o="${oid}"] [data-a=olabels]`);
-  // 3. fiche personnage à 3 s, frise à 7,5 s
-  await at(3); await p.click('.qe [data-a=card]'); await p.waitForSelector('.qe [data-ti]');
-  await at(7.4); await p.click('.qe [data-a=timeline]'); await p.waitForFunction(() => document.querySelectorAll('.qe [data-ti]').length === 2);
+  // 3. frise à 7,4 s ; bulle et fiche retirées de l'appli
+  assert.equal(await p.$('.qe [data-a=bubble]'), null); assert.equal(await p.$('.qe [data-a=card]'), null);
+  await at(7.4); await p.click('.qe [data-a=timeline]'); await p.waitForSelector('.qe [data-ti]');
+  await p.click('.qe [data-a=safe]'); assert.ok(await p.$('.qe .tile.on[data-a=safe]'), 'zones TikTok affichées');
   const saved = await p.evaluate(() => JSON.parse(localStorage.getItem(Object.keys(localStorage).find((k) => k.startsWith('gs.qe.')))));
   console.log('habillage :', JSON.stringify(saved.overlays.map((o) => [o.mode, o.anim, !!o.with, o.labels])), JSON.stringify(saved.titles.map((t) => [t.kind, t.text, t.sub])));
   assert.equal(saved.overlays[0].anim, 'slideL'); assert.ok(saved.overlays[1].with && saved.overlays[1].labels[1] === 'Film');
-  assert.equal(saved.titles[0].kind, 'card'); assert.match(saved.titles[0].sub, /Eddie Brock/); assert.equal(saved.titles[1].kind, 'timeline'); assert.match(saved.titles[1].sub, /1988/);
-  // 4. export 16:9 avec flash blanc aux coupes
-  await p.click('.qe [data-a=export]'); await p.click('.qe .modal [data-ar="16:9"]'); await p.click('.qe .modal [data-tr=flash]'); await p.click('.qe .modal [data-x=run]');
+  assert.equal(saved.titles.length, 1); assert.equal(saved.titles[0].kind, 'timeline'); assert.match(saved.titles[0].sub, /1988/);
+  // 4. export TikTok (9:16) avec flash blanc aux coupes
+  await p.click('.qe [data-a=export]'); assert.equal(await p.$('.qe .modal [data-ar]'), null); await p.click('.qe .modal [data-tr=flash]'); await p.click('.qe .modal [data-x=run]');
   await p.waitForSelector('.qe .modal a[download]', { timeout: 120000 });
   const r = await p.evaluate(async () => {
     const a = document.querySelector('.qe .modal a[download]'), bl = await (await fetch(a.href)).blob(), mb = await import('/node_modules/.vite/deps/mediabunny.js');
     const i = new mb.Input({ source: new mb.BlobSource(bl), formats: mb.ALL_FORMATS }), sink = new mb.VideoSampleSink(await i.getPrimaryVideoTrack());
     const shot = async (t) => { const s = await sink.getSample(t), c = new OffscreenCanvas(s.displayWidth, s.displayHeight), g = c.getContext('2d'); s.draw(g, 0, 0); s.close(); return { c, g }; };
     const px = (o, fx, fy) => [...o.g.getImageData(Math.round(o.c.width * fx), Math.round(o.c.height * fy), 1, 1).data.slice(0, 3)];
-    const s0 = await shot(1.05), s1 = await shot(2.2), s2 = await shot(5.9), s3 = await shot(3.6);
+    const s0 = await shot(1.05), s1 = await shot(2.2), s2 = await shot(5.9);
     return { w: s0.c.width, h: s0.c.height, entreeGauche: px(s0, 0.36, 0.5), entreeDroite: px(s0, 0.6, 0.5), pose: px(s1, 0.5, 0.5), bord: px(s1, 0.08, 0.5),
-      avant: px(s2, 0.42, 0.6), apres: px(s2, 0.58, 0.6), fiche: px(s3, 0.5, 0.2) };
+      avant: px(s2, 0.42, 0.6), apres: px(s2, 0.58, 0.6) };
   });
   console.log('export :', JSON.stringify(r));
   const isMag = (c) => c[0] > 170 && c[1] < 100 && c[2] > 170, isCyan = (c) => c[0] < 90 && c[1] > 160 && c[2] > 160;
-  assert.ok(r.w > r.h, 'format 16:9'); assert.ok(Math.abs(r.w / r.h - 16 / 9) < 0.02);
-  assert.ok(!isMag(r.bord), 'bord : fond flouté, pas la vidéo');
+  assert.ok(Math.abs(r.w / r.h - 9 / 16) < 0.02, 'format 9:16');
   assert.ok(isMag(r.pose), 'image posée au centre'); assert.ok(!isMag(r.entreeDroite), "pendant l'entrée, la droite n'est pas encore couverte");
   assert.ok(isMag(r.avant) && isCyan(r.apres), 'avant / après côte à côte');
   console.log('erreurs :', errs); assert.equal(errs.length, 0); console.log('OK'); await b.close();

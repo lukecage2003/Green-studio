@@ -4,7 +4,7 @@ import type { Range, Word } from "./timeline.ts";
 
 export type CaptionPreset = "none" | "karaoke" | "box" | "word" | "simple";
 export interface CaptionStyle { preset: CaptionPreset; pos: number; upper: boolean; color: string; strong?: boolean } // strong : mots forts en couleur
-export const CAPTION_DEFAULT: CaptionStyle = { preset: "karaoke", pos: 0.72, upper: false, color: "#34e08b" };
+export const CAPTION_DEFAULT: CaptionStyle = { preset: "karaoke", pos: 0.66, upper: false, color: "#34e08b" };
 export const PRESETS: Record<CaptionPreset, string> = { none: "Aucun", karaoke: "Karaoké", word: "Mot par mot", box: "Encadré", simple: "Simple" };
 
 export interface CapLine { start: number; end: number; words: (Word & { em?: boolean })[] } // em : mot fort (nom propre, chiffre, mot du dictionnaire)

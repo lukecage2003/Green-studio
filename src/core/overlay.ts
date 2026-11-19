@@ -90,7 +90,7 @@ function drawCompare(ctx: Ctx, W: number, H: number, t: number, ov: Overlay, a: 
   const rB = W * 0.075; ctx.beginPath(); ctx.arc(xs, H * 0.5, rB, 0, Math.PI * 2); ctx.fillStyle = "#111"; ctx.fill(); ctx.lineWidth = W * 0.008; ctx.strokeStyle = "#fff"; ctx.stroke();
   ctx.fillStyle = "#fff"; ctx.font = `900 ${rB * 0.75}px ${FONT}`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("VS", xs, H * 0.5);
   const [la, lb] = ov.labels ?? ["AVANT", "APRÈS"], fs = W * 0.05; ctx.font = `900 ${fs}px ${FONT}`;
-  const tag = (txt: string, cx: number, col: string) => { const tw = ctx.measureText(txt).width + fs; rounded(ctx, cx - tw / 2, H * 0.07, tw, fs * 1.6, fs * 0.5); ctx.fillStyle = col; ctx.fill(); ctx.fillStyle = "#fff"; ctx.fillText(txt, cx, H * 0.07 + fs * 0.8); };
+  const tag = (txt: string, cx: number, col: string) => { const tw = ctx.measureText(txt).width + fs; const ty = H * (TIKTOK_SAFE.top + 0.02); rounded(ctx, cx - tw / 2, ty, tw, fs * 1.6, fs * 0.5); ctx.fillStyle = col; ctx.fill(); ctx.fillStyle = "#fff"; ctx.fillText(txt, cx, ty + fs * 0.8); };
   if (la) tag(la.toUpperCase(), xs / 2, "rgba(232,32,42,.92)"); if (lb && b) tag(lb.toUpperCase(), xs + (W - xs) / 2, "rgba(10,132,255,.92)");
   ctx.restore();
 }
@@ -100,8 +100,23 @@ export const clipTime = (ov: Overlay, t: number) => Math.max(0, Math.min(t - ov.
 /** Progression du zoom d'un extrait à l'instant t (le zoom démarre au gel, sinon 0,3 s après l'apparition). */
 export const overlayZoomK = (ov: Overlay, t: number) => (ov.zoom ? zoomEase(t - ov.start - (ov.kind === "video" && ov.freeze != null ? ov.freeze : 0.3)) : 0);
 /** kind : bandeau (bas gauche), chapitre (carton plein écran), bulle (citation façon comic). */
-/** card : fiche personnage (sub = « champ : valeur ; … ») ; timeline : frise (sub = « 1962 Création ; 1984 Secret Wars ; … »). */
-export interface Title { id: string; text: string; sub?: string; start: number; end: number; kind?: "lower" | "chapter" | "bubble" | "card" | "timeline" }
+/** timeline : frise (sub = « 1962 Création ; 1984 Secret Wars ; … »). */
+export interface Title { id: string; text: string; sub?: string; start: number; end: number; kind?: "lower" | "chapter" | "timeline" }
+/**
+ * Zones masquées par l'interface TikTok (fractions de l'image 9:16) : onglets en haut, boutons à droite, légende en bas.
+ * Tout ce que l'application place (bandeaux, sous-titres, incrustations) reste en dehors.
+ */
+export const TIKTOK_SAFE = { top: 0.11, bottom: 0.2, right: 0.15, rightFrom: 0.42 };
+/** Dessine les zones TikTok (aperçu seulement) : ce qui est sous ces zones sera caché par l'appli TikTok. */
+export function drawSafeZones(ctx: Ctx, W: number, H: number) {
+  const s = TIKTOK_SAFE; ctx.save(); ctx.fillStyle = "rgba(255,45,85,.22)"; ctx.strokeStyle = "rgba(255,45,85,.8)"; ctx.lineWidth = Math.max(1, W * 0.004); ctx.setLineDash([W * 0.015, W * 0.012]);
+  const box = (x: number, y: number, w: number, h: number) => { ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h); };
+  box(0, 0, W, H * s.top); box(0, H * (1 - s.bottom), W, H * s.bottom); box(W * (1 - s.right), H * s.rightFrom, W * s.right, H * (1 - s.bottom - s.rightFrom));
+  ctx.setLineDash([]); ctx.fillStyle = "rgba(255,255,255,.9)"; ctx.font = `700 ${W * 0.032}px ${FONT}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("Onglets TikTok", W / 2, H * s.top / 2); ctx.fillText("Légende · musique", W / 2, H * (1 - s.bottom / 2));
+  ctx.save(); ctx.translate(W * (1 - s.right / 2), H * (s.rightFrom + (1 - s.bottom - s.rightFrom) / 2)); ctx.rotate(-Math.PI / 2); ctx.fillText("♥  💬  ↗", 0, 0); ctx.restore();
+  ctx.restore();
+}
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 type Src = CanvasImageSource & { width?: number; height?: number; videoWidth?: number; videoHeight?: number; displayWidth?: number; displayHeight?: number };
@@ -138,7 +153,7 @@ export function compose(ctx: Ctx, W: number, H: number, t: number, ov: Overlay |
   const a = fadeIn(ov, t), kb = ov.freeze != null && t - ov.start >= ov.freeze ? Math.min(1, ov.freeze / Math.max(0.1, ov.end - ov.start)) : Math.min(1, Math.max(0, (t - ov.start) / Math.max(0.1, ov.end - ov.start))), zk = overlayZoomK(ov, t);
   if (ov.mode === "pip") {
     speaker(0, 0, W, H);
-    const w = W * 0.88, h = Math.min(H * 0.42, w * 0.75), x = (W - w) / 2, y = H * 0.1 + (1 - a) * H * 0.03, r = W * 0.05;
+    const w = W * 0.88, h = Math.min(H * 0.42, w * 0.75), x = (W - w) / 2, y = H * (TIKTOK_SAFE.top + 0.02) + (1 - a) * H * 0.03, r = W * 0.05;
     ctx.save(); ctx.globalAlpha = a; ctx.shadowColor = "rgba(0,0,0,.45)"; ctx.shadowBlur = W * 0.05; ctx.shadowOffsetY = W * 0.015;
     withAnim(ctx, ov, t, x, y, w, h, () => {
       ctx.save(); rounded(ctx, x, y, w, h, r); ctx.fillStyle = "#000"; ctx.fill(); ctx.shadowColor = "transparent";
@@ -153,7 +168,7 @@ export function compose(ctx: Ctx, W: number, H: number, t: number, ov: Overlay |
   if (a < 1 || moving) speaker(0, 0, W, H); // l'image bouge : la personne reste visible derrière
   ctx.save(); ctx.globalAlpha = a; withAnim(ctx, ov, t, 0, 0, W, H, () => { if (moving) { ctx.shadowColor = "rgba(0,0,0,.55)"; ctx.shadowBlur = W * 0.04; } drawCover(ctx, src, 0, 0, W, H, pz ? 0 : kb, pz ?? ov.zoom, pz ? 1 : zk); }); ctx.restore();
   if (ov.mode === "me") {
-    const w = W * 0.36, h = w * 16 / 9, x = W - w - W * 0.05, y = H - h - H * 0.16, r = W * 0.06;
+    const w = W * 0.36, h = w * 16 / 9, x = W * 0.05, y = H * (1 - TIKTOK_SAFE.bottom) - h - H * 0.02, r = W * 0.06;
     ctx.save(); ctx.globalAlpha = a; ctx.shadowColor = "rgba(0,0,0,.5)"; ctx.shadowBlur = W * 0.05;
     rounded(ctx, x, y, w, h, r); ctx.fillStyle = "#000"; ctx.fill(); ctx.shadowColor = "transparent";
     rounded(ctx, x, y, w, h, r); ctx.clip(); speaker(x, y, w, h); ctx.restore();
@@ -181,52 +196,12 @@ function drawChapter(ctx: Ctx, W: number, H: number, t: number, ti: Title, accen
   ctx.fillStyle = accent; const bw = W * 0.18 * a; ctx.fillRect(-bw / 2, top + (lines.length - 1) * lh + fs * 0.85, bw, W * 0.012);
   ctx.restore();
 }
-/** Bulle de citation façon comic : bulle blanche à contour noir, pointe vers le bas, texte en capitales ; « pop » à l'apparition. */
-function drawBubble(ctx: Ctx, W: number, H: number, t: number, ti: Title) {
-  const a = fadeIn(ti, t, 0.18), age = t - ti.start, pop = age < 0.25 ? 0.85 + 0.15 * Math.sin((age / 0.25) * Math.PI / 2) * 1.08 : 1;
-  const fs = W * 0.056, pad = W * 0.04, maxW = W * 0.6;
-  ctx.save(); ctx.globalAlpha = a; ctx.font = `italic 900 ${fs}px ${FONT}`;
-  const lines = wrap(ctx, ti.text.toUpperCase(), maxW), lh = fs * 1.18, tw = Math.max(...lines.map((l) => ctx.measureText(l).width));
-  const sub = ti.sub ? `— ${ti.sub}` : "", sfs = fs * 0.62; ctx.font = `700 ${sfs}px ${FONT}`; const sw = sub ? ctx.measureText(sub).width : 0;
-  const bw = Math.max(tw, sw) + pad * 2, bh = lines.length * lh + (sub ? sfs * 1.6 : 0) + pad, rx = Math.min(W * 0.48, (bw / 2) * 1.32), ry = (bh / 2) * 1.38, cx = W / 2, cy = H * 0.05 + ry;
-  ctx.translate(cx, cy); ctx.scale(pop, pop);
-  ctx.lineWidth = W * 0.008; ctx.strokeStyle = "#111"; ctx.fillStyle = "#fff"; ctx.lineJoin = "round";
-  ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
-  ctx.moveTo(-rx * 0.12, ry * 0.96); ctx.lineTo(-rx * 0.3, ry + pad * 1.8); ctx.lineTo(rx * 0.1, ry * 0.97);
-  ctx.fill(); ctx.stroke();
-  ctx.beginPath(); ctx.ellipse(0, 0, rx - ctx.lineWidth, ry - ctx.lineWidth, 0, 0, Math.PI * 2); ctx.fill(); // recouvre la base de la pointe
-  ctx.fillStyle = "#111"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.font = `italic 900 ${fs}px ${FONT}`;
-  const top = -bh / 2 + pad * 0.5 + lh / 2; lines.forEach((l, i) => ctx.fillText(l, 0, top + i * lh));
-  if (sub) { ctx.font = `700 ${sfs}px ${FONT}`; ctx.fillStyle = "#444"; ctx.fillText(sub, 0, top + lines.length * lh + sfs * 0.3); }
-  ctx.restore();
-}
-/** Fiche personnage : carte en verre sombre, nom en grand, lignes « champ : valeur » qui apparaissent une à une. */
-function drawCard(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
-  const a = fadeIn(ti, t, 0.3), e = spring(t - ti.start, 0.5, 0.25), rows = (ti.sub ?? "").split(/[;\n]/).map((x) => x.trim()).filter(Boolean).slice(0, 6);
-  const fs = W * 0.07, rfs = W * 0.04, pad = W * 0.05, cw = W * 0.84, ch = fs * 1.7 + rows.length * rfs * 1.75 + pad * 0.7, x = (W - cw) / 2 - (1 - e) * W, y = H * 0.12;
-  ctx.save(); ctx.globalAlpha = a; ctx.shadowColor = "rgba(0,0,0,.5)"; ctx.shadowBlur = W * 0.05;
-  rounded(ctx, x, y, cw, ch, W * 0.05); ctx.fillStyle = "rgba(16,16,20,.82)"; ctx.fill(); ctx.shadowColor = "transparent";
-  ctx.lineWidth = W * 0.004; ctx.strokeStyle = "rgba(255,255,255,.2)"; ctx.stroke();
-  ctx.fillStyle = accent; ctx.fillRect(x, y + W * 0.05, W * 0.012, fs * 1.2);
-  ctx.textBaseline = "middle"; ctx.fillStyle = "#fff"; ctx.font = `900 ${fs}px ${FONT}`; ctx.fillText(ti.text.toUpperCase(), x + pad, y + pad * 0.6 + fs * 0.6, cw - pad * 2);
-  ctx.font = `700 ${rfs}px ${FONT}`;
-  const col = Math.min(cw * 0.55, Math.max(cw * 0.25, ...rows.map((r) => (r.includes(":") ? ctx.measureText(r.split(":")[0].trim()).width : 0))) + rfs * 0.9);
-  rows.forEach((row, i) => {
-    const ra = Math.min(1, Math.max(0, (t - ti.start - 0.35 - i * 0.22) / 0.25)); if (ra <= 0) return;
-    const [k, ...v] = row.split(":"), ry = y + pad * 0.6 + fs * 1.55 + i * rfs * 1.75 + rfs * 0.5;
-    ctx.save(); ctx.globalAlpha = a * ra; ctx.translate((1 - ra) * W * 0.05, 0);
-    ctx.font = `700 ${rfs}px ${FONT}`; ctx.fillStyle = "rgba(235,235,245,.6)"; ctx.fillText(v.length ? k.trim() : "•", x + pad, ry);
-    ctx.font = `800 ${rfs}px ${FONT}`; ctx.fillStyle = "#fff"; ctx.fillText(v.length ? v.join(":").trim() : k.trim(), x + pad + (v.length ? col : rfs * 1.2), ry, cw - pad * 2 - (v.length ? col : rfs * 1.2));
-    ctx.restore();
-  });
-  ctx.restore();
-}
 /** Frise chronologique : ligne qui se trace, points datés qui apparaissent un à un (sub = « 1962 Création ; 1984 … »). */
 function drawTimeline(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
   const a = fadeIn(ti, t, 0.3), ev = (ti.sub ?? "").split(/[;\n]/).map((x) => x.trim()).filter(Boolean).slice(0, 6), n = Math.max(1, ev.length);
   const dur = Math.max(1, (ti.end - ti.start) * 0.7), y0 = H * 0.22, y1 = H * 0.22 + (n - 1) * H * 0.12, x0 = W * 0.16, p = Math.min(1, (t - ti.start) / dur);
   ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = "rgba(0,0,0,.45)"; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = "#fff"; ctx.font = `900 ${W * 0.065}px ${FONT}`; ctx.textBaseline = "middle"; ctx.fillText(ti.text.toUpperCase(), x0 - W * 0.06, H * 0.11, W * 0.86);
+  ctx.fillStyle = "#fff"; ctx.font = `900 ${W * 0.065}px ${FONT}`; ctx.textBaseline = "middle"; ctx.fillText(ti.text.toUpperCase(), x0 - W * 0.06, H * 0.155, W * 0.8);
   ctx.strokeStyle = "rgba(255,255,255,.35)"; ctx.lineWidth = W * 0.008; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0, y1); ctx.stroke();
   ctx.strokeStyle = accent; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0, y0 + (y1 - y0) * p); ctx.stroke();
   ev.forEach((e1, i) => {
@@ -242,15 +217,15 @@ function drawTimeline(ctx: Ctx, W: number, H: number, t: number, ti: Title, acce
 }
 export function drawTitle(ctx: Ctx, W: number, H: number, t: number, ti: Title | null, accent = "#30d158") {
   if (!ti || !ti.text.trim()) return;
-  if (ti.kind === "card") return drawCard(ctx, W, H, t, ti, accent);
   if (ti.kind === "timeline") return drawTimeline(ctx, W, H, t, ti, accent);
   if (ti.kind === "chapter") return drawChapter(ctx, W, H, t, ti, accent);
-  if (ti.kind === "bubble") return drawBubble(ctx, W, H, t, ti);
-  const a = fadeIn(ti, t, 0.3), fs = W * 0.052, sfs = W * 0.034, pad = W * 0.04, x0 = W * 0.05 - (1 - a) * W * 0.08, y1 = H * 0.79;
+  if (ti.kind && ti.kind !== "lower") return; // anciens types retirés (bulle, fiche)
+  const a = fadeIn(ti, t, 0.3), fs = W * 0.052, sfs = W * 0.034, pad = W * 0.04, x0 = W * 0.05 - (1 - a) * W * 0.08, y1 = 0; // en haut, sous les onglets TikTok
   ctx.save(); ctx.globalAlpha = a;
   ctx.font = `800 ${fs}px ${FONT}`; const tw = ctx.measureText(ti.text).width;
   ctx.font = `600 ${sfs}px ${FONT}`; const sw = ti.sub ? ctx.measureText(ti.sub).width : 0;
-  const w = Math.min(W * 0.9, Math.max(tw, sw) + pad * 2 + W * 0.02), h = fs * 1.5 + (ti.sub ? sfs * 1.5 : 0) + pad * 0.6;
+  const w = Math.min(W * 0.84, Math.max(tw, sw) + pad * 2 + W * 0.02), h = fs * 1.5 + (ti.sub ? sfs * 1.5 : 0) + pad * 0.6;
+  ctx.translate(0, H * (TIKTOK_SAFE.top + 0.015) + h);
   ctx.shadowColor = "rgba(0,0,0,.35)"; ctx.shadowBlur = W * 0.04;
   rounded(ctx, x0, y1 - h, w, h, W * 0.045); ctx.fillStyle = "rgba(20,20,24,.72)"; ctx.fill(); ctx.shadowColor = "transparent";
   ctx.lineWidth = Math.max(1, W * 0.0015); ctx.strokeStyle = "rgba(255,255,255,.22)"; ctx.stroke();

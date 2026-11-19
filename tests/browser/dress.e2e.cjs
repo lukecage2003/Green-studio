@@ -1,5 +1,5 @@
 // Test navigateur « Habillage » : node tests/browser/dress.e2e.cjs (serveur `npx vite --port 5173` lancé).
-// Vidéo importée → image insérée (plein écran puis « moi en petit ») + bandeau → export → pixels vérifiés.
+// Vidéo importée → image insérée (plein écran puis « moi en petit ») + bandeau (en haut, zones TikTok) → export → pixels vérifiés.
 const { chromium } = require('playwright'); const assert = require('assert');
 (async () => {
   const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 384, height: 832 } }); const errs = [];
@@ -33,13 +33,13 @@ const { chromium } = require('playwright'); const assert = require('assert');
       const i = new mb.Input({ source: new mb.BlobSource(bl), formats: mb.ALL_FORMATS }), s = await new mb.VideoSampleSink(await i.getPrimaryVideoTrack()).getSample(1.5);
       const c = new OffscreenCanvas(s.displayWidth, s.displayHeight), g = c.getContext('2d'); s.draw(g, 0, 0); s.close();
       const at = (fx, fy) => [...g.getImageData(Math.round(c.width * fx), Math.round(c.height * fy), 1, 1).data.slice(0, 3)];
-      return { centre: at(0.4, 0.35), coin: at(0.8, 0.62), bandeau: at(0.1, 0.75) };
+      return { centre: at(0.4, 0.35), coin: at(0.2, 0.62), bandeau: at(0.1, 0.16) };
     });
     console.log(label, JSON.stringify(r)); await p.click('.qe .modal [data-x=ok]'); return r;
   };
   const isMag = (c) => c[0] > 180 && c[1] < 90 && c[2] > 180, isGreen = (c) => c[1] > c[0] + 40 && c[1] > c[2] + 20;
   const full = await exportPx('export plein écran :'); assert.ok(isMag(full.centre) && isMag(full.coin), 'image en plein écran');
-  assert.ok(!isMag(full.bandeau) && full.bandeau[0] < 90, 'bandeau sombre en bas à gauche');
+  assert.ok(!isMag(full.bandeau) && full.bandeau[0] < 90, 'bandeau sombre en haut à gauche (sous les onglets TikTok)');
   await p.click('.qe [data-a=omode][data-v=me]');
   const me = await exportPx('export moi en petit :'); assert.ok(isMag(me.centre), 'image en fond'); assert.ok(isGreen(me.coin), 'la personne en petit dans le coin');
   // Modèle d'émission : enregistré ici, appliqué automatiquement à la vidéo suivante (bandeau d'ouverture compris)
