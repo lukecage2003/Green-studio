@@ -23,7 +23,11 @@ function stabilize(f, n, out) {
   // que d'un pixel au voisin — impossible sur une vraie silhouette).
   let dh = 0, dv = 0; const w = maskW;
   for (let i = 0; i + w < n; i += 3) { dh += Math.abs(out[i] - out[i + 1]); dv += Math.abs(out[i] - out[i + w]); }
-  dh /= n / 3 * 255; dv /= n / 3 * 255; quality = { cov, dh, dv };
+  dh /= n / 3 * 255; dv /= n / 3 * 255;
+  // plancher du fond (voile des pièces sombres) : médiane des valeurs « fond »
+  const fv = []; for (let i = 0; i < n; i += 11) if (out[i] < 170) fv.push(out[i]);
+  const floor = fv.length > n / 11 * 0.15 ? (fv.sort((a, b) => a - b), fv[fv.length >> 1] / 255) : 0;
+  quality = { cov, dh, dv, floor };
   if (cov > 0.97 || (dv > 0.03 && dv > 3 * dh)) { if (++fullN === 45) self.postMessage({ type: "suspect" }); } else fullN = 0;
   prev.set(out);
 }
@@ -32,15 +36,17 @@ function subjectLum(frame, m) {
   lumCv ??= new OffscreenCanvas(32, 32); const g = lumCv.getContext("2d", { willReadFrequently: true });
   g.drawImage(frame, 0, 0, 32, 32); const px = g.getImageData(0, 0, 32, 32).data;
   // sujet (masque > 0,6) et fond réel (masque < 0,2) : le rapport des deux révèle le contre-jour
-  let s = 0, w = 0, bs = 0, bw = 0, br = 0, bg2 = 0, bb = 0, bq = 0;
+  let s = 0, w = 0, bs = 0, bw = 0, br = 0, bg2 = 0, bb = 0, bq = 0; const side = [0, 0, 0, 0, 0, 0, 0, 0]; // fond : gauche, droite, haut, bas (somme, nombre)
   for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) {
     const a = m.data[Math.floor((y + 0.5) / 32 * m.h) * m.w + Math.floor((x + 0.5) / 32 * m.w)] / 255, i = (y * 32 + x) * 4;
     const l = (0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]) / 255;
-    if (a > 0.6) { s += a * l; w += a; } else if (a < 0.2) { bs += l; bw++; const r = px[i] / 255, g = px[i + 1] / 255, b = px[i + 2] / 255; br += r; bg2 += g; bb += b; bq += r * r + g * g + b * b; }
+    if (a > 0.6) { s += a * l; w += a; } else if (a < 0.2) { bs += l; bw++; const k = x < 16 ? 0 : 2; side[k] += l; side[k + 1]++; const k2 = y < 16 ? 4 : 6; side[k2] += l; side[k2 + 1]++; const r = px[i] / 255, g = px[i + 1] / 255, b = px[i + 2] / 255; br += r; bg2 += g; bb += b; bq += r * r + g * g + b * b; }
   }
   // couleur moyenne du vrai fond et son écart-type (uniforme = fond vert / bleu probable)
   const key = bw > 40 ? { r: br / bw, g: bg2 / bw, b: bb / bw, sd: Math.sqrt(Math.max(0, bq / bw - ((br / bw) ** 2 + (bg2 / bw) ** 2 + (bb / bw) ** 2)) / 3) } : null;
-  return w > 20 ? { subj: s / w, bg: bw > 20 ? bs / bw : null, key } : null; // assez de sujet visible pour mesurer
+  const av = (i) => (side[i + 1] > 8 ? side[i] / side[i + 1] : null);
+  const sides = { l: av(0), r: av(2), t: av(4), b: av(6) };
+  return w > 20 ? { subj: s / w, bg: bw > 20 ? bs / bw : null, key, sides } : null; // assez de sujet visible pour mesurer
 }
 
 /* Position de la tête (plateau 3D) : haut de la silhouette, centre et largeur de la tête, en fractions de l'image. */

@@ -3,7 +3,7 @@
 import { EditSession, wordsToRange, sourceToEdited, editedDuration, EPS, type Range, type Word } from "../core/timeline.ts";
 import { bestTakes, type TakeResult } from "../core/takes.ts";
 import { clipsOf, snapSplit, hitAt, trimEdge, wavePeaks } from "../core/derush.ts";
-import { compose, drawTitle, activeAt, clipTime, zoomRect, zoomEase, pathDuration, type Overlay, type OverlayMode, type Title, type Freeze, type ZoomTarget } from "../core/overlay.ts";
+import { compose, drawTitle, activeAt, activeMarks, drawMark, sfxFromWords, SFX, type Mark, clipTime, zoomRect, zoomEase, pathDuration, type Overlay, type OverlayMode, type Title, type Freeze, type ZoomTarget } from "../core/overlay.ts";
 
 /** Fichiers insérés (images, extraits) : gardés sur le téléphone (IndexedDB), retrouvés à la réouverture du projet. */
 const mediaDb = () => new Promise<IDBDatabase>((res, rej) => { const r = indexedDB.open("gs-media", 1); r.onupgradeneeded = () => r.result.createObjectStore("files"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
@@ -111,7 +111,7 @@ const CSS = `
 .lib ul{margin:0 12px}.lib li:first-child{border-radius:20px 20px 0 0}.lib li:last-child{border-radius:0 0 20px 20px}.lib li:only-child{border-radius:20px}
 `;
 
-interface Saved { freezes?: Freeze[]; hook?: Range | null; tight?: boolean; splits?: number[]; enWords?: Word[] | null; capLang?: "fr" | "en"; overlays?: Overlay[]; titles?: Title[]; v: 1; duration: number; words: Word[] | null; cuts: Range[]; ignored: string[]; peaks?: number[]; style?: CaptionStyle; norm?: boolean; q720?: boolean; voice?: boolean; zooms?: boolean }
+interface Saved { marks?: Mark[]; freezes?: Freeze[]; hook?: Range | null; tight?: boolean; splits?: number[]; enWords?: Word[] | null; capLang?: "fr" | "en"; overlays?: Overlay[]; titles?: Title[]; v: 1; duration: number; words: Word[] | null; cuts: Range[]; ignored: string[]; peaks?: number[]; style?: CaptionStyle; norm?: boolean; q720?: boolean; voice?: boolean; zooms?: boolean }
 
 export interface EditorOptions {
   file: Blob; key: string; name?: string; onClose?: () => void; toast?: (m: string, ms?: number) => void;
@@ -175,7 +175,7 @@ export async function openEditor(o: EditorOptions) {
     <div class="body" data-r="body"></div>
     <nav class="tbar" aria-label="Outils">
       <button class="tb" data-a="split" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.6 7.6 20 18M8.6 16.4 20 6"/></svg><span>Scinder</span></button><button class="tb" data-a="del" disabled><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Supprimer</span></button><button class="tb" data-a="rest" hidden><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.6M4 3.5V8.6h5.1"/></svg><span>Restaurer</span></button><button class="tb" data-a="clean" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.6L18.5 9l-4.7 1.8L12 15.5l-1.8-4.7L5.5 9l4.7-1.4zM18.5 15l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/></svg><span>Nettoyer</span></button><button class="tb" data-a="freezeAdd" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21M8.5 8v5M12.5 8v5"/></svg><span>Pause + zoom</span></button>
-      <button class="tb" data-a="ins" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg><span>Insérer</span></button><button class="tb" data-a="title" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M6 4h12M12 4v7"/></svg><span>Bandeau</span></button><button class="tb" data-a="voiceAB" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span>Voix studio</span></button><button class="tb" data-a="pub" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></svg><span>Publication</span></button><button class="tb" data-a="trim" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4v16M20 4v16M8 12h8M10 9l-2 3 2 3M14 9l2 3-2 3"/></svg><span>Bords muets</span></button>
+      <button class="tb" data-a="annot" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20 17 7M11 7h6v6"/><ellipse cx="9" cy="16" rx="5" ry="3.5" transform="rotate(-15 9 16)" opacity=".6"/></svg><span>Annoter</span></button><button class="tb" data-a="sfx" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 2 5 5-2-2 5 5 2-5 2 2 5-5-2-2 5-2-5-5 2 2-5-5-2 5-2-2-5 5 2z"/></svg><span>Onomatopée</span></button><button class="tb" data-a="ins" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg><span>Insérer</span></button><button class="tb" data-a="title" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M6 4h12M12 4v7"/></svg><span>Bandeau</span></button><button class="tb" data-a="voiceAB" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span>Voix studio</span></button><button class="tb" data-a="pub" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></svg><span>Publication</span></button><button class="tb" data-a="trim" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4v16M20 4v16M8 12h8M10 9l-2 3 2 3M14 9l2 3-2 3"/></svg><span>Bords muets</span></button>
       <label class="tb"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6"/><circle cx="12" cy="12" r="2.5"/></svg><span>Zooms</span><input type="checkbox" data-a="zooms"></label>
       <label class="tb"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l7 7-7 7M13 5l7 7-7 7"/></svg><span>Sauter coupes</span><input type="checkbox" data-a="pv" checked></label>
     </nav>`;
@@ -205,6 +205,7 @@ export async function openEditor(o: EditorOptions) {
   (root.querySelector("[data-a=zooms]") as HTMLInputElement).checked = zooms;
   let overlays: Overlay[] = saved?.overlays ?? [], titles: Title[] = saved?.titles ?? [];
   let splits: number[] = saved?.splits ?? [], tight = saved?.tight ?? false; // tight : débuts de mots déjà recalés sur le son
+  let marks: Mark[] = saved?.marks ?? []; // annotations (flèches, cercles) et onomatopées
   let freezes: Freeze[] = saved?.freezes ?? [], fz: { f: Freeze; t0: number } | null = null, lastT = 0; // arrêts sur image ; celui en cours de lecture
   let hook: Range | null = saved?.hook ?? null; // accroche : passage rejoué en ouverture de la vidéo exportée
   const aiYes = new Set<string>(); // faux départs confirmés par l'IA du téléphone
@@ -229,7 +230,7 @@ export async function openEditor(o: EditorOptions) {
   const ctl = new AbortController();
 
   const save = () => {
-    const s: Saved = { v: 1, freezes, hook, tight, splits, enWords, capLang, duration, words, cuts: session.cuts, ignored: [...ignored], style, norm, q720, voice, zooms, overlays, titles, peaks: pk ? Array.from(pk, (x) => Math.round(x * 255)) : undefined };
+    const s: Saved = { v: 1, marks, freezes, hook, tight, splits, enWords, capLang, duration, words, cuts: session.cuts, ignored: [...ignored], style, norm, q720, voice, zooms, overlays, titles, peaks: pk ? Array.from(pk, (x) => Math.round(x * 255)) : undefined };
     try { localStorage.setItem(storeKey, JSON.stringify(s)); } catch { /* quota localStorage : on garde en mémoire */ }
   };
   const covered = (r: Range) => session.cuts.some((c) => c.start <= r.start + 0.02 && c.end >= r.end - 0.02);
@@ -348,6 +349,8 @@ export async function openEditor(o: EditorOptions) {
         <div class="chips" style="margin-top:6px">${MODES.map(([m, l]) => `<button class="ib" data-a="omode" data-v="${m}" aria-pressed="${ov.mode === m}">${l}</button>`).join("")}</div>
         <div class="chips" style="margin-top:6px">${ov.kind === "video" ? `<button class="ib" data-a="ofreeze" aria-pressed="${ov.freeze != null}">${ov.freeze != null ? `⏸ Figé à ${ov.freeze.toFixed(1).replace(".", ",")} s` : "⏸ Figer ici"}</button>` : ""}<button class="ib" data-a="ozoom" aria-pressed="${!!(ov.zoom || ov.path)}">🔍 ${ov.path ? `Parcours ${ov.path.length} cases` : ov.zoom ? `Zoom ${ov.zoom.z.toFixed(1).replace(".", ",")}×` : "Zoomer / cases"}</button></div></div>
         <button class="ib" data-a="ominus" aria-label="Plus court">−</button><button class="ib" data-a="oplus" aria-label="Plus long">+</button><button class="ib" data-a="ohere">Ici</button><button class="ib" data-a="odel" aria-label="Supprimer">✕</button></div>`).join("")
+      + marks.map((m) => `<div class="sg" data-mk="${m.id}"><div class="t"><b style="color:#ffd60a">${m.type === "arrow" ? "➜ Flèche" : m.type === "circle" ? "◯ Cercle" : "💥 " + esc(m.text ?? "")} · ${fmt(m.start)} → ${fmt(m.end)}</b></div>
+        <button class="ib" data-a="mminus" aria-label="Plus court">−</button><button class="ib" data-a="mplus" aria-label="Plus long">+</button><button class="ib" data-a="mhere">Ici</button><button class="ib" data-a="mdel" aria-label="Supprimer">✕</button></div>`).join("")
       + freezes.map((f) => `<div class="sg" data-fz="${f.id}"><div class="t"><b style="color:#ff9f0a">⏸ Arrêt sur image · ${fmt(f.at)} · ${f.dur.toFixed(1).replace(".", ",")} s</b>
         <div class="chips" style="margin-top:6px"><button class="ib" data-a="fzoom" aria-pressed="${!!f.zoom}">🔍 ${f.zoom ? `Zoom ${f.zoom.z.toFixed(1).replace(".", ",")}×` : "Zoomer"}</button><button class="ib" data-a="fplay">▶ Voir</button></div></div>
         <button class="ib" data-a="fminus" aria-label="Plus court">−</button><button class="ib" data-a="fplus" aria-label="Plus long">+</button><button class="ib" data-a="fhere">Ici</button><button class="ib" data-a="fdel" aria-label="Supprimer">✕</button></div>`).join("");
@@ -355,8 +358,8 @@ export async function openEditor(o: EditorOptions) {
         <input data-a="ttext" value="${esc(ti.text)}" placeholder="Titre" style="width:100%;margin-top:6px;background:rgba(255,255,255,.08);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit">
         <input data-a="tsub" value="${esc(ti.sub ?? "")}" placeholder="Sous-titre (facultatif)" style="width:100%;margin-top:4px;background:rgba(255,255,255,.06);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit;font-size:14px"></div>
         <button class="ib" data-a="tminus" aria-label="Plus court">−</button><button class="ib" data-a="tplus" aria-label="Plus long">+</button><button class="ib" data-a="there">Ici</button><button class="ib" data-a="tdel" aria-label="Supprimer">✕</button></div>`).join("");
-    body.innerHTML = `<div class="row" style="padding:0 0 10px"><button class="ib go" data-a="ins">🖼 Image / extrait</button><button class="ib" data-a="title">🅣 Bandeau</button><button class="ib" data-a="chapter">📖 Chapitre</button><button class="ib" data-a="bubble">💬 Bulle</button></div>
-      ${ovRows || tiRows ? ovRows + tiRows : `<div class="card"><b>Habillez votre vidéo</b><p>Insérez une case de comic, une couverture ou un extrait : il s’affiche par-dessus la vidéo au moment choisi (tête de lecture, ou les mots sélectionnés dans Texte), en plein écran, en incrustation, ou avec vous en petit dans un coin. Ajoutez un bandeau « Nom · Thème du jour ».</p></div>`}` + bankCard();
+    body.innerHTML = `<div class="row" style="padding:0 0 10px"><button class="ib go" data-a="ins">🖼 Image / extrait</button><button class="ib" data-a="title">🅣 Bandeau</button><button class="ib" data-a="chapter">📖 Chapitre</button><button class="ib" data-a="bubble">💬 Bulle</button><button class="ib" data-a="annot">✏️ Annoter</button><button class="ib" data-a="sfx">💥 Onomatopée</button>${words && sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length ? `<button class="ib go" data-a="sfxAuto">💥 Placer les onomatopées dites (${sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length})</button>` : ""}</div>
+      ${ovRows || tiRows || marks.length ? ovRows + tiRows : `<div class="card"><b>Habillez votre vidéo</b><p>Insérez une case de comic, une couverture ou un extrait : il s’affiche par-dessus la vidéo au moment choisi (tête de lecture, ou les mots sélectionnés dans Texte), en plein écran, en incrustation, ou avec vous en petit dans un coin. Ajoutez un bandeau « Nom · Thème du jour ».</p></div>`}` + bankCard();
   }
   /**
    * Cadrage du zoom : l'image (vidéo figée, extrait ou image) s'affiche ; on touche le détail à agrandir, on pince ou on glisse
@@ -399,6 +402,49 @@ export async function openEditor(o: EditorOptions) {
       m.querySelectorAll<HTMLElement>("[data-zx]").forEach((b) => (b.onclick = () => {
         if (b.dataset.zx === "add") { path.push({ ...zt }); paint(); return; }
         m.remove(); res(b.dataset.zx === "ok" ? (path.length ? [...path, zt] : zt) : b.dataset.zx === "none" ? null : undefined); }));
+      requestAnimationFrame(paint);
+    });
+  }
+  /**
+   * Annoter l'image à la tête de lecture : flèche ou cercle (glisser du doigt), ou onomatopée (toucher pour la placer).
+   * Renvoie la marque (coordonnées 0–1 de l'image) ou null si annulé.
+   */
+  function markPick(mode: "draw" | "sfx"): Promise<Mark | null> {
+    return new Promise((res) => {
+      const vw0 = video.videoWidth, vh0 = video.videoHeight, at = video.currentTime;
+      const m0 = document.createElement("div"); m0.className = "modal";
+      const COLORS = ["#ffd60a", "#e8202a", "#ffffff", "#30d158", "#64d2ff"];
+      m0.innerHTML = `<div class="card" style="gap:10px"><b>${mode === "sfx" ? "Onomatopée" : "Annoter"}</b><p>${mode === "sfx" ? "Choisissez le mot, puis touchez l'image pour le placer." : "Glissez du doigt sur l'image : une flèche du départ vers le détail, ou un cercle autour."}</p>
+        <div class="chips">${mode === "sfx" ? SFX.map((x, i) => `<button class="ib" data-mt="${esc(x)}" aria-pressed="${i === 0}">${esc(x)}</button>`).join("") + `<button class="ib" data-mt="+">＋ Autre…</button>`
+          : `<button class="ib" data-mk2="arrow" aria-pressed="true">➜ Flèche</button><button class="ib" data-mk2="circle" aria-pressed="false">◯ Cercle</button>`}</div>
+        <div class="chips">${COLORS.map((c, i) => `<button class="ib" data-mc="${c}" aria-pressed="${i === 0}" style="width:34px;padding:0;background:${c}"></button>`).join("")}</div>
+        <canvas data-mz style="width:100%;height:44vh;border-radius:12px;background:#000;touch-action:none"></canvas>
+        ${mode === "sfx" ? `<label class="opt">Taille <input type="range" data-ms min="0.1" max="0.3" step="0.01" value="0.16" style="flex:1"></label>` : ""}
+        <div class="row" style="padding:0"><button class="ib go" data-mx="ok">Valider</button><button class="ib" data-mx="no">Annuler</button></div></div>`;
+      root.appendChild(m0);
+      const cv2 = m0.querySelector<HTMLCanvasElement>("[data-mz]")!;
+      const mk: Mark = mode === "sfx" ? { id: "mk" + Date.now().toString(36), type: "sfx", start: at, end: Math.min(duration, at + 1.3), x1: 0.5, y1: 0.25, x2: 0.16, y2: 0, text: SFX[0], color: COLORS[0] }
+        : { id: "mk" + Date.now().toString(36), type: "arrow", start: at, end: Math.min(duration, at + 2.5), x1: 0.3, y1: 0.7, x2: 0.55, y2: 0.45, color: COLORS[0] };
+      let drawn = mode === "sfx";
+      const geo = () => { const dpr = devicePixelRatio || 1, W = cv2.clientWidth * dpr, H = cv2.clientHeight * dpr, k = Math.min(W / vw0, H / vh0); return { dpr, W, H, k, ox: (W - vw0 * k) / 2, oy: (H - vh0 * k) / 2 }; };
+      const paint = () => { const { W, H, k, ox, oy } = geo(); if (cv2.width !== Math.round(W)) { cv2.width = Math.round(W); cv2.height = Math.round(H); }
+        const g = cv2.getContext("2d")!; g.clearRect(0, 0, W, H); g.drawImage(video, ox, oy, vw0 * k, vh0 * k);
+        if (drawn) { g.save(); g.translate(ox, oy); drawMark(g, vw0 * k, vh0 * k, mk.start + 1, mk); g.restore(); } };
+      const norm = (e: PointerEvent) => { const b = cv2.getBoundingClientRect(), { dpr, k, ox, oy } = geo(); return { x: Math.min(1, Math.max(0, ((e.clientX - b.left) * dpr - ox) / (vw0 * k))), y: Math.min(1, Math.max(0, ((e.clientY - b.top) * dpr - oy) / (vh0 * k))) }; };
+      let down = false;
+      cv2.onpointerdown = (e) => { cv2.setPointerCapture(e.pointerId); down = true; const p0 = norm(e);
+        if (mode === "sfx") { mk.x1 = p0.x; mk.y1 = p0.y; } else { mk.x1 = mk.x2 = p0.x; mk.y1 = mk.y2 = p0.y; drawn = true; } paint(); };
+      cv2.onpointermove = (e) => { if (!down) return; const p1 = norm(e); if (mode === "sfx") { mk.x1 = p1.x; mk.y1 = p1.y; } else { mk.x2 = p1.x; mk.y2 = p1.y; } paint(); };
+      cv2.onpointerup = cv2.onpointercancel = () => { down = false; };
+      m0.querySelector<HTMLInputElement>("[data-ms]")?.addEventListener("input", (e) => { mk.x2 = +(e.target as HTMLInputElement).value; paint(); });
+      m0.addEventListener("click", (e) => {
+        const t2 = e.target as HTMLElement, mt = t2.closest<HTMLElement>("[data-mt]"), mk2 = t2.closest<HTMLElement>("[data-mk2]"), mc = t2.closest<HTMLElement>("[data-mc]"), mx = t2.closest<HTMLElement>("[data-mx]");
+        const press = (sel: string, el: HTMLElement) => m0.querySelectorAll<HTMLElement>(sel).forEach((b) => b.setAttribute("aria-pressed", String(b === el)));
+        if (mt) { let v = mt.dataset.mt!; if (v === "+") { v = (prompt("Votre onomatopée (ex. « VLAN ! ») :", "") ?? "").trim().toUpperCase(); if (!v) return; } mk.text = v; press("[data-mt]", mt); paint(); }
+        if (mk2) { mk.type = mk2.dataset.mk2 as Mark["type"]; press("[data-mk2]", mk2); paint(); }
+        if (mc) { mk.color = mc.dataset.mc; press("[data-mc]", mc); paint(); }
+        if (mx) { m0.remove(); res(mx.dataset.mx === "ok" && drawn && (mode === "sfx" || Math.hypot(mk.x2 - mk.x1, mk.y2 - mk.y1) > 0.02) ? mk : null); }
+      });
       requestAnimationFrame(paint);
     });
   }
@@ -495,10 +541,11 @@ export async function openEditor(o: EditorOptions) {
       if (fz) { const r = zoomRect(video.videoWidth, video.videoHeight, ww, hh, fz.f.zoom, zk); g.drawImage(video, r.sx, r.sy, r.sw, r.sh, x, y, ww, hh); }
       else if (x || y || ww !== w || hh !== h) g.drawImage(video, x, y, ww, hh);
     };
-    if (ov || ti || fz) {
+    const mk = activeMarks(marks, t);
+    if (ov || ti || fz || mk.length) {
       g.save(); g.translate((ccv.width - w) / 2, (ccv.height - h) / 2);
       compose(g, w, h, t, ov, ov ? previewSrc(ov, t) : null, speaker);
-      drawTitle(g, w, h, t, ti); g.restore();
+      drawTitle(g, w, h, t, ti); for (const m of mk) drawMark(g, w, h, fz ? t + (performance.now() - fz.t0) / 1000 : t, m); g.restore();
     }
     if (!lines.length || style.preset === "none") return;
     drawCaption(g, (ccv.width - w) / 2, (ccv.height - h) / 2, w, h, lineAt(lines, video.currentTime), video.currentTime, style);
@@ -564,6 +611,7 @@ export async function openEditor(o: EditorOptions) {
       rr(x, yT, w, hh, 7 * dpr); g.fillStyle = sc && c.start === sc.start ? "#24453a" : "#1f2f28"; g.fill(); g.save(); rr(x, yT, w, hh, 7 * dpr); g.clip(); waveIn(c.start, c.end, "#6fd39c"); g.restore(); }
     // repères : extraits (bleu), bandeaux (violet), suggestions (jaune)
     g.fillStyle = "rgba(100,210,255,.95)"; for (const o of overlays) g.fillRect(X(o.start), yT + 2 * dpr, Math.max(2, X(o.end) - X(o.start)), 3 * dpr);
+    g.fillStyle = "rgba(255,214,10,.95)"; for (const m of marks) g.fillRect(X(m.start), yT + 10 * dpr, Math.max(2, X(m.end) - X(m.start)), 3 * dpr);
     g.fillStyle = "#ff9f0a"; for (const f of freezes) { const fx = X(f.at); g.fillRect(fx - 1.5 * dpr, yT, 3 * dpr, hh); g.beginPath(); g.moveTo(fx - 5 * dpr, yT); g.lineTo(fx + 5 * dpr, yT); g.lineTo(fx, yT + 6 * dpr); g.fill(); }
     g.fillStyle = "rgba(191,90,242,.95)"; for (const ti of titles) g.fillRect(X(ti.start), yT + 6 * dpr, Math.max(2, X(ti.end) - X(ti.start)), 3 * dpr);
     g.fillStyle = "#ffd60a"; for (const s of sugs) if (!ignored.has(s.id) && !covered(s.range)) g.fillRect(X(s.range.start), yB - 4 * dpr, Math.max(2, X(s.range.end) - X(s.range.start)), 3 * dpr);
@@ -842,6 +890,21 @@ export async function openEditor(o: EditorOptions) {
   }
 
   /** Écoute comparée : 6 s à partir de la tête de lecture, son d'origine puis voix studio. */
+  /** Miniature : image à la tête de lecture, assombrie en bas, grand titre sur 2–3 lignes (blanc / jaune, contour noir), légèrement penché. */
+  async function thumbnail(text: string): Promise<Blob> {
+    const W = video.videoWidth || 1080, H = video.videoHeight || 1920, c = document.createElement("canvas"); c.width = W; c.height = H;
+    const g = c.getContext("2d")!; g.drawImage(video, 0, 0, W, H);
+    const gr = g.createLinearGradient(0, H * 0.45, 0, H); gr.addColorStop(0, "rgba(0,0,0,0)"); gr.addColorStop(1, "rgba(0,0,0,.88)"); g.fillStyle = gr; g.fillRect(0, H * 0.45, W, H * 0.55);
+    await document.fonts?.ready;
+    let fs = W * 0.13; const FONT = "'Inter Variable', system-ui, sans-serif", T = text.toUpperCase();
+    const wrapL = () => { g.font = `900 ${fs}px ${FONT}`; const out: string[] = []; let l = ""; for (const w of T.split(/\s+/)) { const tr = l ? l + " " + w : w; if (l && g.measureText(tr).width > W * 0.88) { out.push(l); l = w; } else l = tr; } if (l) out.push(l); return out; };
+    let lines = wrapL(); while (lines.length > 3 && fs > W * 0.07) { fs *= 0.9; lines = wrapL(); }
+    g.save(); g.translate(W / 2, H * 0.8); g.rotate(-0.035); g.textAlign = "center"; g.textBaseline = "middle"; g.lineJoin = "round";
+    const lh = fs * 1.05, top = -((lines.length - 1) * lh) / 2;
+    lines.forEach((l, i) => { g.lineWidth = fs * 0.2; g.strokeStyle = "#000"; g.strokeText(l, 0, top + i * lh); g.fillStyle = i % 2 ? "#ffd60a" : "#fff"; g.fillText(l, 0, top + i * lh); });
+    g.restore();
+    return new Promise((r) => c.toBlob((b) => r(b!), "image/png"));
+  }
   /** Textes de publication : Gemini Nano sur le téléphone si possible, sinon version locale. */
   async function publishText() {
     if (!words) { toast("Transcrivez d’abord la vidéo (onglet Texte).", 3000); return; }
@@ -862,6 +925,7 @@ export async function openEditor(o: EditorOptions) {
       res.innerHTML = d.titles.map((t, i) => row(`Titre ${i + 1}`, t)).join("") + row("Description", d.description) + row("Hashtags", d.hashtags.join(" "))
         + row("Accroche (à dire en premier)", d.hook)
         + (d.hook && findPhrase(words!, d.hook).length ? `<div class="row" style="padding:0 0 6px"><button class="ib ${hook ? "go" : ""}" data-x="hook" data-v="${esc(d.hook)}">${hook ? "✓ Accroche en ouverture (toucher pour retirer)" : "🎣 Rejouer cette phrase en ouverture"}</button></div>` : "")
+        + `<div class="row" style="padding:6px 0 0"><button class="ib" data-x="thumb" data-v="${esc(d.titles[0] ?? "")}">🖼 Miniature avec ce titre</button></div>`
         + `<div class="row" style="padding:6px 0 0"><button class="ib go" data-copy="${esc(all)}">Copier titre + description + hashtags</button>${N.isNative() ? `<button class="ib" data-x="share" data-v="${esc(all)}">Partager</button>` : ""}</div>`;
       m.querySelector<HTMLElement>("[data-x=again]")!.hidden = d.by !== "ia";
     };
@@ -877,6 +941,13 @@ export async function openEditor(o: EditorOptions) {
       const t = e.target as HTMLElement, c = t.closest<HTMLElement>("[data-copy]"), x = t.closest<HTMLElement>("[data-x]")?.dataset.x;
       if (c) { try { await navigator.clipboard.writeText(c.dataset.copy!); toast("Copié.", 1200); } catch { toast("Copie impossible.", 2000); } }
       else if (x === "ok") m.remove();
+      else if (x === "thumb") {
+        const ttl = prompt("Texte de la miniature (court, percutant) :", t.closest<HTMLElement>("[data-x]")!.dataset.v ?? "")?.trim(); if (!ttl) return;
+        const blob = await thumbnail(ttl), name = `green-studio-miniature-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.png`;
+        try { if (N.isNative()) { await N.saveToGallery(blob, name); toast("🖼 Miniature enregistrée dans la Galerie (Images › Green Studio).", 3000); }
+          else { const u = URL.createObjectURL(blob), aa = document.createElement("a"); aa.href = u; aa.download = name; aa.click(); setTimeout(() => URL.revokeObjectURL(u), 30000); } }
+        catch (err: any) { toast("Miniature impossible : " + (err?.message ?? err), 5000); }
+      }
       else if (x === "hook") {
         const b = t.closest<HTMLElement>("[data-x]")!, f = findPhrase(words!, b.dataset.v!)[0];
         if (hook) hook = null; else if (f) hook = { start: Math.max(0, words![f[0]].start - 0.05), end: Math.min(duration, words![f[1]].end + 0.2) };
@@ -949,7 +1020,7 @@ export async function openEditor(o: EditorOptions) {
         let gain = 1; if (norm) { await audioP; if (pcm) gain = loudnessGain(pcm, 16000, session.kept); }
         const captions = words && style.preset !== "none" ? { lines, style } : null;
         const r = await exportEdited(o.file, session.cuts, { onProgress, signal: ac.signal, gain, captions, maxHeight: q720 ? 1280 : 0, voice, zoom: zooms ? zoomAt : null, intro: hook && !inCut((hook.start + hook.end) / 2) ? hook : null, freezes: freezes.filter((f) => !inCut(f.at)),
-          dress: overlays.length || titles.length ? { overlays, titles, images: new Map([...ovSrc].filter(([, e]) => e.img).map(([id, e]) => [id, e.img!])), videos: new Map([...ovSrc].filter(([, e]) => !e.img).map(([id, e]) => [id, e.blob])) } : null }); blob = r.blob; ext = r.ext; how = `${r.video.toUpperCase()}${r.audio ? " + " + r.audio.toUpperCase() : ""}`;
+          dress: overlays.length || titles.length || marks.length ? { overlays, titles, marks, images: new Map([...ovSrc].filter(([, e]) => e.img).map(([id, e]) => [id, e.img!])), videos: new Map([...ovSrc].filter(([, e]) => !e.img).map(([id, e]) => [id, e.blob])) } : null }); blob = r.blob; ext = r.ext; how = `${r.video.toUpperCase()}${r.audio ? " + " + r.audio.toUpperCase() : ""}`;
       } catch (e: any) {
         if (e?.name === "AbortError") throw e;
         console.warn("Export rapide impossible, repli temps réel", e); ep.textContent = "Export en temps réel (plus lent)…";
@@ -1045,6 +1116,18 @@ export async function openEditor(o: EditorOptions) {
       case "title": addTitle(); break;
       case "chapter": addTitle("chapter"); break;
       case "bubble": addTitle("bubble"); break;
+      case "annot": case "sfx": { video.pause(); fz = null; if (!video.videoWidth) break;
+        const m = await markPick(a === "sfx" ? "sfx" : "draw"); if (!m) break;
+        marks = [...marks, m].sort((x, y) => x.start - y.start); body.innerHTML = ""; commit(); toast(a === "sfx" ? "💥 Onomatopée ajoutée." : "✏️ Annotation ajoutée (2,5 s).", 2000); break; }
+      case "sfxAuto": { if (!words) break; const add = sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5));
+        marks = [...marks, ...add].sort((x, y) => x.start - y.start); body.innerHTML = ""; commit(); toast(`💥 ${add.length} onomatopée(s) placée(s) sur vos mots.`, 2500); break; }
+      case "mminus": case "mplus": case "mhere": case "mdel": {
+        const m = marks.find((x) => x.id === t.closest<HTMLElement>("[data-mk]")?.dataset.mk); if (!m) break;
+        if (a === "mminus") m.end = Math.max(m.start + 0.4, m.end - 0.5);
+        if (a === "mplus") m.end = Math.min(duration, m.end + 0.5);
+        if (a === "mhere") { const d = m.end - m.start; m.start = video.currentTime; m.end = Math.min(duration, m.start + d); }
+        if (a === "mdel") marks = marks.filter((x) => x !== m);
+        body.innerHTML = ""; commit(); break; }
       case "freezeAdd": { video.pause(); fz = null;
         if (!video.videoWidth) break;
         if (inCut(video.currentTime)) { toast("Placez la tête de lecture sur une partie gardée.", 2500); break; }

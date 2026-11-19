@@ -744,7 +744,7 @@ function render(frame) {
   gl.viewport(0, 0, W, H); gl.uniform2f(U.uPx, 1 / video.videoWidth, 1 / video.videoHeight);
   gl.uniform2f(U.uCS, c[0], c[1]); gl.uniform2f(U.uCO, c[2], c[3]);
   gl.uniform2f(U.uBS, b[0], b[1]); gl.uniform2f(U.uBO, b[2], b[3]);
-  gl.uniform2f(U.uSub, S.sx, S.sy); const ko = keyOn(); gl.uniform4f(U.uKey, S.key === "on" ? KT.ru : KT.u, S.key === "on" ? KT.rv : KT.v, 0.06 + 0.1 * S.ktol, ko ? 1 : 0); gl.uniform2f(U.uKeyS, 0.08, 0.1); gl.uniform3f(U.uFx, ko ? 0 : S.dsp, S.wrap, S.shd); gl.uniform2f(U.uEdge, S.lo, Math.max(S.hi, S.lo + .01));
+  gl.uniform2f(U.uSub, S.sx, S.sy); const ko = keyOn(); gl.uniform4f(U.uKey, S.key === "on" ? KT.ru : KT.u, S.key === "on" ? KT.rv : KT.v, 0.06 + 0.1 * S.ktol, ko ? 1 : 0); gl.uniform2f(U.uKeyS, 0.08, 0.1); gl.uniform3f(U.uFx, ko ? 0 : S.dsp, S.wrap, S.shd); { const lo2 = Math.max(S.lo, Math.min(0.75, maskFloorV + 0.15)), hi2 = Math.min(0.95, Math.max(S.hi, lo2 + 0.22)); gl.uniform2f(U.uEdge, lo2, Math.max(hi2, lo2 + .01)); }
   gl.uniform1f(U.uMir, S.mirror ? 1 : 0); gl.uniform1f(U.uBr, S.br); gl.uniform1f(U.uCt, S.ct); gl.uniform1f(U.uSa, S.sa);
   gl.uniform2f(U.uSL, lightG, S.warm); gl.uniform1f(U.uSkin, S.skin);
   if (bgCur.video && performance.now() - meanT > 1000) { meanT = performance.now(); bgCur.mean = bgMean(bgCur.src); } // décor vidéo : couleur suivie
@@ -813,9 +813,9 @@ function makeWorker(model) {
       else if (d.type === "suspect" && w === segWorker) recoverSeg();
       else if (d.type === "mask" && w === segWorker) {
         busy = false; const f = held; held = null;
-        if (d.q) maskQ = d.q;
+        if (d.q) { maskQ = d.q; if (d.q.floor != null) maskFloorV += (d.q.floor - maskFloorV) * 0.15; }
         headSeen(d.head);
-        if (d.lum) keySeen(d.lum.key ?? null);
+        if (d.lum) { keySeen(d.lum.key ?? null); if (d.lum.sides) bgSides = d.lum.sides; }
         if (d.lum) { subjLum = subjLum == null ? d.lum.subj : subjLum * 0.7 + d.lum.subj * 0.3; if (d.lum.bg != null) bgLum = bgLum == null ? d.lum.bg : bgLum * 0.7 + d.lum.bg * 0.3; }
         if (d.data) { uploadMask(d.data, d.w, d.h); gl.uniform2f(U.uMO, sentRect[0], sentRect[1]); gl.uniform2f(U.uMS, sentRect[2], sentRect[3]); inferMs += (d.ms - inferMs) * .15; cnt.ai++; }
         if (f) { if (!suspended && d.data) { render(f); cnt.r++; } f.close(); } // image et masque de la MÊME prise de vue : aucun décalage
@@ -826,6 +826,8 @@ function makeWorker(model) {
     w.postMessage({ type: "init", bases: MP_BASES, model });
   });
 }
+let bgSides = null; // luminosité du vrai fond par côté (assistant fond vert)
+let maskFloorV = 0; // plancher du masque (voile des pièces sombres), lissé
 let warmUntil = 0, lastMade = null, pendingWk = null, recoveries = 0, maskQ = null, recovering = false;
 /** Masque anormal signalé par le worker : on relance le détourage avec l'autre modèle (sans attendre la fin d'une prise :
    une image cassée est pire qu'un court à-coup). */
@@ -1769,7 +1771,8 @@ async function runCheck(manual) {
   if (!manual && (!(inferMs > 0) || suspended || !$("recChip").hidden)) return; // détourage pas prêt, montage ouvert ou déjà en train de filmer
   const ns = nativeStats, nat = nativeOn && ns;
   const head = nat ? (ns.hx >= 0 ? { x: ns.hx, y: ns.hy, s: ns.hs } : null) : performance.now() - PAR.last < 3000 ? PAR.h : null;
-  const input = { subj: nat ? (ns.subj >= 0 ? ns.subj : null) : subjLum, bg: nat ? (ns.bg >= 0 ? ns.bg : null) : bgLum, head, floorDb: C.noiseFloorDb(rmsHist) };
+  const sides = nat ? (ns.sl >= 0 ? { l: ns.sl, r: ns.sr, t: ns.st, b: ns.sb } : null) : bgSides, onKey = nat ? !!ns.key : keyOn();
+  const input = { subj: nat ? (ns.subj >= 0 ? ns.subj : null) : subjLum, bg: nat ? (ns.bg >= 0 ? ns.bg : null) : bgLum, head, floorDb: C.noiseFloorDb(rmsHist), screen: onKey && sides ? sides : null };
   const items = C.studioCheck(input); window.gsCheckLast = { input, age: performance.now() - PAR.last, n: rmsHist.length };
   const bad = items.filter((x) => !x.ok); logEvent("info", "check studio : " + (bad.map((x) => x.id).join(",") || "ok"));
   if (!manual && !bad.length) return;

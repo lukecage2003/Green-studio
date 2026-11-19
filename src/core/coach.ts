@@ -8,6 +8,7 @@ export interface CheckInput {
   bg: number | null;              // luminosité du fond réel (0–1)
   head: { x: number; y: number; s: number } | null; // tête : centre x, haut y, largeur (fractions de l'image)
   floorDb: number | null;         // bruit de fond du micro, dBFS (hors parole)
+  screen?: { l: number | null; r: number | null; t: number | null; b: number | null } | null; // vrai fond vert : luminosité par côté
 }
 export interface CheckItem { id: string; ok: boolean; label: string; tip?: string }
 
@@ -26,6 +27,13 @@ export function studioCheck(m: CheckInput): CheckItem[] {
     if (m.floorDb > -40) out.push({ id: "noise", ok: false, label: "Bruit de fond fort", tip: "Fermez la fenêtre, coupez ventilateur ou télé, ou rapprochez le micro. La voix studio en retirera une partie au montage." });
     else if (m.floorDb > -50) out.push({ id: "noise", ok: true, label: "Bruit de fond léger", tip: "La voix studio le retirera au montage." });
     else out.push({ id: "noise", ok: true, label: "Calme" });
+  }
+  // Vrai fond vert : uniformité de l'éclairage (un côté plus sombre se détoure moins bien)
+  if (m.screen) {
+    const { l, r, t, b } = m.screen, tips: string[] = [];
+    if (l != null && r != null && Math.abs(l - r) / Math.max(l, r, 0.05) > 0.2) tips.push(l < r ? "le côté gauche est plus sombre : ajoutez de la lumière à gauche" : "le côté droit est plus sombre : ajoutez de la lumière à droite");
+    if (t != null && b != null && Math.abs(t - b) / Math.max(t, b, 0.05) > 0.25) tips.push(t < b ? "le haut est plus sombre : orientez une lumière vers le haut du fond" : "le bas est plus sombre : éclairez le bas du fond (ou tendez le tissu)");
+    out.push(tips.length ? { id: "screen", ok: false, label: "Fond vert inégal", tip: tips.join(" ; ") + ". Gardez aussi 1 m entre vous et le fond pour éviter le reflet vert." } : { id: "screen", ok: true, label: "Fond vert uniforme" });
   }
   // Cadrage
   const h = m.head;

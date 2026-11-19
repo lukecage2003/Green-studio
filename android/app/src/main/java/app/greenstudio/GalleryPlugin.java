@@ -36,16 +36,17 @@ public class GalleryPlugin extends Plugin {
         values.put(MediaStore.Video.Media.DISPLAY_NAME, name);
         values.put(MediaStore.Video.Media.MIME_TYPE, mime);
         Uri collection;
+        boolean img = mime.startsWith("image/"); // miniatures : rangées dans Images/Green Studio
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            values.put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/Green Studio");
+            values.put(MediaStore.Video.Media.RELATIVE_PATH, (img ? Environment.DIRECTORY_PICTURES : Environment.DIRECTORY_MOVIES) + "/Green Studio");
             values.put(MediaStore.Video.Media.IS_PENDING, 1);
-            collection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+            collection = img ? MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY) : MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
         } else {
-            File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "Green Studio");
+            File dir = new File(Environment.getExternalStoragePublicDirectory(img ? Environment.DIRECTORY_PICTURES : Environment.DIRECTORY_MOVIES), "Green Studio");
             //noinspection ResultOfMethodCallIgnored
             dir.mkdirs();
             values.put(MediaStore.Video.Media.DATA, new File(dir, name).getAbsolutePath());
-            collection = MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
+            collection = img ? MediaStore.Images.Media.EXTERNAL_CONTENT_URI : MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
         }
 
         Uri item = null;

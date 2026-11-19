@@ -450,3 +450,30 @@ test("parcours de cases : page entière, puis chaque case dans l'ordre (glisseme
   const mid = pathAt(path, 10, 15.2, 13.3); assert.ok(mid.z > 2 && mid.z < 3 && mid.x > 0.25 && mid.x < 0.75, "glissement vers la case 2");
   assert.deepEqual(pathAt(path, 10, 15.2, 15), path[1]); assert.equal(pathDuration(2), 5.2);
 });
+
+test("fond sombre : pas pris pour un fond vert/bleu ; voile du masque mesuré et seuils relevés", async () => {
+  const { keyKind, maskFloor, edgeFor } = await import("../src/core/chroma.ts");
+  assert.equal(keyKind({ r: 0.08, g: 0.1, b: 0.16, sd: 0.03 }), null, "pièce sombre teintée de bleu (écran)");
+  assert.equal(keyKind({ r: 0.2, g: 0.22, b: 0.3, sd: 0.04 }), null, "mur gris-bleu peu coloré");
+  assert.equal(keyKind({ r: 0.1, g: 0.25, b: 0.75, sd: 0.05 }), "blue", "vrai fond bleu");
+  const clean = new Uint8Array(10000); for (let i = 0; i < 3000; i++) clean[i] = 255;
+  assert.equal(maskFloor(clean), 0);
+  const veil = new Uint8Array(10000).fill(90); for (let i = 0; i < 3000; i++) veil[i] = 250;
+  const f = maskFloor(veil); assert.ok(Math.abs(f - 90 / 255) < 0.01, String(f));
+  const [lo, hi] = edgeFor(0.35, 0.65, f); assert.ok(lo > f + 0.1 && hi > lo + 0.2, `${lo} ${hi}`);
+  assert.deepEqual(edgeFor(0.35, 0.65, 0), [0.35, 0.65], "fond propre : réglages inchangés");
+});
+
+test("assistant fond vert (côté plus sombre) et onomatopées placées sur les mots dits", async () => {
+  const { studioCheck } = await import("../src/core/coach.ts");
+  const base = { subj: 0.5, bg: 0.5, head: { x: 0.5, y: 0.12, s: 0.3 }, floorDb: -60 };
+  const tipOf = (screen: any) => studioCheck({ ...base, screen }).find((x) => x.id === "screen")!;
+  assert.equal(tipOf({ l: 0.5, r: 0.52, t: 0.5, b: 0.48 }).ok, true);
+  const t = tipOf({ l: 0.3, r: 0.55, t: 0.5, b: 0.5 }); assert.equal(t.ok, false); assert.match(t.tip!, /gauche/);
+  assert.equal(studioCheck(base).some((x) => x.id === "screen"), false, "pas de fond vert : pas de conseil");
+  const { sfxFromWords } = await import("../src/core/overlay.ts");
+  const w = [{ text: "et", start: 1, end: 1.2 }, { text: "boum,", start: 1.3, end: 1.6 }, { text: "bam", start: 2, end: 2.2 }, { text: "Pow !", start: 5, end: 5.3 }, { text: "zap", start: 8, end: 8.3 }];
+  const m = sfxFromWords(w, (x) => x > 7.9);
+  assert.deepEqual(m.map((x) => x.text), ["BOOM !", "POW !"], "« bam » trop proche du « boum », « zap » coupé");
+  assert.ok(m[0].x1 !== m[1].x1, "côtés alternés");
+});

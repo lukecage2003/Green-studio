@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.17)
+# Green Studio 3.1 — état réel (beta.18)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,16 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.18
+- **Analyse d'une vraie vidéo envoyée** (17 s, 24,8 i/s, son correct) : un **voile sombre rectangulaire** autour de la personne. Deux causes possibles, corrigées :
+  - une pièce sombre teintée de bleu pouvait être prise pour un « vrai fond bleu » (incrustation par couleur activée à tort) : la détection exige maintenant un fond éclairé et très coloré (web et natif) ;
+  - dans une pièce sombre, l'IA donne au fond une confiance de 0,2 à 0,5 au lieu de 0 : ce plancher est mesuré à chaque image et le seuil de détourage relevé d'autant (web et natif).
+- **✏️ Annoter** : flèche (tracée du départ vers le détail) ou cercle façon feutre, 5 couleurs, dessinés progressivement à l'écran ; ajustables dans Habillage.
+- **💥 Onomatopées** : BAM ! POW ! BOOM ! WHAM ! ZAP ! SNIKT ! THWIP !… (ou la vôtre) dans une explosion de BD qui « pope » et tremble ; « Placer les onomatopées dites » les pose seules sur les mots prononcés (« boum », « bam », « pow »…).
+- **🖼 Miniature** (✍️ Publication) : image à la tête de lecture + grand titre blanc / jaune, enregistrée dans la Galerie (Images › Green Studio).
+- **Assistant fond vert** (Check studio) : avec un vrai fond vert, mesure de l'éclairage gauche / droite / haut / bas et conseil (« le côté gauche est plus sombre : ajoutez de la lumière à gauche »).
+- Testé : `tests/browser/marks.e2e.cjs` (onomatopée et flèche gravées dans l'export, miniature), unitaires (détection stricte, plancher du masque, conseils fond vert, onomatopées dites).
 
 ## 3.1.0-beta.17
 - **Export plus rapide** (mesuré sur 25 s en 1080×1920 30 i/s, mêmes fichiers en sortie) : sans habillage 8,4 → 5,7 s (−32 %), sous-titres + zooms 11,8 → 9,1 s (−23 %), voix studio 15,1 → 10,0 s (−34 %).

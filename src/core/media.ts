@@ -7,7 +7,7 @@ import {
 import { kept, type Range } from "./timeline.ts";
 import { Resampler, toMono, fadeGain, softLimit } from "./audio.ts";
 import { StudioVoice, loadDenoiser } from "./voice.ts";
-import { compose, drawTitle, activeAt, clipTime, zoomRect, zoomEase, type Freeze, type Overlay, type Title } from "./overlay.ts";
+import { compose, drawTitle, activeAt, activeMarks, drawMark, clipTime, zoomRect, zoomEase, type Freeze, type Mark, type Overlay, type Title } from "./overlay.ts";
 import { lineAt, drawCaption, type CapLine, type CaptionStyle } from "./captions.ts";
 
 const FORMATS = [MP4, QTFF, WEBM, MATROSKA]; // vidéos de téléphone (dont .mov iPhone) : module plus léger que ALL_FORMATS
@@ -98,7 +98,7 @@ export interface ExportOptions {
   intro?: Range | null;                            // accroche : passage rejoué en ouverture, avant le montage
   freezes?: Freeze[];                              // arrêts sur image (temps source), avec zoom éventuel
   /** habillage : extraits (images / vidéos) et bandeaux titres, en temps source */
-  dress?: { overlays: Overlay[]; titles: Title[]; images: Map<string, CanvasImageSource>; videos: Map<string, Blob>; accent?: string } | null;
+  dress?: { overlays: Overlay[]; titles: Title[]; marks?: Mark[]; images: Map<string, CanvasImageSource>; videos: Map<string, Blob>; accent?: string } | null;
 }
 
 export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOptions = {}): Promise<ExportResult> {
@@ -141,7 +141,7 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
     // Passage par un canvas seulement si nécessaire (sous-titres, redimensionnement) : sinon les images vont directement à l'encodeur.
     let cv: OffscreenCanvas | null = null, cx: OffscreenCanvasRenderingContext2D | null = null;
     const viaCanvas = (!!captions && captions.style.preset !== "none" && captions.lines.length > 0) || maxHeight > 0 || !!zoom || items.some((i) => i.fr)
-      || !!(dress && (dress.overlays.length || dress.titles.length));
+      || !!(dress && (dress.overlays.length || dress.titles.length || dress.marks?.length));
     /** Image de l'extrait au temps t (vidéo : lue image par image, à fermer après usage). */
     const overlaySource = async (ov: Overlay, t: number): Promise<{ src: any; close?: () => void } | null> => {
       if (ov.kind === "image") { const im = dress!.images.get(ov.id); return im ? { src: im } : null; }
@@ -222,7 +222,7 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
           };
           const ov = dress ? activeAt(dress.overlays, s.timestamp) : null, os = ov ? await overlaySource(ov, s.timestamp) : null;
           compose(cx!, cv.width, cv.height, s.timestamp, ov, os?.src ?? null, speaker); os?.close?.();
-          if (dress) drawTitle(cx!, cv.width, cv.height, s.timestamp, activeAt(dress.titles, s.timestamp), dress.accent);
+          if (dress) { drawTitle(cx!, cv.width, cv.height, s.timestamp, activeAt(dress.titles, s.timestamp), dress.accent); for (const m of activeMarks(dress.marks ?? [], s.timestamp)) drawMark(cx!, cv.width, cv.height, s.timestamp, m); }
           if (captions) drawCaption(cx!, 0, 0, cv.width, cv.height, lineAt(captions.lines, s.timestamp), s.timestamp, captions.style);
           o = new VideoSample(cv, { timestamp: t, duration: d }); s.close();
         } else { s.setTimestamp(t); s.setDuration(d); }
@@ -244,7 +244,7 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
           const speaker = (x: number, y: number, w: number, h: number) => { const r = zoomRect(s.displayWidth, s.displayHeight, w, h, f.zoom, zk); s.draw(cx!, r.sx, r.sy, r.sw, r.sh, x, y, w, h); };
           cx!.clearRect(0, 0, cv.width, cv.height);
           compose(cx!, cv.width, cv.height, f.at, ov, os?.src ?? null, speaker);
-          if (dress) drawTitle(cx!, cv.width, cv.height, f.at, activeAt(dress.titles, f.at), dress.accent);
+          if (dress) { drawTitle(cx!, cv.width, cv.height, f.at, activeAt(dress.titles, f.at), dress.accent); for (const m of activeMarks(dress.marks ?? [], f.at)) drawMark(cx!, cv.width, cv.height, f.at + k / 30, m); }
           if (captions) drawCaption(cx!, 0, 0, cv.width, cv.height, lineAt(captions.lines, f.at), f.at, captions.style);
           const o = new VideoSample(cv, { timestamp: offset + k / 30, duration: 1 / 30 }); await vsrc.add(o, k === 0 ? { keyFrame: true } : undefined); o.close();
         }

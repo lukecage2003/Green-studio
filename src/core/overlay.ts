@@ -153,3 +153,53 @@ export function drawTitle(ctx: Ctx, W: number, H: number, t: number, ti: Title |
   if (ti.sub) { ctx.font = `600 ${sfs}px ${FONT}`; ctx.fillStyle = "rgba(235,235,245,.75)"; ctx.fillText(ti.sub, x0 + pad + W * 0.01, y1 - h + pad * 0.3 + fs * 1.5 + sfs * 0.7, w - pad * 2); }
   ctx.restore();
 }
+
+/* ---------- Annotations et onomatopées (temps source, coordonnées 0–1 de l'image) ---------- */
+/** arrow : flèche de (x1, y1) vers (x2, y2) ; circle : cercle dans le rectangle ; sfx : onomatopée centrée en (x1, y1), taille x2. */
+export interface Mark { id: string; type: "arrow" | "circle" | "sfx"; start: number; end: number; x1: number; y1: number; x2: number; y2: number; color?: string; text?: string }
+export const SFX = ["BAM !", "POW !", "BOOM !", "WHAM !", "ZAP !", "CRAC !", "KRAKOOM !", "SNIKT !", "THWIP !", "BANG !", "SPLASH !", "WOW !"];
+/** Mots dits qui appellent une onomatopée (transcription) → texte affiché. */
+export const SFX_WORDS: Record<string, string> = { boum: "BOOM !", boom: "BOOM !", bam: "BAM !", pow: "POW !", paf: "PAF !", pif: "PIF !", bang: "BANG !", crac: "CRAC !", crack: "CRAC !", zap: "ZAP !", wham: "WHAM !", vlan: "VLAN !", splash: "SPLASH !", snikt: "SNIKT !", thwip: "THWIP !", kaboom: "KABOOM !", badaboum: "BADABOUM !", pan: "PAN !" };
+export const activeMarks = (marks: Mark[], t: number) => marks.filter((m) => t >= m.start && t < m.end);
+
+export function drawMark(ctx: Ctx, W: number, H: number, t: number, m: Mark) {
+  const age = t - m.start, out = Math.min(1, Math.max(0, (m.end - t) / 0.15)), col = m.color ?? "#ffd60a";
+  ctx.save(); ctx.globalAlpha = out; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  const X = (x: number) => x * W, Y = (y: number) => y * H, lw = W * 0.013;
+  const stroke2 = (path: () => void) => { // trait coloré bordé de noir : lisible sur tout fond
+    ctx.lineWidth = lw * 1.9; ctx.strokeStyle = "rgba(0,0,0,.75)"; path(); ctx.stroke();
+    ctx.lineWidth = lw; ctx.strokeStyle = col; path(); ctx.stroke();
+  };
+  if (m.type === "arrow") {
+    const p = zoomEase(age, 0.35), x1 = X(m.x1), y1 = Y(m.y1), x2 = x1 + (X(m.x2) - x1) * p, y2 = y1 + (Y(m.y2) - y1) * p;
+    const an = Math.atan2(y2 - y1, x2 - x1), hl = W * 0.05;
+    stroke2(() => { ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); });
+    if (p > 0.6) stroke2(() => { ctx.beginPath(); ctx.moveTo(x2 - hl * Math.cos(an - 0.5), y2 - hl * Math.sin(an - 0.5)); ctx.lineTo(x2, y2); ctx.lineTo(x2 - hl * Math.cos(an + 0.5), y2 - hl * Math.sin(an + 0.5)); });
+  } else if (m.type === "circle") {
+    const p = zoomEase(age, 0.45), cx = X((m.x1 + m.x2) / 2), cy = Y((m.y1 + m.y2) / 2), rx = Math.max(8, Math.abs(X(m.x2) - X(m.x1)) / 2), ry = Math.max(8, Math.abs(Y(m.y2) - Y(m.y1)) / 2);
+    const a0 = -Math.PI * 0.6; // trait façon feutre : le cercle se dessine et dépasse un peu son point de départ
+    stroke2(() => { ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, -0.08, a0, a0 + Math.PI * 2.12 * p); });
+  } else {
+    const size = (m.x2 || 0.16) * W, pop = age < 0.12 ? 0.3 + 0.95 * (age / 0.12) : age < 0.22 ? 1.25 - 0.25 * ((age - 0.12) / 0.1) : 1;
+    const shake = age < 0.35 ? Math.sin(age * 90) * size * 0.03 * (1 - age / 0.35) : 0;
+    ctx.font = `900 ${size}px ${FONT}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const tw = ctx.measureText(m.text ?? "BAM !").width, R = Math.max(tw * 0.62, size * 0.9), n = 14;
+    const px = Math.min(W - R * 1.15, Math.max(R * 1.15, X(m.x1))), py = Math.min(H - R * 0.9, Math.max(R * 0.9, Y(m.y1))); // toujours dans l'image
+    ctx.translate(px + shake, py); ctx.rotate(-0.12); ctx.scale(pop, pop);
+    ctx.beginPath(); for (let i = 0; i < n * 2; i++) { const r = i % 2 ? R * 0.68 : R * (1 + 0.12 * Math.sin(i * 1.7)), a = (i / (n * 2)) * Math.PI * 2; i ? ctx.lineTo(r * Math.cos(a), r * 0.72 * Math.sin(a)) : ctx.moveTo(r * Math.cos(a), r * 0.72 * Math.sin(a)); }
+    ctx.closePath(); ctx.fillStyle = col; ctx.fill(); ctx.lineWidth = size * 0.07; ctx.strokeStyle = "#111"; ctx.stroke();
+    ctx.lineWidth = size * 0.16; ctx.strokeStyle = "#111"; ctx.strokeText(m.text ?? "BAM !", 0, size * 0.04);
+    ctx.fillStyle = col === "#e8202a" ? "#ffd60a" : "#e8202a"; ctx.fillText(m.text ?? "BAM !", 0, size * 0.04);
+  }
+  ctx.restore();
+}
+/** Onomatopées à placer d'après la transcription (mot dit → onomatopée, au moment du mot, côtés alternés). */
+export function sfxFromWords(words: { text: string; start: number; end: number }[], cut: (t: number) => boolean): Mark[] {
+  const out: Mark[] = []; let side = 0;
+  for (const w of words) {
+    const k = w.text.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z]/g, ""), txt = SFX_WORDS[k];
+    if (!txt || cut((w.start + w.end) / 2) || out.some((m) => Math.abs(m.start - w.start) < 1.5)) continue;
+    out.push({ id: "sfx" + Math.round(w.start * 100), type: "sfx", start: Math.max(0, w.start - 0.05), end: w.start + 1.3, x1: side++ % 2 ? 0.66 : 0.34, y1: 0.24, x2: 0.15, y2: 0, text: txt, color: "#ffd60a" });
+  }
+  return out;
+}

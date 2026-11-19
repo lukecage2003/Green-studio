@@ -45,7 +45,7 @@ public class StudioPlugin extends Plugin {
             @Override public void onStats(int fps, double inferMs, int w, int h, double lightG, Double expo) {
                 JSObject o = new JSObject(); o.put("fps", fps); o.put("inferMs", inferMs); o.put("width", w); o.put("height", h); o.put("lightG", lightG);
                 if (expo != null) o.put("expo", expo);
-                if (engine != null) { double[] c = engine.coach(); o.put("subj", c[0]); o.put("bg", c[1]); o.put("hx", c[2]); o.put("hy", c[3]); o.put("hs", c[4]); o.put("key", engine.keyActive()); }
+                if (engine != null) { double[] c = engine.coach(); o.put("subj", c[0]); o.put("bg", c[1]); o.put("hx", c[2]); o.put("hy", c[3]); o.put("hs", c[4]); o.put("sl", c[5]); o.put("sr", c[6]); o.put("st", c[7]); o.put("sb", c[8]); o.put("key", engine.keyActive()); }
                 notifyListeners("stats", o);
             }
             @Override public void onLevel(double rms) { JSObject o = new JSObject(); o.put("rms", rms); notifyListeners("level", o); }

@@ -211,6 +211,10 @@ public class StudioEngine {
             FloatBuffer fb = raw.asFloatBuffer();
             byte[] mask = new byte[mw * mh];
             for (int i = 0; i < mask.length; i++) { float v = fb.get(i); mask[i] = (byte) (v <= 0 ? 0 : v >= 1 ? 255 : (int) (v * 255)); }
+            { int[] hist = new int[171]; int bgN = 0, all = 0; // plancher du fond (voile des pièces sombres) : médiane des valeurs « fond »
+              for (int i = 0; i < mask.length; i += 11) { all++; int v = mask[i] & 0xff; if (v < 170) { hist[v]++; bgN++; } }
+              float fl = 0; if (bgN > all * 0.15f) { int c = 0; for (int v = 0; v < 171; v++) { c += hist[v]; if (c * 2 >= bgN) { fl = v / 255f; break; } } }
+              maskFloor += (fl - maskFloor) * .15f; }
             double ms = SystemClock.uptimeMillis() - t0; inferMs += (ms - inferMs) * .15;
             if (++lumN % 6 == 0) measureLight(img, rot, mask, mw, mh);
             headSeen(mask, mw, mh);
@@ -242,7 +246,7 @@ public class StudioEngine {
     private void measureLight(ImageProxy img, int rot, byte[] mask, int mw, int mh) {
         ImageProxy.PlaneProxy yp = img.getPlanes()[0]; ByteBuffer yb = yp.getBuffer(); int rs = yp.getRowStride();
         int w = img.getWidth(), h = img.getHeight();
-        double s = 0, sw = 0, b = 0; int bw = 0; double kr = 0, kg = 0, kb = 0, kq = 0;
+        double s = 0, sw = 0, b = 0; int bw = 0; double kr = 0, kg = 0, kb = 0, kq = 0; double[] sd4 = new double[8];
         ImageProxy.PlaneProxy up = img.getPlanes()[1], vp = img.getPlanes()[2]; ByteBuffer ub = up.getBuffer(), vb = vp.getBuffer();
         int urs = up.getRowStride(), ups = up.getPixelStride(), vrs = vp.getRowStride(), vps = vp.getPixelStride();
         for (int j = 0; j < 32; j++) for (int i = 0; i < 32; i++) {
@@ -251,12 +255,13 @@ public class StudioEngine {
             float[] sv = toSensor(u, v, rot);
             int x = Math.min(w - 1, (int) (sv[0] * w)), y = Math.min(h - 1, (int) (sv[1] * h));
             double l = (yb.get(y * rs + x) & 0xff) / 255.0;
-            if (a > .6f) { s += a * l; sw += a; } else if (a < .2f) { b += l; bw++;
+            if (a > .6f) { s += a * l; sw += a; } else if (a < .2f) { b += l; bw++; int k1 = i < 16 ? 0 : 2, k2 = j < 16 ? 4 : 6; sd4[k1] += l; sd4[k1 + 1]++; sd4[k2] += l; sd4[k2 + 1]++;
                 int ui = (y / 2) * urs + (x / 2) * ups, vi = (y / 2) * vrs + (x / 2) * vps;
                 double cu = ui < ub.limit() ? (ub.get(ui) & 0xff) / 255.0 - .5 : 0, cv = vi < vb.limit() ? (vb.get(vi) & 0xff) / 255.0 - .5 : 0;
                 double r = clamp01(l + 1.402 * cv), g = clamp01(l - .344136 * cu - .714136 * cv), bl = clamp01(l + 1.772 * cu);
                 kr += r; kg += g; kb += bl; kq += r * r + g * g + bl * bl; }
         }
+        for (int q = 0; q < 4; q++) sides[q] = sd4[q * 2 + 1] > 8 ? (float) (sd4[q * 2] / sd4[q * 2 + 1]) : -1;
         if (bw > 40) { double mr = kr / bw, mg = kg / bw, mb = kb / bw; keySeen(mr, mg, mb, Math.sqrt(Math.max(0, kq / bw - (mr * mr + mg * mg + mb * mb)) / 3)); }
         else keySeen(-1, 0, 0, 1);
         if (sw > 20) {
@@ -290,7 +295,7 @@ public class StudioEngine {
     /** Mesures pour le « check studio » : lumière du visage, du fond, position et taille de la tête (−1 si inconnues). */
     public double[] coach() {
         boolean fresh = SystemClock.uptimeMillis() - parLast < 1500;
-        return new double[]{ subjLum != null ? subjLum : -1, bgLum != null ? bgLum : -1, fresh ? headX : -1, fresh ? headY : -1, fresh ? headS : -1 };
+        return new double[]{ subjLum != null ? subjLum : -1, bgLum != null ? bgLum : -1, fresh ? headX : -1, fresh ? headY : -1, fresh ? headS : -1, sides[0], sides[1], sides[2], sides[3] };
     }
     private float[] parallax() {
         long now = SystemClock.uptimeMillis(); float dt = Math.min(.2f, parT > 0 ? (now - parT) / 1000f : .033f); parT = now;
@@ -306,11 +311,14 @@ public class StudioEngine {
     /* ======================= Vrai fond vert ======================= */
     // Mêmes règles que src/core/chroma.ts (version web) : fond uni vert/bleu détecté ≈ 1 s, perdu après ≈ 2 s.
     private static double clamp01(double x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
+    private volatile float maskFloor = 0;
+    private final float[] sides = { -1, -1, -1, -1 }; // luminosité du fond : gauche, droite, haut, bas
     private volatile float keyU = .5f, keyV = .5f, rawU = .5f, rawV = .5f; private volatile boolean keyDetected; private int keyHits, keyMiss, keyRaw;
     private void keySeen(double r, double g, double b, double sd) {
         if (r >= 0) { float u = (float) (r * -.169 + g * -.331 + b * .5 + .5), v = (float) (r * .5 + g * -.419 + b * -.081 + .5);
             if (keyRaw++ == 0) { rawU = u; rawV = v; } else { rawU += (u - rawU) * .2f; rawV += (v - rawV) * .2f; } }
-        boolean green = r >= 0 && sd <= .13 && g > .12 && g > r * 1.3 && g > b * 1.15, blue = r >= 0 && sd <= .13 && b > .12 && b > r * 1.3 && b > g * 1.1;
+        double mx = Math.max(r, Math.max(g, b)), mn = Math.min(r, Math.min(g, b)); boolean lit = mx >= .25 && mx - mn >= .12; // éclairé et coloré
+        boolean green = r >= 0 && lit && sd <= .13 && g > .12 && g > r * 1.3 && g > b * 1.15, blue = r >= 0 && lit && sd <= .13 && b > .12 && b > r * 1.3 && b > g * 1.1;
         if (green || blue) {
             float u = (float) (r * -.169 + g * -.331 + b * .5 + .5), v = (float) (r * .5 + g * -.419 + b * -.081 + .5);
             if (keyHits == 0) { keyU = u; keyV = v; } else { keyU += (u - keyU) * .2f; keyV += (v - keyV) * .2f; }
@@ -675,7 +683,8 @@ public class StudioEngine {
         GLES30.glUniform2f(U.get("uBS"), b[0], b[1]); GLES30.glUniform2f(U.get("uBO"), b[2], b[3]);
         GLES30.glUniform2f(U.get("uBS2"), b2[0], b2[1]); GLES30.glUniform2f(U.get("uBO2"), b2[2], b2[3]);
         GLES30.glUniform1f(U.get("uMix"), m);
-        GLES30.glUniform2f(U.get("uEdge"), p.lo, Math.max(p.hi, p.lo + .01f));
+        float lo2 = Math.max(p.lo, Math.min(.75f, maskFloor + .15f)), hi2 = Math.min(.95f, Math.max(p.hi, lo2 + .22f)); // seuils relevés au-dessus du plancher
+        GLES30.glUniform2f(U.get("uEdge"), lo2, Math.max(hi2, lo2 + .01f));
         GLES30.glUniform2f(U.get("uPx"), 1f / cw, 1f / ch);
         GLES30.glUniform2f(U.get("uSub"), p.sx, p.sy);
         GLES30.glUniform2f(U.get("uSL"), (float) lightG, p.warm);
