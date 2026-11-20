@@ -94,6 +94,16 @@ export function autoDress(words: Word[], cuts: Range[]): Title[] {
   const f = kw.map((w) => fold(bare(w.text))), id = (k: string, t: number) => `auto-${k}-${Math.round(t * 100)}`;
   const nameAfter = (j: number) => { const ws: string[] = []; for (let k = j; k < kw.length && ws.length < 4; k++) { const b = bare(kw[k].text); if (!b) break; if (ws.length && !/^\p{Lu}/u.test(b)) break; if (!ws.length && !/^\p{Lu}/u.test(b)) return null; ws.push(b); if (/[,.;:!?…]$/.test(kw[k].text)) break; } return ws.length ? ws.join(" ") : null; };
   for (let i = 0; i < kw.length; i++) {
+    // source : « Amazing Spider-Man #300 », « Amazing Spider-Man numéro 300 », « le numéro 300 d'Amazing Spider-Man »
+    { const before = () => { const ws: string[] = []; for (let k = i - 1; k >= 0 && ws.length < 4; k--) { const b = bare(kw[k].text); if (!/^\p{Lu}/u.test(b) || /[,.;:!?…]$/.test(kw[k].text) || /^(en|le|la|les|l|dans|et|mais|puis|alors|donc|il|elle|on|ce|c|au|aux|a|de|du|des|un|une|tout|sur|par|pour|avec|sans|voici|voila)$/.test(fold(b).replace(/'.*$/, ""))) break; ws.unshift(b); } return ws.join(" "); };
+      let src: string | null = null;
+      const hm = /^#(\d{1,4})$/.exec(bare(kw[i].text)); if (hm) { const b = before(); if (b) src = `${b} #${hm[1]}`; }
+      if (!src && f[i] === "numero" && /^\d{1,4}$/.test(bare(kw[i + 1]?.text ?? ""))) { const num = bare(kw[i + 1].text), b = before();
+        if (b) src = `${b} #${num}`;
+        else if (+num > 20) { const nx = kw[i + 2]?.text ?? "", rest = /^d'/i.test(nx) ? [nx.slice(2), ...kw.slice(i + 3, i + 6).map((w) => w.text)] : /^(de|du)$/i.test(nx) ? kw.slice(i + 3, i + 7).map((w) => w.text) : [];
+          const ws: string[] = []; for (const r of rest) { const b2 = bare(r); if (!/^\p{Lu}/u.test(b2)) break; ws.push(b2); if (/[,.;:!?…]$/.test(r)) break; }
+          if (ws.length) src = `${ws.join(" ")} #${num}`; } }
+      if (src) { if (!out.some((x) => x.kind === "tag" && x.text === src)) out.push({ id: id("tag", kw[i].start), kind: "tag", text: src, sub: "Source", start: kw[i].start, end: kw[i].start + 3.2 }); continue; } }
     // classement
     let n: number | null = null, j = -1;
     if ((f[i] === "numero" || f[i] === "top" || f[i] === "n") && i + 1 < kw.length) { n = numOf(kw[i + 1].text); j = i + 2; }

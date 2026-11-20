@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.24)
+# Green Studio 3.1 — état réel (beta.25)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,15 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.25 — expliquer les concepts
+- **🔗 Relations** : schéma de bulles reliées par des flèches qui apparaissent une à une (« Force Phénix → Jean Grey → Dark Phoenix »), dernier élément mis en valeur.
+- **🔀 Divergence** : ligne temporelle qui se sépare (« point de divergence ; branche A ; branche B »), point lumineux « DIVERGENCE ».
+- **✅ À retenir** : carte récapitulative, proposée à partir des concepts, univers, sources et classements déjà à l'écran.
+- **🔦 Projecteur** (Annoter) : tout s'assombrit sauf le détail entouré du doigt ; le cercle se resserre en entrant.
+- **📚 Source** repérée dans la voix : « Amazing Spider-Man #300 », « Amazing Spider-Man numéro 300 », « le numéro 252 d'Amazing Spider-Man ».
+- **Habillage sonore** (export, activé par défaut) : whoosh à l'arrivée des images, « pop » discret sur les titres, impact grave sur l'accroche et les chapitres. Sons générés par l'appli (`src/core/sfx.ts`) : aucun fichier, aucun droit.
+- 48 tests unitaires ; `workflow.e2e` couvre schéma, divergence, « À retenir » et source.
 
 ## 3.1.0-beta.24 — pensé pour les théories et le storytelling
 - **Vrai / faux retiré** (création, détection et rendu ; les anciens projets s'ouvrent sans).

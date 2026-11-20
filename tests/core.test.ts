@@ -535,7 +535,23 @@ test("habillage déclenché par la parole : classement, concept, univers, époqu
   assert.deepEqual(k("rank").map((x) => [x.sub, x.text]), [["3", "Venom"], ["2", "Carnage"]]);
   assert.deepEqual(k("term").map((x) => x.text), ["Force Phénix"]);
   assert.deepEqual(k("tag").map((x) => [x.sub, x.text]), [["Univers", "Terre-616"]]);
+  t = 50; const src = autoDress([...W("Tout est dans Amazing Spider-Man #300 en 1988."), ...W("Et dans le numéro 252 d'Amazing Spider-Man, le costume arrive.")], []).filter((x) => x.sub === "Source");
+  assert.deepEqual(src.map((x) => x.text), ["Amazing Spider-Man #300", "Amazing Spider-Man #252"]);
   t = 100; const solo = autoDress(W("Tout commence en 1962 avec Stan Lee."), []); assert.deepEqual(solo.map((x) => [x.kind, x.sub, x.text]), [["tag", "Époque", "1962"]]);
   assert.equal(k("timeline").length, 1); assert.match(k("timeline")[0].sub!, /^1962 ; 1984 dans Secret Wars ; 1988 comme Venom ; 2018 au cinéma/);
   assert.equal(autoDress(words, [{ start: 0, end: 2.6 }]).filter((x) => x.kind === "rank").length, 1, "classement coupé : ignoré");
+});
+
+test("habillage sonore : sons générés, niveau, placement dans le bloc", async () => {
+  const { synth, mixSfx } = await import("../src/core/sfx.ts");
+  for (const [k, lvl] of [["whoosh", 0.125], ["pop", 0.1], ["impact", 0.28]] as const) {
+    const y = synth(k, 48000); let pk = 0; for (const v of y) pk = Math.max(pk, Math.abs(v));
+    assert.ok(Math.abs(pk - lvl) < 1e-6, `${k} crête ${pk}`); assert.ok(Math.abs(y[y.length - 1]) < 1e-3, `${k} sans clic final`);
+  }
+  // bloc de 1 s commençant à 10 s ; un « pop » à 10,5 s : rien avant, du son juste après
+  const a = new Float32Array(48000), b = new Float32Array(48000); mixSfx([a, b], 48000, 10, [{ t: 10.5, k: "pop" }, { t: 30, k: "impact" }]);
+  const e = (x: Float32Array, i0: number, i1: number) => { let s = 0; for (let i = i0; i < i1; i++) s += x[i] * x[i]; return s; };
+  assert.equal(e(a, 0, 23990), 0); assert.ok(e(a, 24000, 26000) > 0.5); assert.deepEqual(Array.from(a.subarray(24000, 24100)), Array.from(b.subarray(24000, 24100)));
+  // son qui déborde sur le bloc suivant : la suite est bien ajoutée
+  const c = new Float32Array(4800); mixSfx([c], 48000, 10.5 + 0.05, [{ t: 10.5, k: "pop" }]); assert.ok(e(c, 0, 1000) > 0, "suite du son dans le bloc suivant");
 });

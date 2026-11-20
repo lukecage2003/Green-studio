@@ -7,6 +7,7 @@ import {
 import { kept, type Range } from "./timeline.ts";
 import { Resampler, toMono, fadeGain, softLimit } from "./audio.ts";
 import { StudioVoice, loadDenoiser } from "./voice.ts";
+import { mixSfx, type SfxKind } from "./sfx.ts";
 import { compose, drawTitle, activeAt, activeMarks, drawMark, drawProgress, drawLabel, setGlassBlur, clipTime, zoomRect, zoomEase, type Freeze, type Mark, type Overlay, type Title } from "./overlay.ts";
 import { lineAt, drawCaption, type CapLine, type CaptionStyle } from "./captions.ts";
 
@@ -101,6 +102,7 @@ export interface ExportOptions {
   aspect?: Aspect;                                 // format de sortie ; si différent de la source : fond flouté
   progress?: boolean;                              // barre de progression fine en haut
   look?: Look;                                     // étalonnage de toute l'image
+  sfx?: boolean;                                   // habillage sonore : whoosh sur les images, « pop » sur les titres, impact sur l'accroche
   /** habillage : extraits (images / vidéos) et bandeaux titres, en temps source */
   dress?: { overlays: Overlay[]; titles: Title[]; marks?: Mark[]; images: Map<string, CanvasImageSource>; videos: Map<string, Blob>; accent?: string } | null;
 }
@@ -118,7 +120,7 @@ export function aspectDims(w: number, h: number, a: Aspect = "source"): [number,
 }
 
 export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOptions = {}): Promise<ExportResult> {
-  const { onProgress, signal, fade = 0.012, gain = 1, captions = null, maxHeight = 0, voice = false, zoom = null, dress = null, intro = null, freezes = [], transition = "none", aspect = "source", progress = false, look = "none" } = opts;
+  const { onProgress, signal, fade = 0.012, gain = 1, captions = null, maxHeight = 0, voice = false, zoom = null, dress = null, intro = null, freezes = [], transition = "none", aspect = "source", progress = false, look = "none", sfx = false } = opts;
   setGlassBlur(true); // l'image filmée est dans le canvas d'export : le verre peut flouter ce qu'il y a derrière
   try { return await exportInner(); } finally { setGlassBlur(false); }
   async function exportInner(): Promise<ExportResult> {
@@ -204,6 +206,7 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
     const vEmit = async (src: AudioSampleSource, y: Float32Array) => {
       if (!y.length || !vs) return;
       if (gain !== 1) for (let i = 0; i < y.length; i++) y[i] *= gain;
+      mixSfx([y], vs.sr, vBase + vOut / vs.sr, sfxEv);
       for (let i = 0; i < y.length; i++) y[i] = softLimit(y[i]);
       const data = new Float32Array(y.length * vCh); for (let c = 0; c < vCh; c++) data.set(y, c * y.length);
       const out = new AudioSample({ data, format: "f32-planar", numberOfChannels: vCh, sampleRate: vs.sr, timestamp: vBase + vOut / vs.sr });
@@ -222,12 +225,23 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
       }
     };
     const sr0 = at ? await at.getSampleRate() : 48000, ch0 = at ? await at.getNumberOfChannels() : 1;
+    // Habillage sonore : instants (temps de la vidéo finale) où un élément apparaît
+    const sfxEv: { t: number; k: SfxKind }[] = [];
+    if (sfx && dress) {
+      const introOn = !!intro && intro.end - intro.start > 0.3, oo: number[] = []; { let o = 0; for (const it of items) { oo.push(o); o += it.fr ? it.fr.dur : it.end - it.start; } }
+      const outT = (ts: number) => { for (let i = introOn ? 1 : 0; i < items.length; i++) { const it = items[i]; if (!it.fr && ts >= it.start && ts < it.end) return oo[i] + ts - it.start; } return null; };
+      const add = (t: number | null, k: SfxKind) => { if (t != null && !sfxEv.some((e) => Math.abs(e.t - t) < 0.15)) sfxEv.push({ t, k }); };
+      for (const ti of dress.titles) add(ti.kind === "hook" && introOn ? 0 : outT(ti.start), ti.kind === "hook" || ti.kind === "chapter" ? "impact" : "pop");
+      for (const ov of dress.overlays) add(outT(ov.start), "whoosh");
+      for (const mk of dress.marks ?? []) add(outT(mk.start), mk.type === "sfx" ? "impact" : mk.type === "spot" ? "whoosh" : "pop");
+    }
     // Décalage de chaque morceau dans la vidéo finale (connu d'avance : l'audio peut avancer en parallèle de l'image)
     const offs: number[] = []; { let o = 0; for (const it of items) { offs.push(o); o += it.fr ? it.fr.dur : it.end - it.start; } }
     /** Son d'un morceau (silence pour un arrêt sur image). */
     const audioItem = async (seg: Item, off: number) => {
       if (!asrc) return;
-      if (seg.fr) { const N = Math.round(seg.fr.dur * sr0), out = new AudioSample({ data: new Float32Array(N * ch0), format: "f32-planar", numberOfChannels: ch0, sampleRate: sr0, timestamp: off }); await asrc.add(out); out.close(); return; }
+      if (seg.fr) { const N = Math.round(seg.fr.dur * sr0), data = new Float32Array(N * ch0); mixSfx(Array.from({ length: ch0 }, (_, c) => data.subarray(c * N, (c + 1) * N)), sr0, off, sfxEv);
+        const out = new AudioSample({ data, format: "f32-planar", numberOfChannels: ch0, sampleRate: sr0, timestamp: off }); await asrc.add(out); out.close(); return; }
       const len = seg.end - seg.start;
       if (asink && asrc && voice) await voiceSegment(asink, asrc, seg, len, off);
       else if (asink && asrc) for await (const s of asink.samples(seg.start, seg.end)) {
@@ -236,7 +250,8 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
         if (b <= a) { s.close(); continue; }
         const p = planes(s).map((x) => x.subarray(a, b)), t0 = s.timestamp + a / sr - seg.start, n = b - a;
         for (let i = 0; i < n; i++) { const g = fadeGain(t0 + i / sr, len, fade) * gain; if (g !== 1) for (const x of p) x[i] *= g; }
-        if (gain > 1) for (const x of p) for (let i = 0; i < n; i++) x[i] = softLimit(x[i]);
+        if (sfxEv.length) mixSfx(p, sr, off + t0, sfxEv);
+        if (gain > 1 || sfxEv.length) for (const x of p) for (let i = 0; i < n; i++) x[i] = softLimit(x[i]);
         const data = new Float32Array(n * p.length); p.forEach((x, c) => data.set(x, c * n));
         const out = new AudioSample({ data, format: "f32-planar", numberOfChannels: p.length, sampleRate: sr, timestamp: off + t0 });
         await asrc.add(out); out.close(); s.close();

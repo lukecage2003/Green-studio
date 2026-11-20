@@ -1,7 +1,7 @@
 // Test navigateur « Workflow » : habillage dit à voix haute (classement, concept, univers, frise), vérification express des raccords, publication TikTok (légende copiée).
 // node tests/browser/workflow.e2e.cjs (serveur `npx vite --port 5173` lancé).
 const { chromium } = require('playwright'); const assert = require('assert');
-const said = 'En numéro 3, Venom qui a tout changé. euh Numéro deux : Carnage. Mais c\'est quoi la Force Phénix ? euh Une entité cosmique. Sur Terre-616 tout change. Il apparaît en 1984 dans Secret Wars, puis en 1988 comme Venom.'.split(' ');
+const said = 'En numéro 3, Venom qui a tout changé. euh Numéro deux : Carnage. Mais c\'est quoi la Force Phénix ? euh Une entité cosmique. Sur Terre-616 tout change, comme dans Amazing Spider-Man #300. Il apparaît en 1984 dans Secret Wars, puis en 1988 comme Venom.'.split(' ');
 let t = 0.6; const WORDS = said.map((x) => { const w = { text: x, start: +t.toFixed(2), end: +(t + 0.26).toFixed(2) }; t += x === 'euh' ? 1.1 : 0.36; return w; });
 const FAKE = `self.onmessage = (e) => { if (e.data.type === 'run') self.postMessage({ type: 'done', words: ${JSON.stringify(WORDS)} }); };`;
 (async () => {
@@ -30,6 +30,12 @@ const FAKE = `self.onmessage = (e) => { if (e.data.type === 'run') self.postMess
   assert.deepEqual(s.titles.filter((x) => x.kind === 'rank').map((x) => x.sub + ' ' + x.text), ['3 Venom', '2 Carnage']);
   assert.ok(s.titles.some((x) => x.kind === 'term' && x.text === 'Force Phénix') && s.titles.some((x) => x.kind === 'tag' && x.text === 'Terre-616') && s.titles.some((x) => x.kind === 'timeline'));
   assert.equal(await p.$('.qe [data-spoken]'), null, 'plus rien à placer');
+  assert.ok(s.titles.some((x) => x.kind === 'tag' && x.sub === 'Source' && x.text === 'Amazing Spider-Man #300'), 'source repérée');
+  // schéma de relations, divergence, « À retenir » (valeurs proposées acceptées)
+  for (const k of ['graph', 'branch', 'recap']) { await p.evaluate(() => { document.querySelector('.qe video').currentTime = 2; }); await p.click(`.qe .tiles [data-a=${k}]`); }
+  s = await saved(); const g = s.titles.find((x) => x.kind === 'graph'), br = s.titles.find((x) => x.kind === 'branch'), rc = s.titles.find((x) => x.kind === 'recap');
+  console.log('schémas :', JSON.stringify([g?.sub, br?.sub, rc?.sub]));
+  assert.match(g.sub, /Jean Grey/); assert.match(br.sub, /Terre-616/); assert.match(rc.sub, /Force Phénix/);
   // 2. coupes (les « euh ») puis vérification express des raccords
   await p.click('.qe .tbar [data-a=clean]'); await p.waitForFunction(() => /[1-9]\d* coupe/.test(document.querySelector('.qe [data-r=status]').textContent), null, { timeout: 30000 });
   s = await saved(); const n0 = s.cuts.filter((c) => c.start > 0.05 && c.end < 15.4).length; console.log('coupes internes :', n0); assert.ok(n0 >= 2);

@@ -238,6 +238,7 @@ export async function openEditor(o: EditorOptions) {
   if (!saved) { const tp = loadTpls().find((x) => x.id === autoTplId()); if (tp) applyTpl(tp); }
   const LOOKS_UI: [Look, string][] = [["none", "Naturel"], ["cine", "Ciné"], ["comics", "Comics"], ["noir", "Noir & blanc"]];
   let look = ((): Look => { try { return (localStorage.getItem("gs.look") as Look) || "none"; } catch { return "none"; } })();
+  let sfxOn = (() => { try { return localStorage.getItem("gs.sfx") !== "0"; } catch { return true; } })();
   let prog = (() => { try { return localStorage.getItem("gs.prog") !== "0"; } catch { return true; } })();
   let safeOn = (() => { try { return localStorage.getItem("gs.safe") === "1"; } catch { return false; } })();
   const ovSrc = new Map<string, { blob: Blob; img?: ImageBitmap; vid?: HTMLVideoElement }>();
@@ -390,7 +391,7 @@ export async function openEditor(o: EditorOptions) {
   function placeSpoken(): number { const l = spoken(); for (const d of l) titles.push({ ...d, end: Math.min(duration, d.end) }); if (l.length) titles.sort((a, b) => a.start - b.start); return l.length; }
   function spokenCard() {
     const l = spoken(); if (!l.length) return "";
-    const name = (d: Title) => d.kind === "rank" ? `🏆 N°${d.sub} ${d.text}` : d.kind === "term" ? `💡 ${d.text}` : d.kind === "tag" ? `${d.sub === "Univers" ? "🌍" : "📅"} ${d.text}` : `🗓 ${(d.sub ?? "").split(";").length} dates`;
+    const name = (d: Title) => d.kind === "rank" ? `🏆 N°${d.sub} ${d.text}` : d.kind === "term" ? `💡 ${d.text}` : d.kind === "tag" ? `${d.sub === "Univers" ? "🌍" : d.sub === "Source" ? "📚" : "📅"} ${d.text}` : `🗓 ${(d.sub ?? "").split(";").length} dates`;
     return `<div class="card" data-spoken style="margin-bottom:10px"><b>✨ Repéré dans ce que vous dites</b><p>${l.map((d) => esc(name(d)) + " · " + fmt(d.start)).join("<br>")}</p><div class="chips"><button class="ib go" data-a="spokenAll">Tout placer (${l.length})</button></div></div>`;
   }
   function paceCard() {
@@ -405,16 +406,16 @@ export async function openEditor(o: EditorOptions) {
         ${ov.mode === "compare" ? `<div class="chips" style="margin-top:6px"><button class="ib ${ov.with ? "" : "go"}" data-a="owith">🖼 ${ov.with ? "Changer l’image « après »" : "Choisir l’image « après »"}</button><button class="ib" data-a="olabels">🏷 ${esc((ov.labels ?? ["Avant", "Après"]).join(" / "))}</button></div>`
         : `<div class="chips anim" style="margin-top:6px">${ANIMS.map(([k, l]) => `<button class="ib" data-a="oanim" data-v="${k}" aria-pressed="${(ov.anim ?? "none") === k}">${l}</button>`).join("")}</div>`}</div>
         <button class="ib" data-a="ominus" aria-label="Plus court">−</button><button class="ib" data-a="oplus" aria-label="Plus long">+</button><button class="ib" data-a="ohere">Ici</button><button class="ib" data-a="odel" aria-label="Supprimer">✕</button></div>`).join("")
-      + marks.map((m) => `<div class="sg" data-mk="${m.id}"><div class="t"><b style="color:#ffd60a">${m.type === "arrow" ? "➜ Flèche" : m.type === "circle" ? "◯ Cercle" : "💥 " + esc(m.text ?? "")} · ${fmt(m.start)} → ${fmt(m.end)}</b></div>
+      + marks.map((m) => `<div class="sg" data-mk="${m.id}"><div class="t"><b style="color:#ffd60a">${m.type === "arrow" ? "➜ Flèche" : m.type === "circle" ? "◯ Cercle" : m.type === "spot" ? "🔦 Projecteur" : "💥 " + esc(m.text ?? "")} · ${fmt(m.start)} → ${fmt(m.end)}</b></div>
         <button class="ib" data-a="mminus" aria-label="Plus court">−</button><button class="ib" data-a="mplus" aria-label="Plus long">+</button><button class="ib" data-a="mhere">Ici</button><button class="ib" data-a="mdel" aria-label="Supprimer">✕</button></div>`).join("")
       + freezes.map((f) => `<div class="sg" data-fz="${f.id}"><div class="t"><b style="color:#ff9f0a">⏸ Arrêt sur image · ${fmt(f.at)} · ${f.dur.toFixed(1).replace(".", ",")} s</b>
         <div class="chips" style="margin-top:6px"><button class="ib" data-a="fzoom" aria-pressed="${!!f.zoom}">🔍 ${f.zoom ? `Zoom ${f.zoom.z.toFixed(1).replace(".", ",")}×` : "Zoomer"}</button><button class="ib" data-a="fplay">▶ Voir</button></div></div>
         <button class="ib" data-a="fminus" aria-label="Plus court">−</button><button class="ib" data-a="fplus" aria-label="Plus long">+</button><button class="ib" data-a="fhere">Ici</button><button class="ib" data-a="fdel" aria-label="Supprimer">✕</button></div>`).join("");
-    const tiRows = titles.map((ti) => `<div class="sg" data-ti="${ti.id}"><div class="t"><b style="color:#bf5af2">${ti.kind === "chapter" ? "📖 Chapitre" : ti.kind === "timeline" ? "🗓 Frise" : ti.kind === "hook" ? "🅰 Accroche" : ti.kind === "question" ? "👇 Question" : ti.kind === "rank" ? "🏆 Classement #" + esc(ti.sub ?? "") : ti.kind === "term" ? "💡 Concept" : ti.kind === "tag" ? "📅 Repère · " + esc(ti.sub ?? "") : "Bandeau"} · ${fmt(ti.start)} → ${fmt(ti.end)}</b>
+    const tiRows = titles.map((ti) => `<div class="sg" data-ti="${ti.id}"><div class="t"><b style="color:#bf5af2">${ti.kind === "chapter" ? "📖 Chapitre" : ti.kind === "timeline" ? "🗓 Frise" : ti.kind === "hook" ? "🅰 Accroche" : ti.kind === "question" ? "👇 Question" : ti.kind === "rank" ? "🏆 Classement #" + esc(ti.sub ?? "") : ti.kind === "graph" ? "🔗 Relations" : ti.kind === "branch" ? "🔀 Divergence" : ti.kind === "recap" ? "✅ À retenir" : ti.kind === "term" ? "💡 Concept" : ti.kind === "tag" ? "📅 Repère · " + esc(ti.sub ?? "") : "Bandeau"} · ${fmt(ti.start)} → ${fmt(ti.end)}</b>
         <input data-a="ttext" value="${esc(ti.text)}" placeholder="Titre" style="width:100%;margin-top:6px;background:rgba(255,255,255,.08);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit">
-        <input data-a="tsub" value="${esc(ti.sub ?? "")}" placeholder="${ti.kind === "term" ? "Libellé (Concept, Artefact, Dimension…)" : ti.kind === "tag" ? "Libellé (Époque, Univers…)" : ti.kind === "rank" ? "Numéro" : ti.kind === "timeline" ? "1962 Création ; 1984 Secret Wars ; …" : "Sous-titre (facultatif)"}" style="width:100%;margin-top:4px;background:rgba(255,255,255,.06);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit;font-size:14px"></div>
+        <input data-a="tsub" value="${esc(ti.sub ?? "")}" placeholder="${ti.kind === "graph" ? "Phénix → Jean Grey → Dark Phoenix" : ti.kind === "branch" ? "Point de divergence ; branche A ; branche B" : ti.kind === "recap" ? "Élément ; élément ; élément" : ti.kind === "term" ? "Libellé (Concept, Artefact, Dimension…)" : ti.kind === "tag" ? "Libellé (Époque, Univers…)" : ti.kind === "rank" ? "Numéro" : ti.kind === "timeline" ? "1962 Création ; 1984 Secret Wars ; …" : "Sous-titre (facultatif)"}" style="width:100%;margin-top:4px;background:rgba(255,255,255,.06);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit;font-size:14px"></div>
         <button class="ib" data-a="tminus" aria-label="Plus court">−</button><button class="ib" data-a="tplus" aria-label="Plus long">+</button><button class="ib" data-a="there">Ici</button><button class="ib" data-a="tdel" aria-label="Supprimer">✕</button></div>`).join("");
-    body.innerHTML = spokenCard() + paceCard() + `<div class="tiles">${([["ins", "🖼", "Image"], ["title", "🅣", "Bandeau"], ["chapter", "📖", "Chapitre"], ["timeline", "🗓", "Frise"], ["hookText", "🅰", "Accroche"], ["rank", "🏆", "Classement"], ["term", "💡", "Concept"], ["tag", "📅", "Repère"], ["question", "👇", "Question fin"], ["annot", "✏️", "Annoter"], ["sfx", "💥", "Onomatopée"], ["freezeAdd", "🔍", "Pause zoom"], ["safe", "📱", "Zones TikTok"]] as const).map(([a, i, l]) => `<button class="tile${a === "safe" && safeOn ? " on" : ""}" data-a="${a}"><span>${i}</span>${l}</button>`).join("")}</div><div class="row" style="padding:0 0 10px">${words && sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length ? `<button class="ib go" data-a="sfxAuto">💥 Placer les onomatopées dites (${sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length})</button>` : ""}</div>
+    body.innerHTML = spokenCard() + paceCard() + `<div class="tiles">${([["ins", "🖼", "Image"], ["title", "🅣", "Bandeau"], ["chapter", "📖", "Chapitre"], ["timeline", "🗓", "Frise"], ["hookText", "🅰", "Accroche"], ["rank", "🏆", "Classement"], ["term", "💡", "Concept"], ["tag", "📅", "Repère"], ["graph", "🔗", "Relations"], ["branch", "🔀", "Divergence"], ["recap", "✅", "À retenir"], ["question", "👇", "Question fin"], ["annot", "✏️", "Annoter"], ["sfx", "💥", "Onomatopée"], ["freezeAdd", "🔍", "Pause zoom"], ["safe", "📱", "Zones TikTok"]] as const).map(([a, i, l]) => `<button class="tile${a === "safe" && safeOn ? " on" : ""}" data-a="${a}"><span>${i}</span>${l}</button>`).join("")}</div><div class="row" style="padding:0 0 10px">${words && sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length ? `<button class="ib go" data-a="sfxAuto">💥 Placer les onomatopées dites (${sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length})</button>` : ""}</div>
       ${ovRows || tiRows || marks.length ? ovRows + tiRows : `<div class="card"><b>Habillez votre vidéo</b><p>Insérez une case de comic, une couverture ou un extrait : il s’affiche par-dessus la vidéo au moment choisi (tête de lecture, ou les mots sélectionnés dans Texte), en plein écran, en incrustation, ou avec vous en petit dans un coin, et animez-la (glissé, pop, zoom…). « Zones TikTok » montre ce que l’appli TikTok recouvre.</p></div>`}` + bankCard();
   }
   /**
@@ -472,7 +473,7 @@ export async function openEditor(o: EditorOptions) {
       const COLORS = ["#ffd60a", "#e8202a", "#ffffff", "#30d158", "#64d2ff"];
       m0.innerHTML = `<div class="card" style="gap:10px"><b>${mode === "sfx" ? "Onomatopée" : "Annoter"}</b><p>${mode === "sfx" ? "Choisissez le mot, puis touchez l'image pour le placer." : "Glissez du doigt sur l'image : une flèche du départ vers le détail, ou un cercle autour."}</p>
         <div class="chips">${mode === "sfx" ? SFX.map((x, i) => `<button class="ib" data-mt="${esc(x)}" aria-pressed="${i === 0}">${esc(x)}</button>`).join("") + `<button class="ib" data-mt="+">＋ Autre…</button>`
-          : `<button class="ib" data-mk2="arrow" aria-pressed="true">➜ Flèche</button><button class="ib" data-mk2="circle" aria-pressed="false">◯ Cercle</button>`}</div>
+          : `<button class="ib" data-mk2="arrow" aria-pressed="true">➜ Flèche</button><button class="ib" data-mk2="circle" aria-pressed="false">◯ Cercle</button><button class="ib" data-mk2="spot" aria-pressed="false">🔦 Projecteur</button>`}</div>
         <div class="chips">${COLORS.map((c, i) => `<button class="ib" data-mc="${c}" aria-pressed="${i === 0}" style="width:34px;padding:0;background:${c}"></button>`).join("")}</div>
         <canvas data-mz style="width:100%;height:44vh;border-radius:12px;background:#000;touch-action:none"></canvas>
         ${mode === "sfx" ? `<label class="opt">Taille <input type="range" data-ms min="0.1" max="0.3" step="0.01" value="0.16" style="flex:1"></label>` : ""}
@@ -532,14 +533,18 @@ export async function openEditor(o: EditorOptions) {
       : kind === "hook" ? ["Texte d’accroche (affiché en géant au début, 6 mots max)", "", ""]
       : kind === "question" ? ["Question de fin (pour les commentaires)", "", ""]
       : kind === "rank" ? ["Classement — le nom (ex. « Venom »)", "Numéro (5, 4, 3…)", String(Math.max(1, 6 - titles.filter((x) => x.kind === "rank").length - 1))]
+      : kind === "graph" ? ["Schéma — petit titre (facultatif, ex. « La lignée du Phénix »)", "Les éléments, reliés par → (ex. « Phénix → Jean Grey → Dark Phoenix »)", "Phénix → Jean Grey → Dark Phoenix"]
+      : kind === "branch" ? ["Divergence — titre (facultatif, ex. « Deux réalités »)", "Point de divergence ; branche A ; branche B", "La mort de Gwen ; Terre-616 ; Terre-65"]
+      : kind === "recap" ? ["Titre (« À retenir »)", "Les éléments séparés par ; ", recapItems()]
       : kind === "term" ? ["Concept à mettre en avant (ex. « Force Phénix », « Multivers »)", "Libellé (Concept, Artefact, Dimension, Personnage…)", "Concept"]
       : kind === "tag" ? ["Repère (ex. « 1984 », « Terre-616 », « Âge d’or »)", "Libellé (Époque, Univers…)", "Époque"]
       : kind === "timeline" ? ["Frise — le titre (ex. « L’histoire de Venom »)", "Dates et événements séparés par ; ", "1984 Le costume noir ; 1988 Venom naît ; 2018 Le film"]
       : ["Bandeau — titre (ex. « Comics News »)", "Sous-titre (facultatif, ex. « Le nouveau Spider-Man »)", ""];
-    const t = (text ?? prompt(ask[0], kind === "question" ? endQuestion() : "")?.trim()); if (!t) return;
+    const raw = text ?? prompt(ask[0], kind === "question" ? endQuestion() : kind === "recap" ? "À retenir" : ""); if (raw == null) return;
+    const t = raw.trim(); if (!t && kind !== "graph" && kind !== "branch") return; // schéma et divergence : titre facultatif
     const sub = ask[1] ? prompt(ask[1], ask[2])?.trim() || undefined : undefined;
-    const nRows = (sub ?? "").split(/[;\n]/).filter((x) => x.trim()).length;
-    let start = video.currentTime; const len = kind === "chapter" ? 2.6 : kind === "timeline" ? 2.5 + nRows * 1.2 : kind === "hook" ? 1.8 : kind === "question" ? 3.5 : kind === "rank" ? 2.5 : kind === "term" ? 2.4 : kind === "tag" ? 3 : 4;
+    const nRows = (sub ?? "").split(/[;\n]|→|->|=>|>/).filter((x) => x.trim()).length;
+    let start = video.currentTime; const len = kind === "chapter" ? 2.6 : kind === "timeline" ? 2.5 + nRows * 1.2 : kind === "hook" ? 1.8 : kind === "question" ? 3.5 : kind === "rank" ? 2.5 : kind === "term" ? 2.4 : kind === "tag" ? 3 : kind === "graph" ? 1.2 + nRows * 1.1 : kind === "branch" ? 4.5 : kind === "recap" ? 2 + nRows * 0.6 : 4;
     if (kind === "hook") start = firstKept(); if (kind === "question") start = Math.max(0, lastKept() - len);
     titles.push({ id: "ti" + Date.now().toString(36), text: t, sub, start, end: Math.min(duration, start + len), kind }); titles.sort((a, b) => a.start - b.start);
     titles.sort((a, b) => a.start - b.start); tab = "dress"; body.innerHTML = ""; commit();
@@ -547,6 +552,12 @@ export async function openEditor(o: EditorOptions) {
   const keptWords = () => (words ?? []).filter((w) => !inCut((w.start + w.end) / 2) && /[\p{L}\p{N}]/u.test(w.text));
   const firstKept = () => { const k = keptWords()[0]; return k ? Math.max(0, k.start - 0.05) : 0; };
   const lastKept = () => { const k = keptWords(); return k.length ? Math.min(duration, k[k.length - 1].end + 0.1) : duration; };
+  /** Éléments du « À retenir » proposés : concepts, univers et dates déjà à l'écran. */
+  function recapItems(): string {
+    const it: string[] = [];
+    for (const x of titles) { if (x.kind === "term") it.push(x.text); else if (x.kind === "tag") it.push(`${x.sub ?? ""} ${x.text}`.trim()); else if (x.kind === "rank") it.push(`N°${x.sub} ${x.text}`); }
+    return [...new Set(it)].slice(0, 5).join(" ; ");
+  }
   /** Question de fin proposée : dernière question dite, sinon une formule qui fait réagir. */
   function endQuestion() {
     const q = (words ? keptWords().map((w) => w.text).join(" ") : "").split(/(?<=[.!?…])\s+/).filter((x) => x.endsWith("?")).pop();
@@ -963,7 +974,7 @@ export async function openEditor(o: EditorOptions) {
   function xpCard() {
     const P = xp(), row = (k: keyof XP, l: string) => `<label class="opt"><input type="checkbox" data-a="xp" data-v="${k}" ${P[k] ? "checked" : ""}> ${l}</label>`;
     return `<details class="card" style="margin-bottom:10px"><summary><b>⚡ Express : finition automatique</b></summary><p>Après le nettoyage, l’Express ajoute tout seul :</p>
-      ${row("loop", "Fin en boucle (coupe net sur le dernier mot)")}${row("hookText", "Texte d’accroche géant au début")}${row("question", "Question de fin pour les commentaires")}${row("spoken", "Concepts, univers, dates et frises repérés dans ce que vous dites")}${row("open", "Rejouer la phrase la plus forte en ouverture (si l’accroche est faible)")}</details>`;
+      ${row("loop", "Fin en boucle (coupe net sur le dernier mot)")}${row("hookText", "Texte d’accroche géant au début")}${row("question", "Question de fin pour les commentaires")}${row("spoken", "Concepts, sources, univers, dates et frises repérés dans ce que vous dites")}${row("open", "Rejouer la phrase la plus forte en ouverture (si l’accroche est faible)")}</details>`;
   }
   /** Finition après nettoyage : boucle, accroche, question (selon les réglages). Renvoie ce qui a été fait. */
   function autoPolish(): string[] {
@@ -1130,6 +1141,7 @@ export async function openEditor(o: EditorOptions) {
       <label class="opt"><input type="checkbox" data-x="voice" ${voice ? "checked" : ""}> Voix studio (bruit, écho, voix plus claire)</label>
       <label class="opt"><input type="checkbox" data-x="norm" ${norm ? "checked" : ""}> Volume optimisé pour les réseaux (≈ −14 LUFS)</label>
       <label class="opt"><input type="checkbox" data-x="q720" ${q720 ? "checked" : ""}> 720p (envoi plus rapide, TikTok préfère 1080p)</label>
+      <label class="opt"><input type="checkbox" data-x="sfx" ${sfxOn ? "checked" : ""}> Habillage sonore (whoosh sur les images, sons discrets sur les titres)</label>
       <label class="opt"><input type="checkbox" data-x="prog" ${prog ? "checked" : ""}> Barre de progression en haut (on reste jusqu’au bout)</label>
       <div class="opt col">Look <div class="chips">${LOOKS_UI.map(([k, l]) => `<button class="ib" data-lk="${k}" aria-pressed="${look === k}">${l}</button>`).join("")}</div></div>
       <div class="opt col">Effet aux coupes <div class="chips">${TRANS.map(([k, l]) => `<button class="ib" data-tr="${k}" aria-pressed="${trans === k}">${l}</button>`).join("")}</div></div>
@@ -1142,7 +1154,7 @@ export async function openEditor(o: EditorOptions) {
     m.querySelector<HTMLElement>("[data-x=no]")!.onclick = () => m.remove();
     const ccb = m.querySelector<HTMLElement>("[data-x=cc]"); if (ccb) ccb.onclick = () => { m.remove(); tab = "cc"; body.innerHTML = ""; refresh(); };
     m.querySelector<HTMLElement>("[data-x=run]")!.onclick = () => {
-      norm = m.querySelector<HTMLInputElement>("[data-x=norm]")!.checked; voice = m.querySelector<HTMLInputElement>("[data-x=voice]")!.checked; zooms = m.querySelector<HTMLInputElement>("[data-x=zooms]")!.checked; q720 = m.querySelector<HTMLInputElement>("[data-x=q720]")!.checked; prog = m.querySelector<HTMLInputElement>("[data-x=prog]")!.checked; try { localStorage.setItem("gs.trans", trans); localStorage.setItem("gs.look", look); localStorage.setItem("gs.prog", prog ? "1" : "0"); } catch { /* */ } save(); m.remove(); runExport();
+      norm = m.querySelector<HTMLInputElement>("[data-x=norm]")!.checked; voice = m.querySelector<HTMLInputElement>("[data-x=voice]")!.checked; zooms = m.querySelector<HTMLInputElement>("[data-x=zooms]")!.checked; q720 = m.querySelector<HTMLInputElement>("[data-x=q720]")!.checked; prog = m.querySelector<HTMLInputElement>("[data-x=prog]")!.checked; sfxOn = m.querySelector<HTMLInputElement>("[data-x=sfx]")!.checked; try { localStorage.setItem("gs.sfx", sfxOn ? "1" : "0"); localStorage.setItem("gs.trans", trans); localStorage.setItem("gs.look", look); localStorage.setItem("gs.prog", prog ? "1" : "0"); } catch { /* */ } save(); m.remove(); runExport();
     };
   }
   async function runExport(auto = false) {
@@ -1159,7 +1171,7 @@ export async function openEditor(o: EditorOptions) {
         if (!webCodecsAvailable()) throw new Error("WebCodecs indisponible");
         let gain = 1; if (norm) { await audioP; if (pcm) gain = loudnessGain(pcm, 16000, session.kept); }
         const captions = words && style.preset !== "none" ? { lines, style } : null;
-        const r = await exportEdited(o.file, session.cuts, { onProgress, signal: ac.signal, gain, captions, maxHeight: q720 ? 1280 : 0, voice, zoom: zooms ? zoomAt : null, intro: hook && !inCut((hook.start + hook.end) / 2) ? hook : null, freezes: freezes.filter((f) => !inCut(f.at)), transition: trans, aspect, progress: prog, look,
+        const r = await exportEdited(o.file, session.cuts, { onProgress, signal: ac.signal, gain, captions, maxHeight: q720 ? 1280 : 0, voice, zoom: zooms ? zoomAt : null, intro: hook && !inCut((hook.start + hook.end) / 2) ? hook : null, freezes: freezes.filter((f) => !inCut(f.at)), transition: trans, aspect, progress: prog, look, sfx: sfxOn,
           dress: overlays.length || titles.length || marks.length ? { overlays, titles, marks, images: new Map([...ovSrc].filter(([, e]) => e.img).map(([id, e]) => [id, e.img!])), videos: new Map([...ovSrc].filter(([, e]) => !e.img).map(([id, e]) => [id, e.blob])) } : null }); blob = r.blob; ext = r.ext; how = `${r.video.toUpperCase()}${r.audio ? " + " + r.audio.toUpperCase() : ""}`;
       } catch (e: any) {
         if (e?.name === "AbortError") throw e;
@@ -1273,6 +1285,9 @@ export async function openEditor(o: EditorOptions) {
       case "timeline": addTitle("timeline"); break;
       case "rank": addTitle("rank"); break;
       case "term": addTitle("term"); break;
+      case "graph": addTitle("graph"); break;
+      case "branch": addTitle("branch"); break;
+      case "recap": addTitle("recap"); break;
       case "tag": addTitle("tag"); break;
       case "question": addTitle("question"); break;
       case "hookText": { const h = words ? hookCheck(words, session.cuts, duration) : null, first = words ? keptWords().slice(0, 7).map((w) => w.text).join(" ").replace(/[,.…]+$/, "") : "";

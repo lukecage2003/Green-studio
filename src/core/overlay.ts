@@ -102,8 +102,10 @@ export const overlayZoomK = (ov: Overlay, t: number) => (ov.zoom ? zoomEase(t - 
 /** kind : bandeau (bas gauche), chapitre (carton plein écran), bulle (citation façon comic). */
 /** timeline : frise (sub = « 1962 Création ; 1984 Secret Wars ; … »). */
 /** hook : texte d'accroche géant ; question : question finale ; rank : classement (sub = numéro) ;
- *  tag : repère (text = « 1984 » ou « Terre-616 », sub = libellé « ÉPOQUE » / « UNIVERS ») ; term : concept mis en avant (« Force Phénix »). */
-export interface Title { id: string; text: string; sub?: string; start: number; end: number; kind?: "lower" | "chapter" | "timeline" | "hook" | "question" | "rank" | "tag" | "term" }
+ *  tag : repère (text = « 1984 » ou « Terre-616 », sub = libellé « ÉPOQUE » / « UNIVERS ») ; term : concept mis en avant (« Force Phénix ») ;
+ *  graph : schéma de relations (sub = « Phénix → Jean Grey → Dark Phoenix ») ; branch : ligne temporelle qui diverge (sub = « point de divergence ; branche A ; branche B ») ;
+ *  recap : « À retenir » (sub = éléments séparés par « ; »). */
+export interface Title { id: string; text: string; sub?: string; start: number; end: number; kind?: "lower" | "chapter" | "timeline" | "hook" | "question" | "rank" | "tag" | "term" | "graph" | "branch" | "recap" }
 /**
  * Zones masquées par l'interface TikTok (fractions de l'image 9:16) : onglets en haut, boutons à droite, légende en bas.
  * Tout ce que l'application place (bandeaux, sous-titres, incrustations) reste en dehors.
@@ -348,6 +350,75 @@ function drawTerm(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: 
   const bw = W * 0.2 * spring(age - 0.2, 0.5, 0.1); ctx.globalAlpha = out; ctx.fillStyle = accent; rounded(ctx, -bw / 2, h / 2 + W * 0.035, bw, W * 0.008, W * 0.004); ctx.fill();
   ctx.restore();
 }
+/** Découpe « A → B → C » (ou « > », « -> », « ; »). */
+const chain = (s: string) => s.split(/\s*(?:→|->|=>|>|;)\s*/).map((x) => x.trim()).filter(Boolean);
+/** Bulle de verre centrée en (x, y) avec un texte ; renvoie sa demi-hauteur. */
+function node(ctx: Ctx, W: number, x: number, y: number, text: string, a: number, accent: string, strong = false) {
+  const fs = W * (strong ? 0.054 : 0.048); font(ctx, strong ? 800 : 700, fs, -0.02); const tw = Math.min(W * 0.7, ctx.measureText(text).width), w = tw + W * 0.09, h = fs * 1.9;
+  ctx.save(); ctx.globalAlpha *= a; ctx.translate(x, y); const sc = 0.85 + 0.15 * a; ctx.scale(sc, sc);
+  glass(ctx, -w / 2, -h / 2, w, h, h / 2, W, strong ? "rgba(30,30,34,.62)" : undefined);
+  if (strong) { ctx.lineWidth = W * 0.005; ctx.strokeStyle = accent; rounded(ctx, -w / 2, -h / 2, w, h, h / 2); ctx.stroke(); }
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "#fff"; ctx.fillText(text, 0, fs * 0.04, W * 0.7); ctx.restore();
+  return h / 2;
+}
+/** Flèche qui se trace de (x1, y1) vers (x2, y2), p = avancement 0–1. */
+function arrowTo(ctx: Ctx, W: number, x1: number, y1: number, x2: number, y2: number, p: number, color: string) {
+  if (p <= 0) return; const x = x1 + (x2 - x1) * p, y = y1 + (y2 - y1) * p, an = Math.atan2(y2 - y1, x2 - x1), hl = W * 0.028;
+  ctx.save(); ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.lineWidth = W * 0.008; ctx.strokeStyle = color; ctx.shadowColor = color; ctx.shadowBlur = W * 0.02;
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x, y); ctx.stroke();
+  if (p > 0.85) { ctx.beginPath(); ctx.moveTo(x - hl * Math.cos(an - 0.55), y - hl * Math.sin(an - 0.55)); ctx.lineTo(x, y); ctx.lineTo(x - hl * Math.cos(an + 0.55), y - hl * Math.sin(an + 0.55)); ctx.stroke(); }
+  ctx.restore();
+}
+/** Schéma de relations : bulles reliées de haut en bas, qui apparaissent l'une après l'autre au fil du temps. */
+function drawGraph(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
+  const items = chain(ti.sub ?? "").slice(0, 5), n = items.length; if (!n) return;
+  const a = fadeIn(ti, t, 0.25), dur = Math.max(1, (ti.end - ti.start) * 0.75), age = t - ti.start, step = dur / n;
+  const top = H * (TIKTOK_SAFE.top + 0.1), bot = H * (1 - TIKTOK_SAFE.bottom - 0.05), gap = Math.min(H * 0.15, (bot - top) / Math.max(1, n - 1));
+  const y0 = (top + bot) / 2 - (gap * (n - 1)) / 2;
+  ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = "rgba(0,0,0,.42)"; ctx.fillRect(0, 0, W, H);
+  if (ti.text.trim()) { ctx.textAlign = "center"; ctx.textBaseline = "middle"; font(ctx, 700, W * 0.03, 0.22); ctx.fillStyle = accent; ctx.fillText(ti.text.toUpperCase(), W / 2, y0 - gap * 0.55 - W * 0.02); }
+  const hs: number[] = [];
+  items.forEach((it, i) => { const k = Math.min(1, Math.max(0, (age - i * step) / 0.35)); hs.push(k > 0 ? node(ctx, W, W / 2, y0 + i * gap, it, spring(k * 0.5, 0.4, 0.4), accent, i === n - 1) : W * 0.045); });
+  for (let i = 0; i + 1 < n; i++) { const p = Math.min(1, Math.max(0, (age - (i + 1) * step + 0.3) / 0.3)); arrowTo(ctx, W, W / 2, y0 + i * gap + hs[i] + W * 0.012, W / 2, y0 + (i + 1) * gap - W * 0.065, p, accent); }
+  ctx.restore();
+}
+/** Ligne temporelle qui diverge : tronc, point de divergence lumineux, deux branches qui partent en biais. */
+function drawBranch(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
+  const [root, b1, b2] = chain(ti.sub ?? ""); if (!root) return;
+  const a = fadeIn(ti, t, 0.25), age = t - ti.start, top = H * (TIKTOK_SAFE.top + 0.08), sy = H * 0.4, by = H * 0.62, cx = W / 2;
+  const p1 = Math.min(1, age / 0.7), p2 = Math.min(1, Math.max(0, (age - 0.8) / 0.8));
+  ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = "rgba(0,0,0,.42)"; ctx.fillRect(0, 0, W, H);
+  if (ti.text.trim()) { ctx.textAlign = "center"; ctx.textBaseline = "middle"; font(ctx, 800, W * 0.056, -0.02); ctx.fillStyle = "#fff"; ctx.fillText(ti.text, cx, top, W * 0.84); }
+  ctx.lineCap = "round"; ctx.lineWidth = W * 0.01; ctx.strokeStyle = "rgba(255,255,255,.85)"; ctx.beginPath(); ctx.moveTo(cx, top + W * 0.08); ctx.lineTo(cx, top + W * 0.08 + (sy - top - W * 0.08) * p1); ctx.stroke();
+  if (p1 >= 1) {
+    const pulse = 1 + 0.15 * Math.sin(age * 6); ctx.save(); ctx.shadowColor = accent; ctx.shadowBlur = W * 0.06; ctx.fillStyle = accent; ctx.beginPath(); ctx.arc(cx, sy, W * 0.03 * pulse, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    ctx.textAlign = "left"; ctx.textBaseline = "middle"; font(ctx, 700, W * 0.026, 0.22); ctx.fillStyle = accent; ctx.fillText("DIVERGENCE", cx + W * 0.06, sy - W * 0.03);
+    font(ctx, 700, W * 0.042, -0.01); ctx.fillStyle = "#fff"; ctx.fillText(root, cx + W * 0.06, sy + W * 0.025, W * 0.4);
+  }
+  const ends = [[W * 0.24, by, b1, "#fff"], [W * 0.76, by, b2, accent]] as const;
+  for (const [ex, ey, label, col] of ends) { if (!label) continue;
+    ctx.save(); ctx.lineCap = "round"; ctx.lineWidth = W * 0.008; ctx.strokeStyle = col; ctx.globalAlpha = a * 0.9;
+    ctx.beginPath(); ctx.moveTo(cx, sy); ctx.quadraticCurveTo(cx, sy + (ey - sy) * 0.6 * p2, cx + (ex - cx) * p2, sy + (ey - sy) * p2); ctx.stroke(); ctx.restore();
+    if (p2 >= 1) node(ctx, W, ex, ey + W * 0.07, label, Math.min(1, (age - 1.6) / 0.3), accent, col !== "#fff");
+  }
+  ctx.restore();
+}
+/** « À retenir » : plaque de verre, coche de couleur devant chaque élément, qui apparaissent un à un. */
+function drawRecap(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
+  const items = chain(ti.sub ?? "").slice(0, 5), n = items.length; if (!n) return;
+  const a = fadeIn(ti, t, 0.25), age = t - ti.start, fs = W * 0.046, lh = fs * 2, pad = W * 0.06, w = W * 0.86, h = pad * 1.6 + W * 0.07 + n * lh, x = (W - w) / 2, y = H * (TIKTOK_SAFE.top + 0.04);
+  ctx.save(); ctx.globalAlpha = a; ctx.translate(0, (1 - spring(age, 0.45, 0.2)) * H * 0.03);
+  glass(ctx, x, y, w, h, W * 0.06, W);
+  ctx.textAlign = "left"; ctx.textBaseline = "middle"; font(ctx, 700, W * 0.028, 0.22); ctx.fillStyle = accent; ctx.fillText((ti.text || "À retenir").toUpperCase(), x + pad, y + pad * 0.9);
+  items.forEach((it, i) => {
+    const k = Math.min(1, Math.max(0, (age - 0.3 - i * 0.35) / 0.25)); if (k <= 0) return; const cy = y + pad * 0.9 + W * 0.07 + lh * (i + 0.5);
+    ctx.save(); ctx.globalAlpha = a * k; ctx.translate((1 - k) * W * 0.04, 0);
+    ctx.beginPath(); ctx.arc(x + pad + fs * 0.45, cy, fs * 0.45, 0, Math.PI * 2); ctx.fillStyle = accent; ctx.fill();
+    ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.lineWidth = fs * 0.13; ctx.strokeStyle = "#000"; ctx.beginPath(); ctx.moveTo(x + pad + fs * 0.25, cy); ctx.lineTo(x + pad + fs * 0.4, cy + fs * 0.15); ctx.lineTo(x + pad + fs * 0.68, cy - fs * 0.17); ctx.stroke();
+    font(ctx, 700, fs, -0.01); ctx.fillStyle = "#fff"; ctx.fillText(it, x + pad + fs * 1.3, cy + fs * 0.03, w - pad * 2 - fs * 1.3); ctx.restore();
+  });
+  ctx.restore();
+}
 /** Nom affiché avec une image de la banque (« Venom ») : pastille de verre posée sous l'image. */
 export function drawLabel(ctx: Ctx, W: number, H: number, t: number, ov: Overlay, accent = "#30d158") {
   if (!ov.label) return;
@@ -369,12 +440,15 @@ export function drawProgress(ctx: Ctx, W: number, H: number, p: number, accent =
   ctx.restore();
 }
 export function drawTitle(ctx: Ctx, W: number, H: number, t: number, ti: Title | null, accent = "#30d158") {
-  if (!ti || !ti.text.trim()) return;
+  if (!ti || (!ti.text.trim() && ti.kind !== "graph" && ti.kind !== "branch")) return;
   if (ti.kind === "hook") return drawHook(ctx, W, H, t, ti, accent);
   if (ti.kind === "question") return drawQuestion(ctx, W, H, t, ti, accent);
   if (ti.kind === "rank") return drawRank(ctx, W, H, t, ti, accent);
   if (ti.kind === "tag") return drawTag(ctx, W, H, t, ti, accent);
   if (ti.kind === "term") return drawTerm(ctx, W, H, t, ti, accent);
+  if (ti.kind === "graph") return drawGraph(ctx, W, H, t, ti, accent);
+  if (ti.kind === "branch") return drawBranch(ctx, W, H, t, ti, accent);
+  if (ti.kind === "recap") return drawRecap(ctx, W, H, t, ti, accent);
   if (ti.kind === "timeline") return drawTimeline(ctx, W, H, t, ti, accent);
   if (ti.kind === "chapter") return drawChapter(ctx, W, H, t, ti, accent);
   if (ti.kind && ti.kind !== "lower") return; // anciens types retirés (bulle, fiche)
@@ -383,7 +457,7 @@ export function drawTitle(ctx: Ctx, W: number, H: number, t: number, ti: Title |
 
 /* ---------- Annotations et onomatopées (temps source, coordonnées 0–1 de l'image) ---------- */
 /** arrow : flèche de (x1, y1) vers (x2, y2) ; circle : cercle dans le rectangle ; sfx : onomatopée centrée en (x1, y1), taille x2. */
-export interface Mark { id: string; type: "arrow" | "circle" | "sfx"; start: number; end: number; x1: number; y1: number; x2: number; y2: number; color?: string; text?: string }
+export interface Mark { id: string; type: "arrow" | "circle" | "sfx" | "spot"; start: number; end: number; x1: number; y1: number; x2: number; y2: number; color?: string; text?: string }
 export const SFX = ["BAM !", "POW !", "BOOM !", "WHAM !", "ZAP !", "CRAC !", "KRAKOOM !", "SNIKT !", "THWIP !", "BANG !", "SPLASH !", "WOW !"];
 /** Mots dits qui appellent une onomatopée (transcription) → texte affiché. */
 export const SFX_WORDS: Record<string, string> = { boum: "BOOM !", boom: "BOOM !", bam: "BAM !", pow: "POW !", paf: "PAF !", pif: "PIF !", bang: "BANG !", crac: "CRAC !", crack: "CRAC !", zap: "ZAP !", wham: "WHAM !", vlan: "VLAN !", splash: "SPLASH !", snikt: "SNIKT !", thwip: "THWIP !", kaboom: "KABOOM !", badaboum: "BADABOUM !", pan: "PAN !" };
@@ -402,6 +476,12 @@ export function drawMark(ctx: Ctx, W: number, H: number, t: number, m: Mark) {
     const an = Math.atan2(y2 - y1, x2 - x1), hl = W * 0.05;
     stroke2(() => { ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); });
     if (p > 0.6) stroke2(() => { ctx.beginPath(); ctx.moveTo(x2 - hl * Math.cos(an - 0.5), y2 - hl * Math.sin(an - 0.5)); ctx.lineTo(x2, y2); ctx.lineTo(x2 - hl * Math.cos(an + 0.5), y2 - hl * Math.sin(an + 0.5)); });
+  } else if (m.type === "spot") { // projecteur : tout s'assombrit sauf le détail, le cercle se resserre en entrant
+    const p = zoomEase(age, 0.6), cx = X((m.x1 + m.x2) / 2), cy = Y((m.y1 + m.y2) / 2), rx0 = Math.max(10, Math.abs(X(m.x2) - X(m.x1)) / 2), ry0 = Math.max(10, Math.abs(Y(m.y2) - Y(m.y1)) / 2), k = 1 + (1 - p) * 1.6;
+    ctx.globalAlpha = out * Math.min(1, age / 0.25); ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.ellipse(cx, cy, rx0 * k, ry0 * k, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(0,0,0,.66)"; ctx.fill("evenodd");
+    ctx.shadowColor = "rgba(255,255,255,.6)"; ctx.shadowBlur = W * 0.03; ctx.lineWidth = Math.max(1.5, W * 0.004); ctx.strokeStyle = "rgba(255,255,255,.85)";
+    ctx.beginPath(); ctx.ellipse(cx, cy, rx0 * k, ry0 * k, 0, 0, Math.PI * 2); ctx.stroke();
   } else if (m.type === "circle") {
     const p = zoomEase(age, 0.45), cx = X((m.x1 + m.x2) / 2), cy = Y((m.y1 + m.y2) / 2), rx = Math.max(8, Math.abs(X(m.x2) - X(m.x1)) / 2), ry = Math.max(8, Math.abs(Y(m.y2) - Y(m.y1)) / 2);
     const a0 = -Math.PI * 0.6; // trait façon feutre : le cercle se dessine et dépasse un peu son point de départ
