@@ -128,6 +128,23 @@ export function autoDress(words: Word[], cuts: Range[]): Title[] {
       const num = m ? m[2] ?? (/^\d{2,6}$/.test(nx) ? nx : null) : null;
       if (m && num && !out.some((x) => x.kind === "tag" && x.text === `Terre-${num}` && Math.abs(x.start - kw[i].start) < 20)) out.push({ id: id("tag", kw[i].start), kind: "tag", text: `Terre-${num}`, sub: "Univers", start: kw[i].start, end: kw[i].start + 3 }); }
   }
+  // chiffre clé : « 13,8 milliards d'années », « des millions de mondes »
+  for (let i = 0; i < kw.length; i++) {
+    if (!/^(milliards?|millions?|milliers)$/.test(f[i])) continue;
+    const prevNum = i > 0 && /^[\d,.]+$/.test(bare(kw[i - 1].text)) ? bare(kw[i - 1].text) : null, unit: string[] = [bare(kw[i].text)];
+    for (let k = i + 1; k < kw.length && unit.length < 3; k++) { const b = bare(kw[k].text); if (/^(de|d'.+|des)$/i.test(b) || unit.length === 1) { unit.push(b); if (/^d'/i.test(b) || /[,.;!?…]$/.test(kw[k].text)) break; } else break; }
+    while (unit.length > 1 && /^(de|des)$/i.test(unit[unit.length - 1])) unit.pop();
+    const lead: string[] = []; for (let k = i - (prevNum ? 2 : 1); k >= 0 && lead.length < 5; k--) { if (/[.!?…]$/.test(kw[k].text)) break; lead.unshift(bare(kw[k].text)); }
+    if (prevNum && !out.some((x) => x.kind === "number" && Math.abs(x.start - kw[i].start) < 3)) out.push({ id: id("number", kw[i].start), kind: "number", text: lead.join(" ").replace(/^./, (c) => c.toUpperCase()), sub: `${prevNum} ${unit.join(" ")}`, start: Math.max(0, kw[i - 1].start - 0.1), end: kw[i].start + 3 });
+  }
+  // alerte spoiler : « attention spoiler », « spoilers sur Secret Wars »
+  { const i = f.findIndex((x) => /^spoil/.test(x)); if (i >= 0 && kw[i].start < 20) { const on: string[] = []; for (let k = i + 1; k < kw.length && on.length < 5; k++) { const b = bare(kw[k].text); if (/^(sur|de|du|pour)$/i.test(b) && !on.length) continue; if (!/^\p{Lu}/u.test(b) && !/^\(?\d{4}\)?$/.test(b)) break; on.push(b); if (/[,.;:!?…]$/.test(kw[k].text)) break; }
+    out.push({ id: id("spoiler", kw[i].start), kind: "spoiler", text: on.join(" ") || "Attention, ça révèle la fin", start: Math.max(0, kw[i].start - 0.2), end: kw[i].start + 2.8 }); } }
+  // carte du multivers : au moins deux univers différents à moins de 40 s → une carte au premier
+  { const tg = out.filter((x) => x.kind === "tag" && x.sub === "Univers").sort((a, b) => a.start - b.start);
+    for (let a = 0; a < tg.length; a++) { const grp = tg.filter((x) => x.start >= tg[a].start && x.start - tg[a].start < 40), names = [...new Set(grp.map((x) => x.text))];
+      if (names.length >= 2) { out.push({ id: id("multiverse", tg[a].start), kind: "multiverse", text: "Le multivers", sub: names.slice(0, 6).join(" ; "), start: tg[a].start, end: tg[a].start + 4.5 });
+        for (const x of grp) out.splice(out.indexOf(x), 1); break; } } }
   // frise : années dites, regroupées si moins de 25 s d'écart
   const years: { t: number; y: string; what: string }[] = [];
   kw.forEach((w, i) => { const b = bare(w.text); if (/^(19[3-9]\d|20\d\d)$/.test(b)) { const what: string[] = []; for (let k = i + 1; k < kw.length && what.length < 4 && !/[.!?…]$/.test(w.text); k++) { if (/^(19[3-9]\d|20\d\d)$/.test(bare(kw[k].text))) break; what.push(bare(kw[k].text)); if (/[,.;!?…]$/.test(kw[k].text)) break; } while (what.length && /^(et|en|puis|au|aux|à|a|dans|de|du|des|le|la|les|un|une|ou|mais)$/i.test(what[what.length - 1])) what.pop(); years.push({ t: w.start, y: b, what: what.join(" ") }); } });

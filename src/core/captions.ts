@@ -2,6 +2,7 @@
  *  Les temps sont ceux de la vidéo source : le même code sert à l'aperçu (lecteur) et à l'export (images source). */
 import type { Range, Word } from "./timeline.ts";
 import { emojiFor } from "./viral.ts";
+import { charColor } from "./overlay.ts";
 
 export type CaptionPreset = "none" | "pro" | "karaoke" | "box" | "word" | "simple";
 export interface CaptionStyle { preset: CaptionPreset; pos: number; upper: boolean; color: string; strong?: boolean; emoji?: boolean } // emoji : emoji qui « pop » au-dessus du mot fort // strong : mots forts en couleur
@@ -80,7 +81,7 @@ export function drawCaption(ctx: Ctx, x: number, y: number, W: number, H: number
         ctx.save(); ctx.translate(cx + ws[i] / 2, ry); ctx.scale(pop, pop); ctx.translate(-(cx + ws[i] / 2), -ry);
         ctx.shadowColor = "rgba(0,0,0,.55)"; ctx.shadowBlur = fs * 0.4; ctx.shadowOffsetY = fs * 0.05;
         ctx.globalAlpha *= said ? 1 : 0.42;
-        ctx.fillStyle = active || (said && st.strong !== false && w.em) ? st.color : "#fff"; ctx.fillText(words[i], cx, ry);
+        const cc = charColor(w.text); ctx.fillStyle = cc && said ? cc : active || (said && st.strong !== false && w.em) ? st.color : "#fff"; ctx.fillText(words[i], cx, ry);
         ctx.restore(); cx += ws[i] + sp;
       }
     });
@@ -111,7 +112,7 @@ export function drawCaption(ctx: Ctx, x: number, y: number, W: number, H: number
       if (st.preset === "simple") { ctx.shadowColor = "rgba(0,0,0,.85)"; ctx.shadowBlur = fs * 0.25; }
       else if (st.preset === "karaoke") { ctx.lineWidth = fs * 0.18; ctx.strokeStyle = "#000"; ctx.strokeText(words[i], cx, ry); }
       const em = st.strong !== false && line.words[i].em; // mot fort : en couleur même quand il n'est pas le mot actif
-      ctx.fillStyle = active ? (st.preset === "box" ? "#ffd23f" : st.color) : em ? (st.preset === "box" ? st.color : "#ffd23f") : "#fff"; ctx.fillText(words[i], cx, ry);
+      const cc = charColor(line.words[i].text); ctx.fillStyle = cc ?? (active ? (st.preset === "box" ? "#ffd23f" : st.color) : em ? (st.preset === "box" ? st.color : "#ffd23f") : "#fff"); ctx.fillText(words[i], cx, ry);
       ctx.restore(); cx += ws[i] + sp;
     }
   });

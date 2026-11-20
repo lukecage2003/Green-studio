@@ -253,6 +253,7 @@ html.native .webonly{display:none!important}
 <header class="topbar">
   <button class="iconbtn" id="bDecor" aria-label="Réglages du décor et de la caméra"><svg class="i" viewBox="0 0 24 24"><path d="M4 7h9M18 7h2M4 17h3M12 17h8"/><circle cx="15.5" cy="7" r="2.5"/><circle cx="9.5" cy="17" r="2.5"/></svg></button>
   <div class="mid"><button class="chip" id="ai">IA</button><span class="chip" id="recChip" hidden></span></div>
+  <button class="iconbtn" id="bPage" aria-label="Planche de comic : zoomer sur les cases pendant le tournage"><svg class="i" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 10h16M12 10v11"/></svg></button><input type="file" id="pageFile" accept="image/*" multiple hidden>
   <button class="iconbtn" id="bScript" aria-label="Prompteur"><b>Aa</b></button>
   <button class="chip" id="micChip" hidden aria-label="Choisir le micro"></button>
   <button id="bAudio" hidden aria-label="Audio"></button>
@@ -323,6 +324,7 @@ html.native .webonly{display:none!important}
     <label><span>Vrai fond vert<span class="sub">Incrustation studio si vous filmez devant un fond vert ou bleu</span></span><select id="keySel"><option value="auto">Auto</option><option value="on">Toujours</option><option value="off">Jamais</option></select></label>
     <label><span>Tolérance du fond vert<span class="sub">Plus haut : retire plus de vert (fond mal éclairé)</span></span><input type="range" id="ktol" min="0" max="1" step="0.01" value="0.5"></label>
     <label>Miroir <button class="sw" id="bMirror" aria-pressed="true" aria-label="Miroir"></button></label>
+    <div class="item"><span>Décors animés<span class="sub">Générés sur le téléphone, en boucle, libres de droits</span></span><span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><button class="btn sm" data-anim="cosmos">✦ Cosmos</button><button class="btn sm" data-anim="multivers">◎ Multivers</button><button class="btn sm" data-anim="labo">⌗ Labo</button></span></div>
     <label class="item">Importer un décor<span class="sub">Image ou vidéo</span><input type="file" id="file" accept="image/*,video/*" hidden><span style="color:var(--muted2);font-size:22px">›</span></label>
   </div>
   <div class="gh">Vidéo</div>
@@ -1192,6 +1194,16 @@ setInterval(() => { if (!analyser) return; analyser.getFloatTimeDomainData(abuf)
 
 /* ---------- Enregistrement ---------- */
 let rec = null, t0r = 0, recTimer = 0, recMime = "";
+/* Planche de comic présentée en direct (src/ui/presenter.ts) : chargée à la demande. */
+let pres = null;
+$("bPage").onclick = () => { if (pres?.open) { pres.close(); return; } $("pageFile").click(); };
+$("pageFile").onchange = async (e) => {
+  const files = [...e.target.files]; e.target.value = ""; if (!files.length) return;
+  try { const { Presenter } = await import("/src/ui/presenter.ts");
+    pres ??= new Presenter(document.querySelector(".frame"), () => (rec && rec.state === "recording" ? (performance.now() - t0r) / 1000 : null));
+    const n = await pres.load(files); toast(`📖 ${files.length} planche(s) · ${n.join(" + ")} case(s) repérée(s). Touchez une case pour zoomer, ‹ › pour avancer.`, 5000);
+  } catch (err) { toast("Planche illisible : " + (err?.message ?? err), 5000); }
+};
 const MIMES = ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
 let cdTimer = 0;
 try { $("cdOn").checked = localStorage.getItem("gs.cd") !== "0"; } catch {}
@@ -1233,7 +1245,7 @@ async function startRecNative() {
   try { await St.startRecording({ width: W, height: H, bitrate: H > 1920 ? 20e6 : H > 1280 ? 14e6 : 8e6 }); }
   catch (e) { return toast(e?.message ?? "Enregistrement impossible", 6000); }
   rec = { state: "recording", native: true, stop() { this.state = "inactive"; finishNative(); } }; logEvent("info", `prise native ${W}×${H}`);
-  t0r = performance.now(); nativeRecT = t0r;
+  t0r = performance.now(); nativeRecT = t0r; pres?.recStart();
   recPeak = 0; $("rec").classList.add("on"); $("recChip").hidden = false;
   recTimer = setInterval(() => { const s = ((performance.now() - t0r) / 1000) | 0; $("recChip").textContent = `${String((s / 60) | 0).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; }, 250);
 }
@@ -1275,11 +1287,12 @@ async function startRecInner() {
   r.onerror = (e) => toast("Erreur d’enregistrement : " + (e.error?.message ?? "inconnue"));
   r.onstop = finishRec;
   await actx?.resume();
-  r.start(1000); t0r = performance.now();
+  r.start(1000); t0r = performance.now(); pres?.recStart();
   recPeak = 0; $("rec").classList.add("on"); $("recChip").hidden = false;
   recTimer = setInterval(() => { const s = ((performance.now() - t0r) / 1000) | 0; $("recChip").textContent = `${String((s / 60) | 0).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; }, 250);
 }
-function stopRec() { window.gsRecEnd = performance.now(); clearInterval(recTimer); if (rec.state !== "inactive") rec.stop(); $("rec").classList.remove("on"); $("recChip").hidden = true; }
+function stopRec() { if (pres) { const pd = pres.recStop((performance.now() - t0r) / 1000); try { pd ? localStorage.setItem("gs.pres.pending", JSON.stringify(pd)) : localStorage.removeItem("gs.pres.pending"); } catch {} }
+  window.gsRecEnd = performance.now(); clearInterval(recTimer); if (rec.state !== "inactive") rec.stop(); $("rec").classList.remove("on"); $("recChip").hidden = true; }
 async function finishRec() {
   const type = recMime.split(";")[0], ext = type === "video/mp4" ? "mp4" : "webm";
   rec = null; let blob;
@@ -1606,8 +1619,10 @@ function delBg(i) {
   snack('Décor supprimé', () => { clearTimeout(kill); if (it.blob) dbDo('readwrite', (st) => st.put({ id: it.id, t: Date.now(), video: it.kind === 'vid', blob: it.blob, thumb: it.thumb })).catch(() => {}); lib.splice(Math.min(i, lib.length), 0, it); if (it.kind === 'gen') bgPref('gs.bgHidden', bgPref('gs.bgHidden').filter((x) => x !== it.id)); saveOrder(); bi = Math.max(0, lib.findIndex((x) => x.id === cur)); renderStrip(); });
 }
 $('file').multiple = true;
-$('file').onchange = async (e) => {
-  const files = [...e.target.files]; e.target.value = ''; let first = -1;
+$('file').onchange = async (e) => { const files = [...e.target.files]; e.target.value = ''; await addDecorFiles(files); };
+/** Ajoute des décors (images ou vidéos) à la bibliothèque, mémorisés, et affiche le premier. */
+async function addDecorFiles(files) {
+  let first = -1;
   for (const f of files) {
     const video = f.type.startsWith('video/'); if (!video && !f.type.startsWith('image/')) continue;
     try {
@@ -1617,7 +1632,7 @@ $('file').onchange = async (e) => {
     } catch { toast('Fichier illisible : ' + f.name); }
   }
   saveOrder(); renderStrip(); if (first >= 0) setBg(first);
-};
+}
 async function loadLib() {
   try { const rows = await dbDo('readonly', (s) => s.getAll()); rows.sort((a, b) => a.t - b.t).forEach((r) => lib.push({ id: r.id, kind: r.video ? 'vid' : 'img', blob: r.blob, thumb: r.thumb })); } catch {}
   const hidden = new Set(bgPref('gs.bgHidden')), order = bgPref('gs.bgOrder');
@@ -1626,6 +1641,13 @@ async function loadLib() {
   renderStrip(); setBg(0);
 }
 loadLib();
+document.querySelectorAll('[data-anim]').forEach((b) => (b.onclick = async () => {
+  const kind = b.dataset.anim; b.disabled = true; toast('Création du décor animé…', 60000);
+  try { const { makeAnimatedDecor } = await import('/src/ui/animdecor.ts'); const f = await makeAnimatedDecor(kind, (p) => toast(`Création du décor animé… ${Math.round(p * 100)} %`, 60000));
+    await addDecorFiles([f]); toast('✦ Décor animé ajouté.', 2500); }
+  catch (err) { toast('Décor animé impossible : ' + (err?.message ?? err), 6000); }
+  finally { b.disabled = false; }
+}));
 
 /* ---------- Gestes : mode Sujet (déplacer / pincer ma silhouette) ou mode Fond (décor) ---------- */
 let gmode = "sub", lastTap = 0, tapT = 0;

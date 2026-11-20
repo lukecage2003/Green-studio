@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.25)
+# Green Studio 3.1 — état réel (beta.26)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,15 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.26 — planche en direct, nouveaux visuels
+- **📖 Planche en direct** (bouton en haut de l'écran de tournage) : choisissez une ou plusieurs planches ; les cases sont détectées toutes seules (`src/core/panels.ts`, découpe sur les gouttières). La planche s'affiche en haut de l'image, en entier ; **toucher une case → zoom dessus**, toucher à nouveau → page entière, ‹ › → case précédente / suivante puis page suivante. Pendant la prise, chaque geste est noté : à l'ouverture du montage, la planche est **rejouée à l'identique** (mêmes zooms aux mêmes instants, mêmes position et taille qu'à l'écran), avec des glissements fluides d'une case à l'autre.
+- **✂ Découper en cases** (Habillage, sur une image) : parcours automatique page entière → chaque case.
+- **⚡ Échelle de puissance**, **🪐 Carte du multivers**, **🔢 Chiffre clé** (le nombre défile), **⚠️ Alerte spoiler**, **📚 Fin de série** (Partie 1 / 2 / 3), **📄 Planche** (mode d'affichage : 2 à 4 images en page de BD, cases révélées une à une, vous en médaillon).
+- **Couleur par personnage** (Sous-titres) : « Venom » violet, « Carnage » rouge… dans les sous-titres, les noms, l'échelle de puissance et le multivers ; mémorisé pour toutes les vidéos.
+- **Décors animés** (réglages du décor) : Cosmos, Multivers, Labo — vidéos de 6 s en boucle parfaite, générées sur le téléphone (`src/ui/animdecor.ts`).
+- Repérés dans la voix : « 13,8 milliards d'années » → chiffre clé ; « attention spoilers sur … » → alerte ; deux univers ou plus → carte du multivers.
+- Tests : 50 unitaires ; `presenter.e2e` (tournage → zoom sur une case → montage → export, pixels vérifiés) et `animdecor.e2e`.
 
 ## 3.1.0-beta.25 — expliquer les concepts
 - **🔗 Relations** : schéma de bulles reliées par des flèches qui apparaissent une à une (« Force Phénix → Jean Grey → Dark Phoenix »), dernier élément mis en valeur.

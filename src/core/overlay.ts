@@ -1,7 +1,7 @@
 /** Habillage : images/extraits par-dessus la vidéo (plein écran, incrustation, « moi en petit ») et bandeaux titres.
  *  Le même dessin sert à l'aperçu (lecteur) et à l'export : ce que l'on voit est ce que l'on obtient. Temps = temps source. */
 
-export type OverlayMode = "full" | "pip" | "me" | "compare";
+export type OverlayMode = "full" | "pip" | "me" | "compare" | "page";
 /** Animation d'une image / d'un extrait : entrée (ressort), mouvement continu ou sortie. */
 export type OverlayAnim = "none" | "slideL" | "slideR" | "slideUp" | "zoomIn" | "pop" | "spin" | "float" | "shake" | "panLR" | "panRL";
 /** Zoom sur un détail : facteur z (1–4) vers le point (x, y) de l'image source (0–1). */
@@ -9,7 +9,13 @@ export interface ZoomTarget { z: number; x: number; y: number }
 /** freeze : l'extrait vidéo se fige à cet instant (s depuis son début) ; zoom : on s'approche d'un détail (après le gel, sinon dès l'apparition). */
 /** path : parcours de cases (page de comic) — la page entière, puis chaque case dans l'ordre. */
 /** anim : animation ; with / labels : avant / après (2e image et étiquettes des deux côtés). */
-export interface Overlay { id: string; kind: "image" | "video"; start: number; end: number; mode: OverlayMode; freeze?: number; zoom?: ZoomTarget; path?: ZoomTarget[]; anim?: OverlayAnim; with?: string; labels?: [string, string]; label?: string }
+export interface Overlay { id: string; kind: "image" | "video"; start: number; end: number; mode: OverlayMode; freeze?: number; zoom?: ZoomTarget; path?: ZoomTarget[]; anim?: OverlayAnim; with?: string; labels?: [string, string]; label?: string;
+  /** planche présentée en direct : le cadrage glisse de zfrom (vue d'ensemble si absent) vers zoom ; seq évite les fondus entre deux étapes */
+  zmove?: boolean; zfrom?: ZoomTarget; seq?: "first" | "mid" | "last" | "only";
+  /** fichier partagé : identifiant du média si différent de id (plusieurs étapes d'une même planche) */
+  src?: string;
+  /** planche (mode « page ») : images des cases suivantes */
+  more?: string[] }
 /** Arrêt sur image dans la vidéo principale : à l'instant `at` (temps source), l'image reste figée `dur` s, avec zoom éventuel. */
 export interface Freeze { id: string; at: number; dur: number; zoom?: ZoomTarget }
 
@@ -22,9 +28,9 @@ export const zoomEase = (dt: number, d = 0.7) => { const x = Math.min(1, Math.ma
 export function zoomRect(srcW: number, srcH: number, dw: number, dh: number, zt: ZoomTarget | null | undefined, k = 1, extra = 1) {
   let cw = srcW, ch = srcH;
   if (srcW / srcH > dw / dh) cw = srcH * dw / dh; else ch = srcW * dh / dw;
-  const z = (zt ? 1 + (Math.max(1, zt.z) - 1) * k : 1) * extra; cw /= z; ch /= z;
+  const z = (zt ? 1 + (Math.max(0.05, zt.z) - 1) * k : 1) * extra; cw /= z; ch /= z; // z < 1 : on recule jusqu'à voir toute l'image (bandes sur les côtés)
   const fx = zt ? 0.5 + (zt.x - 0.5) * k : 0.5, fy = zt ? 0.5 + (zt.y - 0.5) * k : 0.5;
-  const cx = Math.min(srcW - cw / 2, Math.max(cw / 2, fx * srcW)), cy = Math.min(srcH - ch / 2, Math.max(ch / 2, fy * srcH));
+  const cx = cw >= srcW ? srcW / 2 : Math.min(srcW - cw / 2, Math.max(cw / 2, fx * srcW)), cy = ch >= srcH ? srcH / 2 : Math.min(srcH - ch / 2, Math.max(ch / 2, fy * srcH));
   return { sx: cx - cw / 2, sy: cy - ch / 2, sw: cw, sh: ch };
 }
 /**
@@ -104,8 +110,10 @@ export const overlayZoomK = (ov: Overlay, t: number) => (ov.zoom ? zoomEase(t - 
 /** hook : texte d'accroche géant ; question : question finale ; rank : classement (sub = numéro) ;
  *  tag : repère (text = « 1984 » ou « Terre-616 », sub = libellé « ÉPOQUE » / « UNIVERS ») ; term : concept mis en avant (« Force Phénix ») ;
  *  graph : schéma de relations (sub = « Phénix → Jean Grey → Dark Phoenix ») ; branch : ligne temporelle qui diverge (sub = « point de divergence ; branche A ; branche B ») ;
- *  recap : « À retenir » (sub = éléments séparés par « ; »). */
-export interface Title { id: string; text: string; sub?: string; start: number; end: number; kind?: "lower" | "chapter" | "timeline" | "hook" | "question" | "rank" | "tag" | "term" | "graph" | "branch" | "recap" }
+ *  recap : « À retenir » (sub = éléments séparés par « ; ») ; power : échelle de puissance (sub = « Thor 30 ; Phénix 55 ; … », chiffres facultatifs) ;
+ *  multiverse : carte du multivers (sub = « Terre-616 ; Terre-1610 ; … », le premier = « vous êtes ici ») ; number : chiffre clé (text = phrase, sub = « 13,8 milliards d'années ») ;
+ *  spoiler : alerte (text = œuvres concernées) ; series : fin de série (text = nom de la saga, sub = « 2/3 »). */
+export interface Title { id: string; text: string; sub?: string; start: number; end: number; kind?: "lower" | "chapter" | "timeline" | "hook" | "question" | "rank" | "tag" | "term" | "graph" | "branch" | "recap" | "power" | "multiverse" | "number" | "spoiler" | "series" }
 /**
  * Zones masquées par l'interface TikTok (fractions de l'image 9:16) : onglets en haut, boutons à droite, légende en bas.
  * Tout ce que l'application place (bandeaux, sous-titres, incrustations) reste en dehors.
@@ -131,6 +139,9 @@ export const activeAt = <T extends { start: number; end: number }>(list: T[], t:
 };
 const size = (s: Src) => ({ w: s.displayWidth ?? s.videoWidth ?? s.width ?? 1, h: s.displayHeight ?? s.videoHeight ?? s.height ?? 1 });
 const ease = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
+const lerpZ = (a: ZoomTarget, b: ZoomTarget, k: number): ZoomTarget => ({ z: a.z + (b.z - a.z) * k, x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k });
+/** Fondu d'une étape de planche : seulement à l'entrée de la première et à la sortie de la dernière. */
+const seqFade = (ov: Overlay, t: number) => !ov.seq || ov.seq === "only" ? fadeIn(ov, t) : ov.seq === "mid" ? 1 : ov.seq === "first" ? ease(Math.min(1, (t - ov.start) / 0.2)) : ease(Math.min(1, (ov.end - t) / 0.2));
 /** Opacité d'apparition / disparition (0,2 s). */
 export const fadeIn = (o: { start: number; end: number }, t: number, d = 0.2) => ease(Math.min((t - o.start) / d, (o.end - t) / d, 1));
 
@@ -150,11 +161,14 @@ export function drawCover(ctx: Ctx, src: Src, x: number, y: number, w: number, h
  * full : extrait plein écran ; pip : extrait dans une carte en haut, la personne reste visible ; me : extrait plein écran
  * et la personne en petit dans un coin.
  */
-export function compose(ctx: Ctx, W: number, H: number, t: number, ov: Overlay | null, src: Src | null, speaker: (x: number, y: number, w: number, h: number) => void, src2: Src | null = null) {
+export function compose(ctx: Ctx, W: number, H: number, t: number, ov: Overlay | null, src: Src | null, speaker: (x: number, y: number, w: number, h: number) => void, src2: Src | null = null, more: Src[] = []) {
   if (!ov || !src) { speaker(0, 0, W, H); return; }
   if (ov.mode === "compare") { drawCompare(ctx, W, H, t, ov, src, src2, speaker); return; }
-  const pz = ov.path?.length ? pathAt(ov.path, ov.start, ov.end, t) : panAt(ov, t);
-  const a = fadeIn(ov, t), kb = ov.freeze != null && t - ov.start >= ov.freeze ? Math.min(1, ov.freeze / Math.max(0.1, ov.end - ov.start)) : Math.min(1, Math.max(0, (t - ov.start) / Math.max(0.1, ov.end - ov.start))), zk = overlayZoomK(ov, t);
+  if (ov.mode === "page") { drawComicPage(ctx, W, H, t, ov, [src, ...more], speaker); return; }
+  const ALL: ZoomTarget = { z: 1, x: 0.5, y: 0.5 };
+  const mv = ov.zmove ? lerpZ(ov.zfrom ?? ALL, ov.zoom ?? ALL, zoomEase(t - ov.start, 0.55)) : null;
+  const pz = mv ?? (ov.path?.length ? pathAt(ov.path, ov.start, ov.end, t) : panAt(ov, t));
+  const a = seqFade(ov, t), kb = ov.freeze != null && t - ov.start >= ov.freeze ? Math.min(1, ov.freeze / Math.max(0.1, ov.end - ov.start)) : Math.min(1, Math.max(0, (t - ov.start) / Math.max(0.1, ov.end - ov.start))), zk = overlayZoomK(ov, t);
   if (ov.mode === "pip") {
     speaker(0, 0, W, H);
     const w = W * 0.88, h = Math.min(H * 0.42, w * 0.75), x = (W - w) / 2, y = H * (TIKTOK_SAFE.top + 0.02) + (1 - a) * H * 0.03, r = W * 0.05;
@@ -419,6 +433,135 @@ function drawRecap(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent:
   });
   ctx.restore();
 }
+/** Couleurs des personnages (« Venom » violet…) : mêmes couleurs partout (sous-titres, noms, schémas). */
+let chars: { name: string; color: string }[] = [];
+export const setCharColors = (l: { name: string; color: string }[]) => { chars = l.filter((c) => c.name.trim()); };
+const fold1 = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+/** Couleur du personnage nommé dans ce texte (nom complet ou un de ses mots de 4 lettres et plus), sinon null. */
+export function charColor(text: string): string | null {
+  const f = fold1(text); if (!f) return null;
+  for (const c of chars) { const n = fold1(c.name); if (f === n || f.includes(n) && n.length >= 4 || c.name.split(/[\s-]+/).some((w) => w.length >= 4 && fold1(w) === f)) return c.color; }
+  return null;
+}
+/** Échelle de puissance : jauge verticale du vert au rouge, chaque personnage à son niveau (le plus fort en haut, avec un halo). */
+function drawPower(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
+  const raw = chain(ti.sub ?? "").slice(0, 7); if (!raw.length) return;
+  const it = raw.map((s, i) => { const m = /^(.*?)\s*(\d{1,3})\s*%?$/.exec(s); return { name: (m ? m[1] : s).trim(), v: m ? Math.min(100, +m[2]) : Math.round(15 + (80 * i) / Math.max(1, raw.length - 1)) }; }).sort((a, b) => b.v - a.v);
+  const a = fadeIn(ti, t, 0.25), age = t - ti.start, top = H * (TIKTOK_SAFE.top + 0.075), bot = H * 0.74, x = W * 0.16, gap = Math.max(H * 0.06, 0);
+  ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = "rgba(0,0,0,.45)"; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; font(ctx, 700, W * 0.03, 0.22); ctx.fillStyle = accent; ctx.fillText((ti.text || "Qui est le plus puissant ?").toUpperCase(), W / 2, top - H * 0.035);
+  const fill = Math.min(1, age / 1.2), gr = ctx.createLinearGradient(0, bot, 0, top); gr.addColorStop(0, "#30d158"); gr.addColorStop(0.6, "#ffd60a"); gr.addColorStop(1, "#ff453a");
+  ctx.fillStyle = "rgba(255,255,255,.14)"; rounded(ctx, x - W * 0.011, top, W * 0.022, bot - top, W * 0.011); ctx.fill();
+  ctx.fillStyle = gr; rounded(ctx, x - W * 0.011, bot - (bot - top) * fill, W * 0.022, (bot - top) * fill, W * 0.011); ctx.fill();
+  // positions : selon la valeur, puis écartées pour ne jamais se chevaucher
+  const ys = it.map((e) => bot - (bot - top) * (e.v / 100)), minGap = H * 0.062; for (let i = 1; i < ys.length; i++) ys[i] = Math.max(ys[i], ys[i - 1] + minGap);
+  const over = ys[ys.length - 1] - bot; if (over > 0) for (let i = 0; i < ys.length; i++) ys[i] -= over * (i / Math.max(1, ys.length - 1));
+  it.forEach((e, i) => {
+    const k = Math.min(1, Math.max(0, (age - 0.3 - (it.length - 1 - i) * 0.3) / 0.3)); if (k <= 0) return; const y = ys[i], col = charColor(e.name), topOne = i === 0;
+    ctx.save(); ctx.globalAlpha = a * k; ctx.translate((1 - k) * W * 0.05, 0);
+    ctx.save(); if (topOne) { ctx.shadowColor = "#ff453a"; ctx.shadowBlur = W * 0.05; } ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(x, bot - (bot - top) * (e.v / 100), W * (topOne ? 0.024 : 0.016), 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    const bw = W * 0.62, bh = H * 0.05, bx = x + W * 0.06; glass(ctx, bx, y - bh / 2, bw, bh, bh / 2, W);
+    if (col) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(bx + bh * 0.45, y, bh * 0.14, 0, Math.PI * 2); ctx.fill(); }
+    ctx.textAlign = "left"; ctx.textBaseline = "middle"; font(ctx, topOne ? 800 : 650, W * 0.043, -0.01); ctx.fillStyle = "#fff"; ctx.fillText(e.name, bx + bh * (col ? 0.75 : 0.45), y + W * 0.002, bw * 0.7);
+    ctx.textAlign = "right"; font(ctx, 800, W * 0.04, 0); ctx.fillStyle = topOne ? "#ff453a" : accent; ctx.fillText(String(e.v), bx + bw - bh * 0.45, y + W * 0.002);
+    ctx.restore();
+  });
+  ctx.restore();
+}
+/** Carte du multivers : fond cosmique, univers en planètes lumineuses reliées au principal, « Vous êtes ici ». */
+function drawMultiverse(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
+  const u = chain(ti.sub ?? "").slice(0, 6); if (!u.length) return;
+  const a = fadeIn(ti, t, 0.3), age = t - ti.start, cx = W / 2, cy = H * 0.4, ang = (i: number) => -Math.PI / 2 + ((i - 1) * 2 * Math.PI) / Math.max(1, u.length - 1) + 0.4;
+  ctx.save(); ctx.globalAlpha = a;
+  const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, H * 0.75); bg.addColorStop(0, "rgba(42,20,88,.92)"); bg.addColorStop(1, "rgba(3,3,10,.95)"); ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  let s = 11; const r = () => ((s = (s * 16807) % 2147483647) / 2147483647); for (let i = 0; i < 140; i++) { ctx.globalAlpha = a * (0.3 + 0.6 * r()); ctx.fillStyle = "#fff"; ctx.fillRect(r() * W, r() * H, W * 0.003, W * 0.003); } ctx.globalAlpha = a;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; font(ctx, 700, W * 0.03, 0.22); ctx.fillStyle = accent; ctx.fillText((ti.text || "Le multivers").toUpperCase(), cx, H * (TIKTOK_SAFE.top + 0.03));
+  const pos = u.map((_, i) => (i === 0 ? [cx, cy] : [cx + Math.cos(ang(i)) * W * 0.32, cy + Math.sin(ang(i)) * H * 0.17]));
+  ctx.setLineDash([W * 0.008, W * 0.014]); ctx.strokeStyle = "rgba(255,255,255,.22)"; ctx.lineWidth = Math.max(1, W * 0.0025);
+  pos.slice(1).forEach(([x, y], i) => { const k = Math.min(1, Math.max(0, (age - 0.4 - i * 0.2) / 0.4)); ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + (x - cx) * k, cy + (y - cy) * k); ctx.stroke(); }); ctx.setLineDash([]);
+  u.forEach((name, i) => {
+    const k = Math.min(1, Math.max(0, (age - (i === 0 ? 0.1 : 0.5 + i * 0.2)) / 0.35)); if (k <= 0) return; const [x, y] = pos[i], main = i === 0, R = W * (main ? 0.085 : 0.045) * spring(k * 0.6, 0.35, 0.5);
+    const pg = ctx.createRadialGradient(x - R * 0.3, y - R * 0.3, R * 0.1, x, y, R); pg.addColorStop(0, main ? "#fde68a" : "#c7d2fe"); pg.addColorStop(1, main ? "#d97706" : "#4338ca");
+    ctx.save(); ctx.shadowColor = main ? "#fbbf24" : "#818cf8"; ctx.shadowBlur = W * (main ? 0.1 : 0.05) * (main ? 1 + 0.2 * Math.sin(age * 3) : 1); ctx.fillStyle = pg; ctx.beginPath(); ctx.arc(x, y, Math.max(1, R), 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    if (main) { ctx.strokeStyle = "rgba(253,230,138,.5)"; ctx.lineWidth = W * 0.004; ctx.beginPath(); ctx.ellipse(x, y, R * 1.8, R * 0.5, -0.3, 0, Math.PI * 2); ctx.stroke(); }
+    font(ctx, main ? 800 : 650, W * (main ? 0.04 : 0.032), -0.01); const tw = ctx.measureText(name).width + W * 0.06, th = W * (main ? 0.075 : 0.062);
+    glass(ctx, x - tw / 2, y + R * (main ? 1.3 : 1.25) + W * 0.015, tw, th, th / 2, W); ctx.fillStyle = charColor(name) ?? "#fff"; ctx.textAlign = "center"; ctx.fillText(name, x, y + R * (main ? 1.3 : 1.25) + W * 0.015 + th / 2 + W * 0.002);
+  });
+  const k = Math.min(1, Math.max(0, (age - 1.2) / 0.4));
+  if (k > 0) { const bw = W * 0.86, bh = H * 0.085, bx = (W - bw) / 2, by = H * 0.68; ctx.globalAlpha = a * k; glass(ctx, bx, by, bw, bh, W * 0.05, W);
+    ctx.textAlign = "left"; font(ctx, 700, W * 0.026, 0.22); ctx.fillStyle = accent; ctx.fillText("VOUS ÊTES ICI", bx + W * 0.05, by + bh * 0.33);
+    font(ctx, 750, W * 0.042, -0.01); ctx.fillStyle = "#fff"; ctx.fillText(u[0], bx + W * 0.05, by + bh * 0.68, bw - W * 0.1); }
+  ctx.restore();
+}
+/** Chiffre clé : le nombre défile de 0 à sa valeur (format français), unité en couleur, phrase d'introduction au-dessus. */
+export function countUp(sub: string, k: number): { num: string; rest: string } {
+  const m = /^\s*([\d\s ]+(?:[.,]\d+)?)\s*(.*)$/.exec(sub); if (!m) return { num: "", rest: sub };
+  const raw = m[1].replace(/[\s ]/g, ""), dec = (raw.split(/[.,]/)[1] ?? "").length, v = parseFloat(raw.replace(",", ".")) * k;
+  const num = v.toLocaleString("fr-FR", { minimumFractionDigits: dec, maximumFractionDigits: dec }).replace(/[  ]/g, " ");
+  return { num, rest: m[2] };
+}
+function drawNumber(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
+  const age = t - ti.start, out = Math.min(1, Math.max(0, (ti.end - t) / 0.25)), k = 1 - Math.pow(1 - Math.min(1, age / 1.3), 3), { num, rest } = countUp(ti.sub ?? "", k);
+  if (!num) return; ctx.save(); ctx.globalAlpha = out * Math.min(1, age / 0.2);
+  const g = ctx.createRadialGradient(W / 2, H * 0.32, 0, W / 2, H * 0.32, W * 0.75); g.addColorStop(0, "rgba(0,0,0,.5)"); g.addColorStop(1, "rgba(0,0,0,0)"); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H * 0.62);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  if (ti.text) { font(ctx, 700, W * 0.03, 0.2); ctx.fillStyle = accent; ctx.fillText(ti.text.toUpperCase(), W / 2, H * 0.2, W * 0.88); }
+  let fs = W * 0.24; font(ctx, 900, fs, -0.04); while (ctx.measureText(num).width > W * 0.88 && fs > W * 0.08) { fs *= 0.9; font(ctx, 900, fs, -0.04); }
+  softText(ctx, num, W / 2, H * 0.3, fs);
+  if (rest) { font(ctx, 750, W * 0.055, -0.01); softText(ctx, rest, W / 2, H * 0.3 + fs * 0.62, W * 0.055, accent, W * 0.88); }
+  ctx.restore();
+}
+/** Alerte spoiler : carte rouge au centre, triangle, œuvres concernées, barre qui se vide. */
+function drawSpoiler(ctx: Ctx, W: number, H: number, t: number, ti: Title) {
+  const a = fadeIn(ti, t, 0.2), age = t - ti.start, p = Math.min(1, age / Math.max(0.5, ti.end - ti.start - 0.2)), sc = 0.9 + 0.1 * spring(age, 0.4, 0.4), red = "#ff453a";
+  const w = W * 0.86, h = W * 0.46, x = -w / 2, y = -h / 2;
+  ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = "rgba(0,0,0,.4)"; ctx.fillRect(0, 0, W, H); ctx.translate(W / 2, H * 0.42); ctx.scale(sc, sc);
+  glass(ctx, x, y, w, h, W * 0.07, W, "rgba(70,18,18,.55)"); ctx.lineWidth = W * 0.004; ctx.strokeStyle = "rgba(255,69,58,.85)"; rounded(ctx, x, y, w, h, W * 0.07); ctx.stroke();
+  const ty = y + h * 0.24, ts = W * 0.055; ctx.fillStyle = red; ctx.beginPath(); ctx.moveTo(0, ty - ts * 0.75); ctx.lineTo(ts * 0.85, ty + ts * 0.65); ctx.lineTo(-ts * 0.85, ty + ts * 0.65); ctx.closePath(); ctx.fill();
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; font(ctx, 900, ts * 0.9, 0); ctx.fillStyle = "#fff"; ctx.fillText("!", 0, ty + ts * 0.18);
+  font(ctx, 800, W * 0.07, 0.12); ctx.fillText("SPOILERS", 0, y + h * 0.54); font(ctx, 600, W * 0.036, 0); ctx.fillStyle = "rgba(255,255,255,.78)"; ctx.fillText(ti.text, 0, y + h * 0.71, w * 0.86);
+  const bw = w * 0.7; ctx.fillStyle = "rgba(255,255,255,.2)"; rounded(ctx, -bw / 2, y + h * 0.84, bw, W * 0.012, W * 0.006); ctx.fill(); ctx.fillStyle = red; rounded(ctx, -bw / 2, y + h * 0.84, bw * (1 - p), W * 0.012, W * 0.006); ctx.fill();
+  ctx.restore();
+}
+/** Fin de série : cartes « Partie 1, 2, 3 », la partie actuelle en couleur, invitation à suivre la suite. */
+function drawSeries(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
+  const m = /(\d+)\s*\/\s*(\d+)/.exec(ti.sub ?? ""), cur = m ? +m[1] : 1, tot = Math.min(6, Math.max(cur, m ? +m[2] : cur + 1));
+  const a = fadeIn(ti, t, 0.25), age = t - ti.start, cw = Math.min(W * 0.24, (W * 0.84) / tot - W * 0.03), ch = cw * 1.32, gap = W * 0.03, x0 = (W - (tot * cw + (tot - 1) * gap)) / 2, y = H * 0.33;
+  ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = "rgba(0,0,0,.45)"; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; font(ctx, 700, W * 0.03, 0.22); ctx.fillStyle = accent; ctx.fillText((ti.text || "La saga").toUpperCase(), W / 2, y - H * 0.04, W * 0.9);
+  for (let i = 1; i <= tot; i++) {
+    const k = Math.min(1, Math.max(0, (age - 0.15 * i) / 0.3)); if (k <= 0) continue; const x = x0 + (i - 1) * (cw + gap), here = i === cur, done = i <= cur;
+    ctx.save(); ctx.globalAlpha = a * k; ctx.translate(0, (1 - k) * H * 0.02);
+    glass(ctx, x, y, cw, ch, W * 0.04, W, here ? "rgba(70,60,20,.55)" : undefined); if (here) { ctx.lineWidth = W * 0.006; ctx.strokeStyle = accent; rounded(ctx, x, y, cw, ch, W * 0.04); ctx.stroke(); }
+    font(ctx, 700, W * 0.024, 0.2); ctx.fillStyle = done ? accent : "rgba(255,255,255,.5)"; ctx.fillText("PARTIE", x + cw / 2, y + ch * 0.22);
+    font(ctx, 900, cw * 0.45, -0.02); ctx.fillStyle = done ? "#fff" : "rgba(255,255,255,.4)"; ctx.fillText(String(i), x + cw / 2, y + ch * 0.55);
+    font(ctx, 600, W * 0.028, 0); ctx.fillStyle = "rgba(255,255,255,.6)"; ctx.fillText(here ? "ici" : i < cur ? "vue" : "bientôt", x + cw / 2, y + ch * 0.84);
+    ctx.restore();
+  }
+  const k = Math.min(1, Math.max(0, (age - 0.2 - 0.15 * tot) / 0.35));
+  if (k > 0) { const label = cur < tot ? `Abonne-toi pour la partie ${cur + 1} →` : "Saga terminée ✓", bw = W * 0.76, bh = W * 0.12, bx = (W - bw) / 2, by = y + ch + H * 0.04;
+    ctx.globalAlpha = a * k; glass(ctx, bx, by, bw, bh, bh / 2, W, "rgba(48,209,88,.38)"); font(ctx, 750, W * 0.042, -0.01); ctx.fillStyle = "#fff"; ctx.fillText(label, W / 2, by + bh / 2 + W * 0.003, bw * 0.92); }
+  ctx.restore();
+}
+/** Planche de comic (mode « page ») : les images posées comme une page de BD, cases qui apparaissent une à une, vous dans un médaillon. */
+export function drawComicPage(ctx: Ctx, W: number, H: number, t: number, ov: Overlay, imgs: Src[], speaker: (x: number, y: number, w: number, h: number) => void) {
+  const n = Math.min(4, imgs.length); if (!n) return; const a = seqFade(ov, t), age = t - ov.start, step = Math.max(0.6, Math.min(2.5, ((ov.end - ov.start) * 0.7) / n));
+  const m = W * 0.04, gut = W * 0.025, top = H * (TIKTOK_SAFE.top + 0.01), bot = H * (1 - TIKTOK_SAFE.bottom) - W * 0.02, hh = bot - top;
+  const cells: [number, number, number, number][] = n === 1 ? [[m, top, W - 2 * m, hh]] : n === 2 ? [[m, top, W - 2 * m, (hh - gut) / 2], [m, top + (hh + gut) / 2, W - 2 * m, (hh - gut) / 2]]
+    : n === 3 ? [[m, top, W - 2 * m, hh * 0.45], [m, top + hh * 0.45 + gut, (W - 2 * m - gut) * 0.55, hh * 0.55 - gut], [m + (W - 2 * m - gut) * 0.55 + gut, top + hh * 0.45 + gut, (W - 2 * m - gut) * 0.45, hh * 0.55 - gut]]
+    : [[m, top, W - 2 * m, hh * 0.34], [m, top + hh * 0.34 + gut, (W - 2 * m - gut) / 2, hh * 0.36 - gut], [m + (W - 2 * m + gut) / 2, top + hh * 0.34 + gut, (W - 2 * m - gut) / 2, hh * 0.36 - gut], [m, top + hh * 0.7 + gut, W - 2 * m, hh * 0.3 - gut]];
+  ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = "#f4efe4"; ctx.fillRect(0, 0, W, H);
+  cells.forEach(([x, y, w, h], i) => {
+    const k = Math.min(1, Math.max(0, (age - i * step) / 0.35)); if (k <= 0) { ctx.fillStyle = "rgba(0,0,0,.06)"; ctx.fillRect(x, y, w, h); return; }
+    ctx.save(); ctx.globalAlpha = a * k; const sc = 0.96 + 0.04 * spring(k * 0.6, 0.35, 0.3); ctx.translate(x + w / 2, y + h / 2); ctx.scale(sc, sc); ctx.translate(-(x + w / 2), -(y + h / 2));
+    ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip(); drawCover(ctx, imgs[i], x, y, w, h, Math.min(1, Math.max(0, (age - i * step) / (step * n)))); ctx.restore();
+    ctx.lineWidth = W * 0.008; ctx.strokeStyle = "#111"; ctx.strokeRect(x, y, w, h); ctx.restore();
+  });
+  const R = W * 0.16, cx = m + R + W * 0.01, cy = bot - R - W * 0.01; // vous, dans un médaillon (en bas à gauche, hors des boutons TikTok)
+  ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.clip(); speaker(cx - R * 1.0, cy - R * 1.6, R * 2, R * 3.6); ctx.restore();
+  ctx.lineWidth = W * 0.01; ctx.strokeStyle = "#fff"; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+  ctx.restore();
+}
 /** Nom affiché avec une image de la banque (« Venom ») : pastille de verre posée sous l'image. */
 export function drawLabel(ctx: Ctx, W: number, H: number, t: number, ov: Overlay, accent = "#30d158") {
   if (!ov.label) return;
@@ -428,7 +571,7 @@ export function drawLabel(ctx: Ctx, W: number, H: number, t: number, ov: Overlay
   if (ov.mode === "pip") { const pw = W * 0.88, ph = Math.min(H * 0.42, pw * 0.75); x = (W - pw) / 2 + W * 0.03; y = H * (TIKTOK_SAFE.top + 0.02) + ph - h - W * 0.03; }
   ctx.save(); ctx.globalAlpha = a * Math.min(1, Math.max(0, (age - 0.15) / 0.15)); ctx.translate((1 - e) * -W * 0.05, 0);
   glass(ctx, x, y, w, h, h / 2, W);
-  ctx.beginPath(); ctx.arc(x + pad + fs * 0.15, y + h / 2, fs * 0.17, 0, Math.PI * 2); ctx.fillStyle = accent; ctx.fill();
+  ctx.beginPath(); ctx.arc(x + pad + fs * 0.15, y + h / 2, fs * 0.17, 0, Math.PI * 2); ctx.fillStyle = charColor(ov.label) ?? accent; ctx.fill();
   ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.fillStyle = "#fff"; ctx.fillText(ov.label, x + pad + fs * 0.6, y + h / 2 + fs * 0.03);
   ctx.restore();
 }
@@ -449,6 +592,11 @@ export function drawTitle(ctx: Ctx, W: number, H: number, t: number, ti: Title |
   if (ti.kind === "graph") return drawGraph(ctx, W, H, t, ti, accent);
   if (ti.kind === "branch") return drawBranch(ctx, W, H, t, ti, accent);
   if (ti.kind === "recap") return drawRecap(ctx, W, H, t, ti, accent);
+  if (ti.kind === "power") return drawPower(ctx, W, H, t, ti, accent);
+  if (ti.kind === "multiverse") return drawMultiverse(ctx, W, H, t, ti, accent);
+  if (ti.kind === "number") return drawNumber(ctx, W, H, t, ti, accent);
+  if (ti.kind === "spoiler") return drawSpoiler(ctx, W, H, t, ti);
+  if (ti.kind === "series") return drawSeries(ctx, W, H, t, ti, accent);
   if (ti.kind === "timeline") return drawTimeline(ctx, W, H, t, ti, accent);
   if (ti.kind === "chapter") return drawChapter(ctx, W, H, t, ti, accent);
   if (ti.kind && ti.kind !== "lower") return; // anciens types retirés (bulle, fiche)

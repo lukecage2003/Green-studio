@@ -555,3 +555,32 @@ test("habillage sonore : sons générés, niveau, placement dans le bloc", async
   // son qui déborde sur le bloc suivant : la suite est bien ajoutée
   const c = new Float32Array(4800); mixSfx([c], 48000, 10.5 + 0.05, [{ t: 10.5, k: "pop" }]); assert.ok(e(c, 0, 1000) > 0, "suite du son dans le bloc suivant");
 });
+
+test("planche de comic : cases détectées dans l'ordre de lecture, cadrage du zoom", async () => {
+  const { detectPanels, panelTarget, panelAt } = await import("../src/core/panels.ts");
+  // page 200 × 300 blanche, 4 cases : une large en haut, deux au milieu, une en bas
+  const w = 200, h = 300, px = new Uint8ClampedArray(w * h * 4).fill(255);
+  const box = (x0: number, y0: number, x1: number, y1: number, c: number[]) => { for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const i = (y * w + x) * 4; px[i] = c[0]; px[i + 1] = c[1]; px[i + 2] = c[2]; } };
+  box(10, 10, 190, 100, [200, 30, 30]); box(10, 110, 95, 200, [30, 30, 200]); box(105, 110, 190, 200, [30, 150, 60]); box(10, 210, 190, 290, [120, 30, 160]);
+  for (let i = 0; i < 400; i++) { const x = 20 + (i * 37) % 150, y = 20 + (i * 53) % 260; if (px[(y * w + x) * 4] !== 255) box(x, y, x + 2, y + 2, [250, 250, 250]); } // bruit clair dans les cases
+  const p = detectPanels(px, w, h); console.log(p.map((q) => [q.x, q.y, q.w, q.h].map((v) => v.toFixed(2)).join(",")));
+  assert.equal(p.length, 4);
+  assert.ok(Math.abs(p[0].x - 0.05) < 0.02 && Math.abs(p[0].w - 0.9) < 0.03, "case du haut");
+  assert.ok(p[1].x < p[2].x && Math.abs(p[1].y - p[2].y) < 0.02, "rangée du milieu, gauche puis droite"); assert.ok(p[3].y > 0.65, "case du bas en dernier");
+  assert.equal(panelAt(p, 0.75, 0.5), 2); assert.equal(panelAt(p, 0.5, 0.99), 3);
+  const t = panelTarget(p[1], 200, 300, 0.88 * 9 / 16 / 0.42 * 16 / 9 > 0 ? 1.17 : 1); assert.ok(t.z > 1.3 && Math.abs(t.x - 0.26) < 0.02 && Math.abs(t.y - 0.52) < 0.02, JSON.stringify(t));
+  // page sans gouttière : une seule case
+  assert.deepEqual(detectPanels(new Uint8ClampedArray(40 * 40 * 4).map((_, i) => (i % 4 === 3 ? 255 : (i * 7) % 256)), 40, 40).length, 1);
+});
+
+test("chiffre clé, spoiler, multivers repérés ; défilement du chiffre ; étapes de planche", async () => {
+  const { autoDress } = await import("../src/core/viral.ts"), { countUp } = await import("../src/core/overlay.ts"), { presToOverlays } = await import("../src/ui/presenter.ts");
+  let t = 0.5; const W = (s: string) => s.split(" ").map((x) => { const w = { text: x, start: +t.toFixed(2), end: +(t + 0.25).toFixed(2) }; t += 0.32; return w; });
+  const d = autoDress([...W("Attention spoilers sur Secret Wars."), ...W("Le Phénix existe depuis 13,8 milliards d'années."), ...W("Sur Terre-616 et sur Terre-1610 Miles est là.")], []);
+  const k = (x: string) => d.filter((y) => y.kind === x);
+  assert.equal(k("spoiler")[0]?.text, "Secret Wars"); assert.deepEqual(k("number").map((x) => [x.text, x.sub]), [["Le Phénix existe depuis", "13,8 milliards d'années"]]);
+  assert.equal(k("multiverse")[0]?.sub, "Terre-616 ; Terre-1610"); assert.equal(d.filter((x) => x.kind === "tag" && x.sub === "Univers").length, 0, "repères remplacés par la carte");
+  assert.deepEqual(countUp("13,8 milliards d'années", 1), { num: "13,8", rest: "milliards d'années" }); assert.equal(countUp("13,8 milliards", 0.5).num, "6,9"); assert.equal(countUp("12 000 ans", 1).num, "12 000");
+  const st = presToOverlays({ pages: ["pA", "pB"], at: 0, aspect: 1.2, end: 20, events: [{ t: 0, page: 0, panel: -1, target: null }, { t: 3, page: 0, panel: 1, target: { z: 2, x: 0.3, y: 0.5 } }, { t: 6, page: 0, panel: -1, target: null }, { t: 9, page: 1, panel: -1, target: null }, { t: 12, page: -1, panel: -1, target: null }] }, 18);
+  assert.deepEqual(st.map((x) => [x.src, x.start, x.end, x.seq, x.zfrom ? x.zfrom.z : null, x.zoom ? x.zoom.z : null]), [["pA", 0, 3, "first", null, null], ["pA", 3, 6, "mid", null, 2], ["pA", 6, 9, "last", 2, null], ["pB", 9, 12, "only", null, null]]);
+});

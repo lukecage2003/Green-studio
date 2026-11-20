@@ -192,8 +192,8 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
     };
     /** Image de l'extrait au temps t (vidéo : lue image par image, à fermer après usage). */
     const overlaySource = async (ov: Overlay, t: number): Promise<{ src: any; close?: () => void } | null> => {
-      if (ov.kind === "image") { const im = dress!.images.get(ov.id); return im ? { src: im } : null; }
-      const blob = dress!.videos.get(ov.id); if (!blob) return null;
+      if (ov.kind === "image") { const im = dress!.images.get(ov.src ?? ov.id); return im ? { src: im } : null; }
+      const blob = dress!.videos.get(ov.src ?? ov.id); if (!blob) return null;
       let e = vidSinks.get(ov.id);
       if (!e) { const input = new Input({ source: new BlobSource(blob), formats: FORMATS }); const tr = await input.getPrimaryVideoTrack(); if (!tr) return null; e = { input, sink: new VideoSampleSink(tr) }; vidSinks.set(ov.id, e); }
       const smp = await e.sink.getSample(clipTime(ov, t)); return smp ? { src: smp, close: () => smp.close() } : null;
@@ -289,7 +289,7 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
             else s.draw(cx!, x, y, w, h);
           };
           const ov = dress ? activeAt(dress.overlays, s.timestamp) : null, os = ov ? await overlaySource(ov, s.timestamp) : null;
-          compose(cx!, cv.width, cv.height, s.timestamp, ov, os?.src ?? null, speaker, ov?.with ? (dress!.images.get(ov.with) as any) ?? null : null); os?.close?.(); if (ov) drawLabel(cx!, cv.width, cv.height, s.timestamp, ov, dress?.accent);
+          compose(cx!, cv.width, cv.height, s.timestamp, ov, os?.src ?? null, speaker, ov?.with ? (dress!.images.get(ov.with) as any) ?? null : null, (ov?.more ?? []).map((k) => dress!.images.get(k) as any).filter(Boolean)); os?.close?.(); if (ov) drawLabel(cx!, cv.width, cv.height, s.timestamp, ov, dress?.accent);
           if (dress) { const [ti, tt] = titleAt(s.timestamp, t - offset, hasIntro && seg === items[0]); drawTitle(cx!, cv.width, cv.height, tt, ti, dress.accent); for (const m of activeMarks(dress.marks ?? [], s.timestamp)) drawMark(cx!, cv.width, cv.height, s.timestamp, m); }
           if (captions) drawCaption(cx!, 0, 0, cv.width, cv.height, lineAt(captions.lines, s.timestamp), s.timestamp, captions.style);
           pOff = offset; o = new VideoSample(finish(t - offset, offset > 0), { timestamp: t, duration: d }); s.close();
@@ -311,7 +311,7 @@ export async function exportEdited(file: Blob, cuts: Range[], opts: ExportOption
           const zk = zoomEase(k / 30);
           const speaker = (x: number, y: number, w: number, h: number) => { const r = zoomRect(s.displayWidth, s.displayHeight, w, h, f.zoom, zk); s.draw(cx!, r.sx, r.sy, r.sw, r.sh, x, y, w, h); };
           cx!.clearRect(0, 0, cv.width, cv.height);
-          compose(cx!, cv.width, cv.height, f.at, ov, os?.src ?? null, speaker, ov?.with ? (dress!.images.get(ov.with) as any) ?? null : null); if (ov) drawLabel(cx!, cv.width, cv.height, f.at, ov, dress?.accent);
+          compose(cx!, cv.width, cv.height, f.at, ov, os?.src ?? null, speaker, ov?.with ? (dress!.images.get(ov.with) as any) ?? null : null, (ov?.more ?? []).map((k) => dress!.images.get(k) as any).filter(Boolean)); if (ov) drawLabel(cx!, cv.width, cv.height, f.at, ov, dress?.accent);
           if (dress) { drawTitle(cx!, cv.width, cv.height, f.at, activeAt(dress.titles, f.at), dress.accent); for (const m of activeMarks(dress.marks ?? [], f.at)) drawMark(cx!, cv.width, cv.height, f.at + k / 30, m); }
           if (captions) drawCaption(cx!, 0, 0, cv.width, cv.height, lineAt(captions.lines, f.at), f.at, captions.style);
           pOff = offset; const o = new VideoSample(finish(k / 30, offset > 0), { timestamp: offset + k / 30, duration: 1 / 30 }); await vsrc.add(o, k === 0 ? { keyFrame: true } : undefined); o.close();

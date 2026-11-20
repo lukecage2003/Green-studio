@@ -3,12 +3,9 @@
 import { EditSession, wordsToRange, sourceToEdited, editedDuration, EPS, type Range, type Word } from "../core/timeline.ts";
 import { bestTakes, type TakeResult } from "../core/takes.ts";
 import { clipsOf, snapSplit, hitAt, trimEdge, wavePeaks } from "../core/derush.ts";
-import { compose, drawTitle, activeAt, activeMarks, drawMark, sfxFromWords, SFX, type Mark, clipTime, zoomRect, zoomEase, pathDuration, ANIMS, drawSafeZones, drawProgress, drawLabel, type OverlayAnim, type Overlay, type OverlayMode, type Title, type Freeze, type ZoomTarget } from "../core/overlay.ts";
+import { compose, drawTitle, activeAt, activeMarks, drawMark, sfxFromWords, SFX, type Mark, clipTime, zoomRect, zoomEase, pathDuration, ANIMS, drawSafeZones, drawProgress, drawLabel, setCharColors, type OverlayAnim, type Overlay, type OverlayMode, type Title, type Freeze, type ZoomTarget } from "../core/overlay.ts";
 
-/** Fichiers insérés (images, extraits) : gardés sur le téléphone (IndexedDB), retrouvés à la réouverture du projet. */
-const mediaDb = () => new Promise<IDBDatabase>((res, rej) => { const r = indexedDB.open("gs-media", 1); r.onupgradeneeded = () => r.result.createObjectStore("files"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
-async function mediaPut(id: string, b: Blob) { const db = await mediaDb(); await new Promise((res, rej) => { const t = db.transaction("files", "readwrite"); t.objectStore("files").put(b, id); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
-async function mediaGet(id: string): Promise<Blob | null> { const db = await mediaDb(); return new Promise((res) => { const q = db.transaction("files").objectStore("files").get(id); q.onsuccess = () => res(q.result ?? null); q.onerror = () => res(null); }); }
+import { mediaPut, mediaGet } from "./mediastore.ts";
 import { takeReport } from "../core/coach.ts";
 import { applyDictionary, findPhrase, type DictEntry } from "../core/dictionary.ts";
 import { TICS, RHYTHM, type Rhythm, type SnapMode, snapToQuiet, refineCuts, withBounds, tightenWords, dropCrumbs, cleanTranscript, analyze, analyzeAudio, type Suggestion, type IssueType } from "../core/speech-analysis.ts";
@@ -191,7 +188,7 @@ export async function openEditor(o: EditorOptions) {
     <div class="tl"><canvas class="wave" aria-label="Timeline : glissez pour vous déplacer, pincez pour zoomer, touchez un clip pour le sélectionner"></canvas>
       <div class="tlz"><button data-a="zout" aria-label="Dézoomer">−</button><button data-a="zin" aria-label="Zoomer">＋</button><button data-a="fit" aria-label="Voir toute la vidéo">⤢</button></div></div>
     <div class="tabs" role="tablist"><button role="tab" data-tab="tx" aria-selected="true">Texte</button><button role="tab" data-tab="sg" aria-selected="false">Nettoyage</button><button role="tab" data-tab="cc" aria-selected="false">Sous-titres</button><button role="tab" data-tab="dress" aria-selected="false">Habillage</button><button class="grow" data-a="grow" aria-label="Agrandir la zone de travail">⌃</button></div>
-    <input type="file" data-r="ovFile" accept="image/*,video/*" hidden><input type="file" data-r="withFile" accept="image/*" hidden><input type="file" data-r="bankFile" accept="image/*,video/*" hidden>
+    <input type="file" data-r="ovFile" accept="image/*,video/*" hidden><input type="file" data-r="withFile" accept="image/*" hidden><input type="file" data-r="moreFile" accept="image/*" multiple hidden><input type="file" data-r="bankFile" accept="image/*,video/*" hidden>
     <div class="body" data-r="body"></div>
     <nav class="tbar" aria-label="Outils">
       <button class="tb" data-a="split" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.6 7.6 20 18M8.6 16.4 20 6"/></svg><span>Scinder</span></button><button class="tb" data-a="del" disabled><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Supprimer</span></button><button class="tb" data-a="rest" hidden><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.6M4 3.5V8.6h5.1"/></svg><span>Restaurer</span></button><button class="tb" data-a="clean" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.6L18.5 9l-4.7 1.8L12 15.5l-1.8-4.7L5.5 9l4.7-1.4zM18.5 15l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/></svg><span>Nettoyer</span></button><button class="tb" data-a="review" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h6M15 12h6M9 7v10M15 7v10"/><path d="m6 9-3 3 3 3M18 9l3 3-3 3"/></svg><span>Raccords</span></button><button class="tb" data-a="freezeAdd" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21M8.5 8v5M12.5 8v5"/></svg><span>Pause + zoom</span></button>
@@ -249,7 +246,19 @@ export async function openEditor(o: EditorOptions) {
     else { const v = document.createElement("video"); v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = URL.createObjectURL(blob); e.vid = v; }
     ovSrc.set(id, e);
   }
-  overlays.forEach((ov) => { loadOverlay(ov.id, ov.kind).catch(() => {}); if (ov.with) loadOverlay(ov.with, "image").catch(() => {}); });
+  /* Planche présentée pendant le tournage : les gestes (zoom sur une case, retour, case suivante) deviennent des étapes d'incrustation. */
+  let presAdded = 0;
+  if (!saved) try {
+    const pd = JSON.parse(localStorage.getItem("gs.pres.pending") ?? "null") as import("./presenter.ts").PresData | null;
+    if (pd && Date.now() - pd.at < 30 * 60e3) {
+      localStorage.removeItem("gs.pres.pending");
+      const { presToOverlays } = await import("./presenter.ts");
+      presToOverlays(pd, duration).forEach((st, i) => { presAdded++; overlays.push({ id: "pr" + Date.now().toString(36) + i, src: st.src, kind: "image", start: st.start, end: st.end, mode: "pip", zmove: true, zfrom: st.zfrom, zoom: st.zoom, seq: st.seq }); });
+      overlays.sort((a, b) => a.start - b.start);
+    }
+  } catch { /* données illisibles : ignorées */ }
+  { const need = new Map<string, Overlay["kind"]>(); for (const ov of overlays) { need.set(ov.src ?? ov.id, ov.kind); if (ov.with) need.set(ov.with, "image"); for (const k of ov.more ?? []) need.set(k, "image"); }
+    need.forEach((k, id) => loadOverlay(id, k).catch(() => {})); }
   let tab: "tx" | "sg" | "cc" | "dress" = "tx", sel: { anchor: number; a: number; b: number } | null = null, inPt: number | null = null, stopAt: number | null = null;
   let worker: Worker | null = null, raf = 0, closed = false, curWord = -1, follow = true;
   const ctl = new AbortController();
@@ -371,7 +380,7 @@ export async function openEditor(o: EditorOptions) {
           <button class="ib" data-a="ign" aria-label="${ign ? "Rétablir la suggestion" : "Ignorer"}">${ign ? "↩" : "✕"}</button></div>`; }).join("");
   }
 
-  const MODES: [OverlayMode, string][] = [["full", "Plein écran"], ["pip", "Incrustation"], ["me", "Moi en petit"], ["compare", "Avant / Après"]];
+  const MODES: [OverlayMode, string][] = [["full", "Plein écran"], ["pip", "Incrustation"], ["me", "Moi en petit"], ["compare", "Avant / Après"], ["page", "Planche"]];
   function bankCard() {
     const l = myBank();
     return `<details class="card" data-bank style="margin-top:10px" ${l.length ? "open" : ""}><summary><b>Banque d’images</b> (${l.length})</summary>
@@ -391,7 +400,7 @@ export async function openEditor(o: EditorOptions) {
   function placeSpoken(): number { const l = spoken(); for (const d of l) titles.push({ ...d, end: Math.min(duration, d.end) }); if (l.length) titles.sort((a, b) => a.start - b.start); return l.length; }
   function spokenCard() {
     const l = spoken(); if (!l.length) return "";
-    const name = (d: Title) => d.kind === "rank" ? `🏆 N°${d.sub} ${d.text}` : d.kind === "term" ? `💡 ${d.text}` : d.kind === "tag" ? `${d.sub === "Univers" ? "🌍" : d.sub === "Source" ? "📚" : "📅"} ${d.text}` : `🗓 ${(d.sub ?? "").split(";").length} dates`;
+    const name = (d: Title) => d.kind === "rank" ? `🏆 N°${d.sub} ${d.text}` : d.kind === "number" ? `🔢 ${d.sub}` : d.kind === "spoiler" ? `⚠️ Spoiler ${d.text}` : d.kind === "multiverse" ? `🪐 ${d.sub}` : d.kind === "term" ? `💡 ${d.text}` : d.kind === "tag" ? `${d.sub === "Univers" ? "🌍" : d.sub === "Source" ? "📚" : "📅"} ${d.text}` : `🗓 ${(d.sub ?? "").split(";").length} dates`;
     return `<div class="card" data-spoken style="margin-bottom:10px"><b>✨ Repéré dans ce que vous dites</b><p>${l.map((d) => esc(name(d)) + " · " + fmt(d.start)).join("<br>")}</p><div class="chips"><button class="ib go" data-a="spokenAll">Tout placer (${l.length})</button></div></div>`;
   }
   function paceCard() {
@@ -402,8 +411,8 @@ export async function openEditor(o: EditorOptions) {
   function renderDress() {
     const ovRows = overlays.map((ov) => `<div class="sg" data-o="${ov.id}"><div class="t"><b style="color:#64d2ff">${ov.kind === "image" ? "Image" : "Extrait vidéo"} · ${fmt(ov.start)} → ${fmt(ov.end)}</b>
         <div class="chips" style="margin-top:6px">${MODES.map(([m, l]) => `<button class="ib" data-a="omode" data-v="${m}" aria-pressed="${ov.mode === m}">${l}</button>`).join("")}</div>
-        <div class="chips" style="margin-top:6px">${ov.kind === "video" ? `<button class="ib" data-a="ofreeze" aria-pressed="${ov.freeze != null}">${ov.freeze != null ? `⏸ Figé à ${ov.freeze.toFixed(1).replace(".", ",")} s` : "⏸ Figer ici"}</button>` : ""}<button class="ib" data-a="olabel" aria-pressed="${!!ov.label}">🏷 ${ov.label ? esc(ov.label) : "Nom"}</button><button class="ib" data-a="ozoom" aria-pressed="${!!(ov.zoom || ov.path)}">🔍 ${ov.path ? `Parcours ${ov.path.length} cases` : ov.zoom ? `Zoom ${ov.zoom.z.toFixed(1).replace(".", ",")}×` : "Zoomer / cases"}</button></div>
-        ${ov.mode === "compare" ? `<div class="chips" style="margin-top:6px"><button class="ib ${ov.with ? "" : "go"}" data-a="owith">🖼 ${ov.with ? "Changer l’image « après »" : "Choisir l’image « après »"}</button><button class="ib" data-a="olabels">🏷 ${esc((ov.labels ?? ["Avant", "Après"]).join(" / "))}</button></div>`
+        <div class="chips" style="margin-top:6px">${ov.kind === "video" ? `<button class="ib" data-a="ofreeze" aria-pressed="${ov.freeze != null}">${ov.freeze != null ? `⏸ Figé à ${ov.freeze.toFixed(1).replace(".", ",")} s` : "⏸ Figer ici"}</button>` : ""}${ov.kind === "image" && !ov.zmove ? `<button class="ib" data-a="ocut">✂ Découper en cases</button>` : ""}<button class="ib" data-a="olabel" aria-pressed="${!!ov.label}">🏷 ${ov.label ? esc(ov.label) : "Nom"}</button><button class="ib" data-a="ozoom" aria-pressed="${!!(ov.zoom || ov.path)}">🔍 ${ov.path ? `Parcours ${ov.path.length} cases` : ov.zoom ? `Zoom ${ov.zoom.z.toFixed(1).replace(".", ",")}×` : "Zoomer / cases"}</button></div>
+        ${ov.mode === "page" ? `<div class="chips" style="margin-top:6px"><button class="ib ${ov.more?.length ? "" : "go"}" data-a="omore">🖼 ${ov.more?.length ? `Planche : ${ov.more.length + 1} cases — changer` : "Ajouter les autres cases (2 à 4 images)"}</button></div>` : ov.mode === "compare" ? `<div class="chips" style="margin-top:6px"><button class="ib ${ov.with ? "" : "go"}" data-a="owith">🖼 ${ov.with ? "Changer l’image « après »" : "Choisir l’image « après »"}</button><button class="ib" data-a="olabels">🏷 ${esc((ov.labels ?? ["Avant", "Après"]).join(" / "))}</button></div>`
         : `<div class="chips anim" style="margin-top:6px">${ANIMS.map(([k, l]) => `<button class="ib" data-a="oanim" data-v="${k}" aria-pressed="${(ov.anim ?? "none") === k}">${l}</button>`).join("")}</div>`}</div>
         <button class="ib" data-a="ominus" aria-label="Plus court">−</button><button class="ib" data-a="oplus" aria-label="Plus long">+</button><button class="ib" data-a="ohere">Ici</button><button class="ib" data-a="odel" aria-label="Supprimer">✕</button></div>`).join("")
       + marks.map((m) => `<div class="sg" data-mk="${m.id}"><div class="t"><b style="color:#ffd60a">${m.type === "arrow" ? "➜ Flèche" : m.type === "circle" ? "◯ Cercle" : m.type === "spot" ? "🔦 Projecteur" : "💥 " + esc(m.text ?? "")} · ${fmt(m.start)} → ${fmt(m.end)}</b></div>
@@ -411,11 +420,11 @@ export async function openEditor(o: EditorOptions) {
       + freezes.map((f) => `<div class="sg" data-fz="${f.id}"><div class="t"><b style="color:#ff9f0a">⏸ Arrêt sur image · ${fmt(f.at)} · ${f.dur.toFixed(1).replace(".", ",")} s</b>
         <div class="chips" style="margin-top:6px"><button class="ib" data-a="fzoom" aria-pressed="${!!f.zoom}">🔍 ${f.zoom ? `Zoom ${f.zoom.z.toFixed(1).replace(".", ",")}×` : "Zoomer"}</button><button class="ib" data-a="fplay">▶ Voir</button></div></div>
         <button class="ib" data-a="fminus" aria-label="Plus court">−</button><button class="ib" data-a="fplus" aria-label="Plus long">+</button><button class="ib" data-a="fhere">Ici</button><button class="ib" data-a="fdel" aria-label="Supprimer">✕</button></div>`).join("");
-    const tiRows = titles.map((ti) => `<div class="sg" data-ti="${ti.id}"><div class="t"><b style="color:#bf5af2">${ti.kind === "chapter" ? "📖 Chapitre" : ti.kind === "timeline" ? "🗓 Frise" : ti.kind === "hook" ? "🅰 Accroche" : ti.kind === "question" ? "👇 Question" : ti.kind === "rank" ? "🏆 Classement #" + esc(ti.sub ?? "") : ti.kind === "graph" ? "🔗 Relations" : ti.kind === "branch" ? "🔀 Divergence" : ti.kind === "recap" ? "✅ À retenir" : ti.kind === "term" ? "💡 Concept" : ti.kind === "tag" ? "📅 Repère · " + esc(ti.sub ?? "") : "Bandeau"} · ${fmt(ti.start)} → ${fmt(ti.end)}</b>
+    const tiRows = titles.map((ti) => `<div class="sg" data-ti="${ti.id}"><div class="t"><b style="color:#bf5af2">${ti.kind === "chapter" ? "📖 Chapitre" : ti.kind === "timeline" ? "🗓 Frise" : ti.kind === "hook" ? "🅰 Accroche" : ti.kind === "question" ? "👇 Question" : ti.kind === "rank" ? "🏆 Classement #" + esc(ti.sub ?? "") : ti.kind === "power" ? "⚡ Puissance" : ti.kind === "multiverse" ? "🪐 Multivers" : ti.kind === "number" ? "🔢 Chiffre clé" : ti.kind === "spoiler" ? "⚠️ Spoiler" : ti.kind === "series" ? "📚 Série" : ti.kind === "graph" ? "🔗 Relations" : ti.kind === "branch" ? "🔀 Divergence" : ti.kind === "recap" ? "✅ À retenir" : ti.kind === "term" ? "💡 Concept" : ti.kind === "tag" ? "📅 Repère · " + esc(ti.sub ?? "") : "Bandeau"} · ${fmt(ti.start)} → ${fmt(ti.end)}</b>
         <input data-a="ttext" value="${esc(ti.text)}" placeholder="Titre" style="width:100%;margin-top:6px;background:rgba(255,255,255,.08);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit">
-        <input data-a="tsub" value="${esc(ti.sub ?? "")}" placeholder="${ti.kind === "graph" ? "Phénix → Jean Grey → Dark Phoenix" : ti.kind === "branch" ? "Point de divergence ; branche A ; branche B" : ti.kind === "recap" ? "Élément ; élément ; élément" : ti.kind === "term" ? "Libellé (Concept, Artefact, Dimension…)" : ti.kind === "tag" ? "Libellé (Époque, Univers…)" : ti.kind === "rank" ? "Numéro" : ti.kind === "timeline" ? "1962 Création ; 1984 Secret Wars ; …" : "Sous-titre (facultatif)"}" style="width:100%;margin-top:4px;background:rgba(255,255,255,.06);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit;font-size:14px"></div>
+        <input data-a="tsub" value="${esc(ti.sub ?? "")}" placeholder="${ti.kind === "power" ? "Thor 30 ; Phénix 55 ; Galactus 78" : ti.kind === "multiverse" ? "Terre-616 ; Terre-1610 ; Terre-65" : ti.kind === "number" ? "13,8 milliards d’années" : ti.kind === "spoiler" ? "" : ti.kind === "series" ? "2/3" : ti.kind === "graph" ? "Phénix → Jean Grey → Dark Phoenix" : ti.kind === "branch" ? "Point de divergence ; branche A ; branche B" : ti.kind === "recap" ? "Élément ; élément ; élément" : ti.kind === "term" ? "Libellé (Concept, Artefact, Dimension…)" : ti.kind === "tag" ? "Libellé (Époque, Univers…)" : ti.kind === "rank" ? "Numéro" : ti.kind === "timeline" ? "1962 Création ; 1984 Secret Wars ; …" : "Sous-titre (facultatif)"}" style="width:100%;margin-top:4px;background:rgba(255,255,255,.06);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit;font-size:14px"></div>
         <button class="ib" data-a="tminus" aria-label="Plus court">−</button><button class="ib" data-a="tplus" aria-label="Plus long">+</button><button class="ib" data-a="there">Ici</button><button class="ib" data-a="tdel" aria-label="Supprimer">✕</button></div>`).join("");
-    body.innerHTML = spokenCard() + paceCard() + `<div class="tiles">${([["ins", "🖼", "Image"], ["title", "🅣", "Bandeau"], ["chapter", "📖", "Chapitre"], ["timeline", "🗓", "Frise"], ["hookText", "🅰", "Accroche"], ["rank", "🏆", "Classement"], ["term", "💡", "Concept"], ["tag", "📅", "Repère"], ["graph", "🔗", "Relations"], ["branch", "🔀", "Divergence"], ["recap", "✅", "À retenir"], ["question", "👇", "Question fin"], ["annot", "✏️", "Annoter"], ["sfx", "💥", "Onomatopée"], ["freezeAdd", "🔍", "Pause zoom"], ["safe", "📱", "Zones TikTok"]] as const).map(([a, i, l]) => `<button class="tile${a === "safe" && safeOn ? " on" : ""}" data-a="${a}"><span>${i}</span>${l}</button>`).join("")}</div><div class="row" style="padding:0 0 10px">${words && sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length ? `<button class="ib go" data-a="sfxAuto">💥 Placer les onomatopées dites (${sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length})</button>` : ""}</div>
+    body.innerHTML = spokenCard() + paceCard() + `<div class="tiles">${([["ins", "🖼", "Image"], ["title", "🅣", "Bandeau"], ["chapter", "📖", "Chapitre"], ["timeline", "🗓", "Frise"], ["hookText", "🅰", "Accroche"], ["rank", "🏆", "Classement"], ["term", "💡", "Concept"], ["tag", "📅", "Repère"], ["graph", "🔗", "Relations"], ["branch", "🔀", "Divergence"], ["power", "⚡", "Puissance"], ["multiverse", "🪐", "Multivers"], ["number", "🔢", "Chiffre clé"], ["spoiler", "⚠️", "Spoiler"], ["series", "📚", "Série"], ["recap", "✅", "À retenir"], ["question", "👇", "Question fin"], ["annot", "✏️", "Annoter"], ["sfx", "💥", "Onomatopée"], ["freezeAdd", "🔍", "Pause zoom"], ["safe", "📱", "Zones TikTok"]] as const).map(([a, i, l]) => `<button class="tile${a === "safe" && safeOn ? " on" : ""}" data-a="${a}"><span>${i}</span>${l}</button>`).join("")}</div><div class="row" style="padding:0 0 10px">${words && sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length ? `<button class="ib go" data-a="sfxAuto">💥 Placer les onomatopées dites (${sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length})</button>` : ""}</div>
       ${ovRows || tiRows || marks.length ? ovRows + tiRows : `<div class="card"><b>Habillez votre vidéo</b><p>Insérez une case de comic, une couverture ou un extrait : il s’affiche par-dessus la vidéo au moment choisi (tête de lecture, ou les mots sélectionnés dans Texte), en plein écran, en incrustation, ou avec vous en petit dans un coin, et animez-la (glissé, pop, zoom…). « Zones TikTok » montre ce que l’appli TikTok recouvre.</p></div>`}` + bankCard();
   }
   /**
@@ -507,7 +516,7 @@ export async function openEditor(o: EditorOptions) {
   }
   /** Image d'un extrait à l'instant voulu (pour le cadrage du zoom). */
   async function overlayFrame(ov: Overlay): Promise<{ src: CanvasImageSource; w: number; h: number } | null> {
-    const e = ovSrc.get(ov.id); if (!e) return null;
+    const e = ovSrc.get(ov.src ?? ov.id); if (!e) return null;
     if (e.img) return { src: e.img, w: e.img.width, h: e.img.height };
     const v = e.vid!, want = ov.freeze ?? Math.min(Math.max(0, video.currentTime - ov.start), ov.end - ov.start);
     if (Math.abs(v.currentTime - want) > 0.02) await new Promise((r) => { v.onseeked = r; v.currentTime = want; setTimeout(r, 1500); });
@@ -533,6 +542,11 @@ export async function openEditor(o: EditorOptions) {
       : kind === "hook" ? ["Texte d’accroche (affiché en géant au début, 6 mots max)", "", ""]
       : kind === "question" ? ["Question de fin (pour les commentaires)", "", ""]
       : kind === "rank" ? ["Classement — le nom (ex. « Venom »)", "Numéro (5, 4, 3…)", String(Math.max(1, 6 - titles.filter((x) => x.kind === "rank").length - 1))]
+      : kind === "power" ? ["Échelle de puissance — question (ex. « Qui est le plus puissant ? »)", "Personnages du plus faible au plus fort, séparés par ; (chiffre sur 100 facultatif : « Thor 30 »)", "Thor 30 ; Phénix 55 ; Thanos 62 ; Galactus 78 ; Tribunal Vivant 97"]
+      : kind === "multiverse" ? ["Carte du multivers — titre (ex. « Le multivers »)", "Univers séparés par ; (le premier = « vous êtes ici »)", universes()]
+      : kind === "number" ? ["Chiffre clé — phrase d’introduction (ex. « Le Phénix existe depuis »)", "Le chiffre et son unité (ex. « 13,8 milliards d’années »)", ""]
+      : kind === "spoiler" ? ["Alerte spoiler — œuvres concernées (ex. « Secret Wars (2015) · Endgame »)", "", ""]
+      : kind === "series" ? ["Fin de série — nom de la saga (ex. « La saga du Phénix »)", "Partie actuelle / total (ex. « 2/3 »)", "1/3"]
       : kind === "graph" ? ["Schéma — petit titre (facultatif, ex. « La lignée du Phénix »)", "Les éléments, reliés par → (ex. « Phénix → Jean Grey → Dark Phoenix »)", "Phénix → Jean Grey → Dark Phoenix"]
       : kind === "branch" ? ["Divergence — titre (facultatif, ex. « Deux réalités »)", "Point de divergence ; branche A ; branche B", "La mort de Gwen ; Terre-616 ; Terre-65"]
       : kind === "recap" ? ["Titre (« À retenir »)", "Les éléments séparés par ; ", recapItems()]
@@ -544,14 +558,26 @@ export async function openEditor(o: EditorOptions) {
     const t = raw.trim(); if (!t && kind !== "graph" && kind !== "branch") return; // schéma et divergence : titre facultatif
     const sub = ask[1] ? prompt(ask[1], ask[2])?.trim() || undefined : undefined;
     const nRows = (sub ?? "").split(/[;\n]|→|->|=>|>/).filter((x) => x.trim()).length;
-    let start = video.currentTime; const len = kind === "chapter" ? 2.6 : kind === "timeline" ? 2.5 + nRows * 1.2 : kind === "hook" ? 1.8 : kind === "question" ? 3.5 : kind === "rank" ? 2.5 : kind === "term" ? 2.4 : kind === "tag" ? 3 : kind === "graph" ? 1.2 + nRows * 1.1 : kind === "branch" ? 4.5 : kind === "recap" ? 2 + nRows * 0.6 : 4;
-    if (kind === "hook") start = firstKept(); if (kind === "question") start = Math.max(0, lastKept() - len);
+    let start = video.currentTime; const len = kind === "chapter" ? 2.6 : kind === "timeline" ? 2.5 + nRows * 1.2 : kind === "hook" ? 1.8 : kind === "question" ? 3.5 : kind === "rank" ? 2.5 : kind === "term" ? 2.4 : kind === "tag" ? 3 : kind === "power" ? 2.2 + nRows * 0.45 : kind === "multiverse" ? 4.5 : kind === "number" ? 3 : kind === "spoiler" ? 3 : kind === "series" ? 4 : kind === "graph" ? 1.2 + nRows * 1.1 : kind === "branch" ? 4.5 : kind === "recap" ? 2 + nRows * 0.6 : 4;
+    if (kind === "hook" || kind === "spoiler") start = firstKept(); if (kind === "question" || kind === "series") start = Math.max(0, lastKept() - len);
     titles.push({ id: "ti" + Date.now().toString(36), text: t, sub, start, end: Math.min(duration, start + len), kind }); titles.sort((a, b) => a.start - b.start);
     titles.sort((a, b) => a.start - b.start); tab = "dress"; body.innerHTML = ""; commit();
   }
   const keptWords = () => (words ?? []).filter((w) => !inCut((w.start + w.end) / 2) && /[\p{L}\p{N}]/u.test(w.text));
   const firstKept = () => { const k = keptWords()[0]; return k ? Math.max(0, k.start - 0.05) : 0; };
   const lastKept = () => { const k = keptWords(); return k.length ? Math.min(duration, k[k.length - 1].end + 0.1) : duration; };
+  /** Couleurs des personnages : mémorisées pour toutes les vidéos, appliquées aux sous-titres, noms, échelles et cartes. */
+  const PALETTE = ["#bf5af2", "#ff453a", "#0a84ff", "#30d158", "#ff9f0a", "#64d2ff", "#ff375f", "#ffd60a"];
+  type Ch = { name: string; color: string };
+  const myChars = (): Ch[] => { try { return JSON.parse(localStorage.getItem("gs.chars") ?? "[]"); } catch { return []; } };
+  const saveChars = (l: Ch[]) => { try { localStorage.setItem("gs.chars", JSON.stringify(l)); } catch { /* */ } setCharColors(l); };
+  setCharColors(myChars());
+  function charsCard() {
+    const l = myChars();
+    return `<div class="opt col" data-chars>Couleur par personnage <div class="chips">${l.map((c, i) => `<button class="ib" data-a="charCol" data-v="${i}" title="Toucher pour changer la couleur"><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${c.color}"></i>${esc(c.name)}</button><button class="ib" data-a="charDel" data-v="${i}" aria-label="Retirer ${esc(c.name)}">✕</button>`).join("")}<button class="ib go" data-a="charAdd">＋ Personnage</button></div></div>`;
+  }
+  /** Univers déjà cités (repères « UNIVERS »), pour la carte du multivers. */
+  function universes(): string { const u = titles.filter((x) => x.kind === "tag" && x.sub === "Univers").map((x) => x.text); return [...new Set(u)].join(" ; ") || "Terre-616 ; Terre-1610 ; Terre-65"; }
   /** Éléments du « À retenir » proposés : concepts, univers et dates déjà à l'écran. */
   function recapItems(): string {
     const it: string[] = [];
@@ -565,7 +591,7 @@ export async function openEditor(o: EditorOptions) {
   }
   /** Image de l'extrait pour l'aperçu (extrait vidéo calé sur la lecture). */
   function previewSrc(ov: Overlay, t: number) {
-    const e = ovSrc.get(ov.id); if (!e) return null;
+    const e = ovSrc.get(ov.src ?? ov.id); if (!e) return null;
     if (e.img) return e.img;
     const v = e.vid!; const want = clipTime(ov, t), frozen = ov.freeze != null && t - ov.start >= ov.freeze;
     if (Math.abs(v.currentTime - want) > (frozen ? 0.04 : 0.3)) v.currentTime = want;
@@ -590,6 +616,7 @@ export async function openEditor(o: EditorOptions) {
       <label class="opt">Haut <input type="range" data-a="pos" min="0.12" max="0.88" step="0.01" value="${style.pos}"> Bas</label>
       <label class="opt"><input type="checkbox" data-a="upper" ${style.upper ? "checked" : ""}> MAJUSCULES</label>
       <label class="opt"><input type="checkbox" data-a="strong" ${style.strong !== false ? "checked" : ""}> Mots forts en couleur (noms propres, chiffres, « Mes mots »)</label>
+      ${charsCard()}
       <label class="opt"><input type="checkbox" data-a="emoji" ${style.emoji ? "checked" : ""}> Emojis sur les mots forts (mort 💀, secret 🤫, pouvoir 💪…)</label>
       <label class="opt">Couleur du mot actif <input type="color" data-a="color" value="${style.color}"></label>
       <p>Un mot mal transcrit ? Onglet Texte : touchez-le, puis ✎.</p></div>`;
@@ -601,6 +628,12 @@ export async function openEditor(o: EditorOptions) {
     const id = "bank" + Date.now().toString(36);
     try { await mediaPut(id, f); } catch { toast("Stockage indisponible : image non gardée.", 4000); return; }
     setBank([...myBank(), { id, key, kind: f.type.startsWith("video/") ? "video" : "image" }]); body.innerHTML = ""; refresh();
+  };
+  q<HTMLInputElement>("[data-r=moreFile]").onchange = async (e) => {
+    const inp = e.target as HTMLInputElement, files = [...(inp.files ?? [])].slice(0, 3), ov = overlays.find((x) => x.id === inp.dataset.o); inp.value = ""; if (!files.length || !ov) return;
+    const ids: string[] = []; for (const [i, f] of files.entries()) { const id = "ov" + Date.now().toString(36) + "p" + i; await mediaPut(id, f).catch(() => {}); await loadOverlay(id, "image", f); ids.push(id); }
+    ov.more = ids; ov.mode = "page"; if (ov.end - ov.start < 2 + ids.length * 1.5) ov.end = Math.min(duration, ov.start + 2 + ids.length * 1.5);
+    body.innerHTML = ""; commit(); toast(`📄 Planche de ${ids.length + 1} cases : elles apparaissent une à une.`, 2500);
   };
   q<HTMLInputElement>("[data-r=withFile]").onchange = async (e) => {
     const inp = e.target as HTMLInputElement, f = inp.files?.[0], ov = overlays.find((x) => x.id === inp.dataset.o); inp.value = ""; if (!f || !ov) return;
@@ -623,7 +656,7 @@ export async function openEditor(o: EditorOptions) {
     if (!video.videoWidth) return;
     const k = Math.min(bw / video.videoWidth, bh / video.videoHeight), w = video.videoWidth * k * dpr, h = video.videoHeight * k * dpr, t = video.currentTime;
     const ov = activeAt(overlays, t), ti = activeAt(titles, t);
-    for (const o of overlays) if (o !== ov) { const v = ovSrc.get(o.id)?.vid; if (v && !v.paused) v.pause(); }
+    for (const o of overlays) if (o !== ov) { const v = ovSrc.get(o.src ?? o.id)?.vid; if (v && !v.paused) v.pause(); }
     const zk = fz ? zoomEase((performance.now() - fz.t0) / 1000) : 0;
     const speaker = (x: number, y: number, ww: number, hh: number) => {
       if (fz) { const r = zoomRect(video.videoWidth, video.videoHeight, ww, hh, fz.f.zoom, zk); g.drawImage(video, r.sx, r.sy, r.sw, r.sh, x, y, ww, hh); }
@@ -632,7 +665,7 @@ export async function openEditor(o: EditorOptions) {
     const mk = activeMarks(marks, t);
     if (ov || ti || fz || mk.length) {
       g.save(); g.translate((ccv.width - w) / 2, (ccv.height - h) / 2);
-      compose(g, w, h, t, ov, ov ? previewSrc(ov, t) : null, speaker, ov?.with ? ovSrc.get(ov.with)?.img ?? null : null); if (ov) drawLabel(g, w, h, t, ov);
+      compose(g, w, h, t, ov, ov ? previewSrc(ov, t) : null, speaker, ov?.with ? ovSrc.get(ov.with)?.img ?? null : null, (ov?.more ?? []).map((k) => ovSrc.get(k)?.img).filter((x): x is ImageBitmap => !!x)); if (ov) drawLabel(g, w, h, t, ov);
       drawTitle(g, w, h, t, ti); for (const m of mk) drawMark(g, w, h, fz ? t + (performance.now() - fz.t0) / 1000 : t, m); g.restore();
     }
     if (lines.length && style.preset !== "none") drawCaption(g, (ccv.width - w) / 2, (ccv.height - h) / 2, w, h, lineAt(lines, video.currentTime), video.currentTime, style);
@@ -1286,6 +1319,11 @@ export async function openEditor(o: EditorOptions) {
       case "rank": addTitle("rank"); break;
       case "term": addTitle("term"); break;
       case "graph": addTitle("graph"); break;
+      case "power": addTitle("power"); break;
+      case "multiverse": addTitle("multiverse"); break;
+      case "number": addTitle("number"); break;
+      case "spoiler": { addTitle("spoiler"); const sp = titles.find((x) => x.kind === "spoiler" && Math.abs(x.start - video.currentTime) < 0.05); if (sp && video.currentTime > 3) toast("Astuce : l’alerte spoiler marche mieux dans les 2 premières secondes.", 3500); break; }
+      case "series": { const n = titles.length; addTitle("series"); const se = titles.length > n ? titles.find((x) => x.kind === "series" && !x.id.startsWith("auto")) : null; if (se && se.start < duration - 6) toast("Astuce : la fin de série se place à la fin de la vidéo (bouton « Ici » à la fin).", 3500); break; }
       case "branch": addTitle("branch"); break;
       case "recap": addTitle("recap"); break;
       case "tag": addTitle("tag"); break;
@@ -1302,6 +1340,17 @@ export async function openEditor(o: EditorOptions) {
       case "review": reviewStart(); break;
       case "revUndo": case "revNext": case "revAgain": case "revStop": reviewAct(a); break;
       case "safe": safeOn = !safeOn; try { localStorage.setItem("gs.safe", safeOn ? "1" : "0"); } catch { /* */ } body.innerHTML = ""; refresh(); drawCC(); break;
+      case "ocut": { const ov = overlays.find((x) => x.id === t.closest<HTMLElement>("[data-o]")?.dataset.o), img = ov ? ovSrc.get(ov.src ?? ov.id)?.img : null; if (!ov || !img) break;
+        const { detectPanels, panelTarget } = await import("../core/panels.ts"), k = Math.min(1, 420 / img.width), c = new OffscreenCanvas(Math.max(8, Math.round(img.width * k)), Math.max(8, Math.round(img.height * k))), g = c.getContext("2d")!;
+        g.drawImage(img, 0, 0, c.width, c.height); const pn = detectPanels(g.getImageData(0, 0, c.width, c.height).data, c.width, c.height);
+        if (pn.length < 2) { toast("Aucune gouttière trouvée : cette image n’a pas de cases séparées.", 3500); break; }
+        delete ov.zoom; ov.path = pn.slice(0, 8).map((p) => panelTarget(p, img.width, img.height, ovAspect(ov)));
+        const need = pathDuration(ov.path.length); if (ov.end - ov.start < need) ov.end = Math.min(duration, ov.start + need);
+        body.innerHTML = ""; commit(); toast(`✂ ${ov.path.length} cases : parcours créé (page entière, puis chaque case).`, 3000); break; }
+      case "charAdd": { const n = prompt("Nom du personnage (ex. « Venom ») :")?.trim(); if (!n) break; const l = myChars(); l.push({ name: n, color: PALETTE[l.length % PALETTE.length] }); saveChars(l); body.innerHTML = ""; refresh(); break; }
+      case "charCol": { const l = myChars(), i = +t.closest<HTMLElement>("[data-v]")!.dataset.v!; if (!l[i]) break; l[i].color = PALETTE[(PALETTE.indexOf(l[i].color) + 1) % PALETTE.length]; saveChars(l); body.innerHTML = ""; refresh(); break; }
+      case "charDel": { const l = myChars(); l.splice(+t.closest<HTMLElement>("[data-v]")!.dataset.v!, 1); saveChars(l); body.innerHTML = ""; refresh(); break; }
+      case "omore": { const inp = q<HTMLInputElement>("[data-r=moreFile]"); inp.value = ""; inp.dataset.o = t.closest<HTMLElement>("[data-o]")?.dataset.o ?? ""; inp.click(); break; }
       case "olabel": { const ov = overlays.find((x) => x.id === t.closest<HTMLElement>("[data-o]")?.dataset.o); if (!ov) break;
         const v = prompt("Nom affiché avec l’image (personnage, artefact, dimension) — vide pour retirer :", ov.label ?? ""); if (v == null) break; if (v.trim()) ov.label = v.trim(); else delete ov.label; body.innerHTML = ""; commit(); break; }
       case "oanim": case "owith": case "olabels": {
@@ -1352,7 +1401,8 @@ export async function openEditor(o: EditorOptions) {
         body.innerHTML = ""; commit(); break; }
       case "omode": case "ominus": case "oplus": case "ohere": case "odel": {
         const id = t.closest<HTMLElement>("[data-o]")?.dataset.o, ov = overlays.find((x) => x.id === id); if (!ov) break;
-        if (a === "omode") { ov.mode = t.closest<HTMLElement>("[data-v]")!.dataset.v as OverlayMode; if (ov.mode === "compare" && !ov.with) { const inp = q<HTMLInputElement>("[data-r=withFile]"); inp.dataset.o = ov.id; inp.click(); } }
+        if (a === "omode") { ov.mode = t.closest<HTMLElement>("[data-v]")!.dataset.v as OverlayMode; if (ov.mode === "compare" && !ov.with) { const inp = q<HTMLInputElement>("[data-r=withFile]"); inp.dataset.o = ov.id; inp.click(); }
+          if (ov.mode === "page" && !ov.more?.length) { const inp = q<HTMLInputElement>("[data-r=moreFile]"); inp.dataset.o = ov.id; inp.click(); } }
         if (a === "ominus") ov.end = Math.max(ov.start + 0.5, ov.end - 0.5);
         if (a === "oplus") ov.end = Math.min(duration, ov.end + 0.5);
         if (a === "ohere") { const d = ov.end - ov.start; ov.start = video.currentTime; ov.end = Math.min(duration, ov.start + d); }
@@ -1393,6 +1443,7 @@ export async function openEditor(o: EditorOptions) {
   addEventListener("keydown", onKey);
 
   refresh(); raf = requestAnimationFrame(tick);
+  if (presAdded) { save(); toast(`📖 Planche : ${presAdded} étape(s) de zoom reprises du tournage.`, 3500); }
   if (o.autoClean || o.express) { if (words) (o.express ? express() : cleanAll()); else setTimeout(() => body.querySelector<HTMLElement>("[data-a=transcribe]")?.click(), 50); }
   return { close, session, get words() { return words; } };
 }
