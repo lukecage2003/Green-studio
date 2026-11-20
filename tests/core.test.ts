@@ -505,12 +505,6 @@ test("accroche TikTok : salutation, blanc du début, phrases plus fortes", async
   assert.equal(emojiFor("mort,"), "💀"); assert.equal(emojiFor("secrets"), "🤫"); assert.equal(emojiFor("table"), null);
 });
 
-test("vrai ou faux : question, compte à rebours, réponse", async () => {
-  const { quizPhase } = await import("../src/core/overlay.ts");
-  const q = { id: "q", text: "x", sub: "faux", start: 10, end: 16, kind: "quiz" as const };
-  assert.equal(quizPhase(q, 10.5).phase, "ask"); assert.deepEqual([quizPhase(q, 11.5).phase, quizPhase(q, 11.5).n], ["count", 3]);
-  assert.equal(quizPhase(q, 13.6).n, 1); assert.equal(quizPhase(q, 14.5).phase, "reveal");
-});
 
 test("raccords au millimètre : chute et attaque protégées, passage par zéro, respirations", async () => {
   const { refineCuts, detectBreaths } = await import("../src/core/speech-analysis.ts");
@@ -527,14 +521,16 @@ test("raccords au millimètre : chute et attaque protégées, passage par zéro,
   const br = detectBreaths(words, pcm, rate); assert.equal(br.length, 1); assert.ok(Math.abs(br[0].start - 1.58) < 0.05 && Math.abs(br[0].end - 1.92) < 0.05, JSON.stringify(br));
 });
 
-test("habillage déclenché par la parole : classement, vrai ou faux, frise", async () => {
+test("habillage déclenché par la parole : classement, concept, univers, époque, frise", async () => {
   const { autoDress } = await import("../src/core/viral.ts");
   let t = 0.5; const W = (s: string) => s.split(" ").map((x) => { const w = { text: x, start: +t.toFixed(2), end: +(t + 0.25).toFixed(2) }; t += 0.32; return w; });
-  const words = [...W("En numéro 3, Venom qui a tout changé."), ...W("Numéro deux : Carnage."), ...W("Vrai ou faux : Venom a déjà été un héros."), ...W("Eh bien c'est vrai !"),
+  const words = [...W("En numéro 3, Venom qui a tout changé."), ...W("Numéro deux : Carnage."), ...W("Mais c'est quoi la Force Phénix ? Une entité cosmique."), ...W("Sur Terre-616 tout change."), ...W("Tout commence en 1962."),
     ...W("Il apparaît en 1984 dans Secret Wars, puis en 1988 comme Venom et en 2018 au cinéma.")];
   const d = autoDress(words, []); const k = (kind: string) => d.filter((x) => x.kind === kind);
   assert.deepEqual(k("rank").map((x) => [x.sub, x.text]), [["3", "Venom"], ["2", "Carnage"]]);
-  assert.equal(k("quiz").length, 1); assert.equal(k("quiz")[0].text, "Venom a déjà été un héros"); assert.equal(k("quiz")[0].sub, "vrai");
-  assert.equal(k("timeline").length, 1); assert.match(k("timeline")[0].sub!, /^1984 dans Secret Wars ; 1988 comme Venom ; 2018 au cinéma/);
+  assert.deepEqual(k("term").map((x) => x.text), ["Force Phénix"]);
+  assert.deepEqual(k("tag").map((x) => [x.sub, x.text]), [["Univers", "Terre-616"]]);
+  t = 100; const solo = autoDress(W("Tout commence en 1962 avec Stan Lee."), []); assert.deepEqual(solo.map((x) => [x.kind, x.sub, x.text]), [["tag", "Époque", "1962"]]);
+  assert.equal(k("timeline").length, 1); assert.match(k("timeline")[0].sub!, /^1962 ; 1984 dans Secret Wars ; 1988 comme Venom ; 2018 au cinéma/);
   assert.equal(autoDress(words, [{ start: 0, end: 2.6 }]).filter((x) => x.kind === "rank").length, 1, "classement coupé : ignoré");
 });

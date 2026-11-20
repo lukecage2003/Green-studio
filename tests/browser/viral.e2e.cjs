@@ -7,7 +7,7 @@ const FAKE = `self.onmessage = (e) => { if (e.data.type === 'run') self.postMess
 (async () => {
   const b = await chromium.launch(); const ctx = await b.newContext({ viewport: { width: 412, height: 915 } }); const p = await ctx.newPage(); const errs = [];
   p.on('pageerror', (e) => errs.push(e.message));
-  p.on('dialog', (d) => { const m = d.message(); d.accept(/Classement — le nom/.test(m) ? 'Venom' : /affirmation/.test(m) ? 'Venom a été un héros' : /réponse/.test(m) ? 'faux' : d.defaultValue()); });
+  p.on('dialog', (d) => { const m = d.message(); d.accept(/Classement — le nom/.test(m) ? 'Venom' : /Concept à mettre/.test(m) ? 'Force Phénix' : d.defaultValue()); });
   await ctx.addInitScript(() => { localStorage.setItem('gs.autoClean', '0'); localStorage.setItem('gs.onb', '1'); });
   await ctx.route(/transcribe\.worker/, (r) => r.fulfill({ contentType: 'text/javascript', body: FAKE }));
   await p.goto('http://localhost:5173/');
@@ -35,11 +35,11 @@ const FAKE = `self.onmessage = (e) => { if (e.data.type === 'run') self.postMess
   assert.match(await p.textContent('.qe .body'), /Rythme visuel|sans changement/);
   await p.click('.qe .tiles [data-a=hookText]');
   await p.evaluate(() => { document.querySelector('.qe video').currentTime = 3.5; }); await p.waitForTimeout(300); await p.click('.qe .tiles [data-a=rank]');
-  await p.evaluate(() => { document.querySelector('.qe video').currentTime = 7; }); await p.waitForTimeout(300); await p.click('.qe .tiles [data-a=quiz]');
+  await p.evaluate(() => { document.querySelector('.qe video').currentTime = 7; }); await p.waitForTimeout(300); await p.click('.qe .tiles [data-a=term]');
   await p.click('.qe .tiles [data-a=question]');
   s = await saved(); console.log('titres :', JSON.stringify(s.titles.map((x) => [x.kind, x.text, x.sub, +x.start.toFixed(2), +x.end.toFixed(2)])));
   const k = (kind) => s.titles.find((x) => x.kind === kind);
-  assert.ok(k('hook') && k('rank').sub && k('quiz').sub === 'faux' && /pensez quoi/.test(k('question').text));
+  assert.ok(k('hook') && k('rank').sub && k('term').text === 'Force Phénix' && /pensez quoi/.test(k('question').text));
   // 3. sous-titres avec emojis
   await p.click('.qe [data-tab=cc]'); await p.check('.qe [data-a=emoji]'); s = await saved(); assert.equal(s.style.emoji, true);
   // 4. export : barre de progression + look comics

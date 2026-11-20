@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.23)
+# Green Studio 3.1 — état réel (beta.24)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,13 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.24 — pensé pour les théories et le storytelling
+- **Vrai / faux retiré** (création, détection et rendu ; les anciens projets s'ouvrent sans).
+- **Concept** 💡 : « c'est quoi la Force Phénix ? », « qu'est-ce que le multivers », « on appelle ça… » → le terme s'affiche en grand (libellé modifiable : Concept, Artefact, Dimension…).
+- **Repère** 📅 : une année dite seule → pastille « ÉPOQUE 1962 » ; « Terre-616 » → pastille « UNIVERS ». Plusieurs années rapprochées → frise (inchangé).
+- **Nom avec les images** : les images de la banque placées automatiquement affichent leur nom (« Le Gant de l'Infini ») ; modifiable avec 🏷 sur chaque image.
+- Tout reste tiré de ce que vous dites : rien n'est inventé.
 
 ## 3.1.0-beta.23 — workflow
 - **Habillage dit à voix haute** (Habillage → « ✨ Repéré dans ce que vous dites », et l'Express) : « numéro 3, Venom » / « à la troisième place, Venom » → classement ; « vrai ou faux : … » → quiz (réponse lue dans « c'est vrai / c'est faux » dit ensuite) ; au moins deux années dites à moins de 25 s d'écart → frise. Rien n'est inventé : tout vient de la transcription.

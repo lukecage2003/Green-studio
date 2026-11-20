@@ -9,7 +9,7 @@ export interface ZoomTarget { z: number; x: number; y: number }
 /** freeze : l'extrait vidéo se fige à cet instant (s depuis son début) ; zoom : on s'approche d'un détail (après le gel, sinon dès l'apparition). */
 /** path : parcours de cases (page de comic) — la page entière, puis chaque case dans l'ordre. */
 /** anim : animation ; with / labels : avant / après (2e image et étiquettes des deux côtés). */
-export interface Overlay { id: string; kind: "image" | "video"; start: number; end: number; mode: OverlayMode; freeze?: number; zoom?: ZoomTarget; path?: ZoomTarget[]; anim?: OverlayAnim; with?: string; labels?: [string, string] }
+export interface Overlay { id: string; kind: "image" | "video"; start: number; end: number; mode: OverlayMode; freeze?: number; zoom?: ZoomTarget; path?: ZoomTarget[]; anim?: OverlayAnim; with?: string; labels?: [string, string]; label?: string }
 /** Arrêt sur image dans la vidéo principale : à l'instant `at` (temps source), l'image reste figée `dur` s, avec zoom éventuel. */
 export interface Freeze { id: string; at: number; dur: number; zoom?: ZoomTarget }
 
@@ -101,8 +101,9 @@ export const clipTime = (ov: Overlay, t: number) => Math.max(0, Math.min(t - ov.
 export const overlayZoomK = (ov: Overlay, t: number) => (ov.zoom ? zoomEase(t - ov.start - (ov.kind === "video" && ov.freeze != null ? ov.freeze : 0.3)) : 0);
 /** kind : bandeau (bas gauche), chapitre (carton plein écran), bulle (citation façon comic). */
 /** timeline : frise (sub = « 1962 Création ; 1984 Secret Wars ; … »). */
-/** hook : texte d'accroche géant ; question : question finale ; rank : classement (sub = numéro) ; quiz : vrai / faux (sub = « vrai » ou « faux »). */
-export interface Title { id: string; text: string; sub?: string; start: number; end: number; kind?: "lower" | "chapter" | "timeline" | "hook" | "question" | "rank" | "quiz" }
+/** hook : texte d'accroche géant ; question : question finale ; rank : classement (sub = numéro) ;
+ *  tag : repère (text = « 1984 » ou « Terre-616 », sub = libellé « ÉPOQUE » / « UNIVERS ») ; term : concept mis en avant (« Force Phénix »). */
+export interface Title { id: string; text: string; sub?: string; start: number; end: number; kind?: "lower" | "chapter" | "timeline" | "hook" | "question" | "rank" | "tag" | "term" }
 /**
  * Zones masquées par l'interface TikTok (fractions de l'image 9:16) : onglets en haut, boutons à droite, légende en bas.
  * Tout ce que l'application place (bandeaux, sous-titres, incrustations) reste en dehors.
@@ -322,37 +323,43 @@ function drawRank(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: 
   font(ctx, 750, fs, -0.02); ctx.fillStyle = "#fff"; ctx.fillText(ti.text, nx + nw + W * 0.06, y + h * 0.54, W * 0.5);
   ctx.restore();
 }
-/** Vrai ou faux : l'affirmation, « VRAI OU FAUX ? », compte à rebours 3-2-1, puis la réponse. */
-export function quizPhase(ti: Title, t: number): { phase: "ask" | "count" | "reveal"; n: number; k: number } {
-  const age = t - ti.start, ask = 1.4, cnt = 3;
-  if (age < ask) return { phase: "ask", n: 0, k: age / ask };
-  if (age < ask + cnt) { const c = age - ask; return { phase: "count", n: 3 - Math.floor(c), k: c % 1 }; }
-  return { phase: "reveal", n: 0, k: age - ask - cnt };
+/** Repère (époque, univers) : petite plaque de verre en haut à droite, libellé espacé et valeur en grand ; descend sur ressort. */
+function drawTag(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
+  const age = t - ti.start, e = spring(age, 0.45, 0.25), out = Math.min(1, Math.max(0, (ti.end - t) / 0.25)), lab = (ti.sub ?? "").toUpperCase(), fs = W * 0.062, lfs = W * 0.026, pad = W * 0.04;
+  font(ctx, 800, fs, -0.02); const vw = ctx.measureText(ti.text).width; font(ctx, 700, lfs, 0.2); const lw = lab ? ctx.measureText(lab).width : 0;
+  const w = Math.max(vw, lw) + pad * 2, h = fs * 1.15 + (lab ? lfs * 1.6 : 0) + pad * 0.6, x = W * 0.95 - w, y = H * (TIKTOK_SAFE.top + 0.015);
+  ctx.save(); ctx.globalAlpha = out * Math.min(1, age / 0.15); ctx.translate(0, (1 - e) * -H * 0.04);
+  glass(ctx, x, y, w, h, W * 0.045, W);
+  ctx.textAlign = "right"; ctx.textBaseline = "middle";
+  if (lab) { font(ctx, 700, lfs, 0.2); ctx.fillStyle = accent; ctx.fillText(lab, x + w - pad, y + pad * 0.45 + lfs * 0.7); }
+  font(ctx, 800, fs, -0.02); ctx.fillStyle = "#fff"; ctx.fillText(ti.text, x + w - pad, y + h - pad * 0.3 - fs * 0.6);
+  ctx.restore();
 }
-function drawQuiz(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
-  const ph = quizPhase(ti, t), a = fadeIn(ti, t, 0.2), yes = /^v/i.test((ti.sub ?? "").trim()), age = t - ti.start;
-  ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = "rgba(0,0,0,.35)"; ctx.fillRect(0, 0, W, H);
-  // affirmation sur plaque de verre
-  const fs = W * 0.058, pad = W * 0.06; font(ctx, 750, fs, -0.02); const lines = wrap(ctx, ti.text, W * 0.72), lh = fs * 1.2, bw = W * 0.86, bh = lines.length * lh + pad * 1.5 + W * 0.04, by = H * (TIKTOK_SAFE.top + 0.03);
-  glass(ctx, (W - bw) / 2, by, bw, bh, W * 0.06, W);
-  ctx.textAlign = "center"; ctx.textBaseline = "middle"; font(ctx, 700, W * 0.028, 0.2); ctx.fillStyle = accent; ctx.fillText("VRAI OU FAUX ?", W / 2, by + pad * 0.7);
-  font(ctx, 750, fs, -0.02); ctx.fillStyle = "#fff"; lines.forEach((l, i) => ctx.fillText(l, W / 2, by + pad * 0.7 + W * 0.045 + lh * 0.55 + i * lh));
-  const cy = by + bh + (H * (1 - TIKTOK_SAFE.bottom) - by - bh) / 2, R = W * 0.17;
-  if (ph.phase === "ask") { /* la question seule */ }
-  else if (ph.phase === "count") {
-    ctx.lineCap = "round"; ctx.lineWidth = W * 0.012; ctx.strokeStyle = "rgba(255,255,255,.18)"; ctx.beginPath(); ctx.arc(W / 2, cy, R, 0, Math.PI * 2); ctx.stroke();
-    ctx.strokeStyle = accent; ctx.beginPath(); ctx.arc(W / 2, cy, R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - ph.k)); ctx.stroke();
-    const sc = 0.85 + 0.15 * spring(ph.k, 0.3, 0.4); ctx.save(); ctx.translate(W / 2, cy); ctx.scale(sc, sc); font(ctx, 200, R * 1.15, -0.02); ctx.fillStyle = "#fff"; ctx.fillText(String(ph.n), 0, R * 0.04); ctx.restore();
-  } else {
-    const col = yes ? "#30d158" : "#ff453a", sc = Math.max(0.01, spring(ph.k, 0.4, 0.45));
-    ctx.save(); ctx.translate(W / 2, cy); ctx.scale(sc, sc);
-    ctx.shadowColor = col; ctx.shadowBlur = W * 0.08; ctx.beginPath(); ctx.arc(0, -R * 0.25, R * 0.55, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill(); ctx.shadowBlur = 0;
-    ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.lineWidth = R * 0.12; ctx.strokeStyle = "#fff"; ctx.beginPath();
-    if (yes) { ctx.moveTo(-R * 0.24, -R * 0.25); ctx.lineTo(-R * 0.06, -R * 0.07); ctx.lineTo(R * 0.26, -R * 0.42); } else { ctx.moveTo(-R * 0.2, -R * 0.45); ctx.lineTo(R * 0.2, -R * 0.05); ctx.moveTo(R * 0.2, -R * 0.45); ctx.lineTo(-R * 0.2, -R * 0.05); }
-    ctx.stroke(); font(ctx, 800, R * 0.42, -0.02); ctx.fillStyle = "#fff"; softText(ctx, yes ? "Vrai" : "Faux", 0, R * 0.6, R * 0.42);
-    ctx.restore();
-  }
-  void age; ctx.restore();
+/** Concept mis en avant : libellé « CONCEPT », le terme en très grand (révélé mot à mot), filet de couleur qui s'étire. */
+function drawTerm(ctx: Ctx, W: number, H: number, t: number, ti: Title, accent: string) {
+  const age = t - ti.start, out = Math.min(1, Math.max(0, (ti.end - t) / 0.25));
+  ctx.save(); ctx.globalAlpha = out;
+  const g = ctx.createRadialGradient(W / 2, H * 0.34, 0, W / 2, H * 0.34, W * 0.7); g.addColorStop(0, "rgba(0,0,0,.4)"); g.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.globalAlpha = out * Math.min(1, age / 0.2); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H * 0.6); ctx.globalAlpha = out;
+  ctx.translate(W / 2, H * 0.34);
+  const h = revealWords(ctx, W, ti.text, age - 0.08, W * 0.12, W * 0.86, 2, "#fff", 900);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; font(ctx, 700, W * 0.03, 0.24); ctx.fillStyle = accent; ctx.globalAlpha = out * Math.min(1, age / 0.25);
+  ctx.fillText((ti.sub || "CONCEPT").toUpperCase(), 0, -h / 2 - W * 0.05);
+  const bw = W * 0.2 * spring(age - 0.2, 0.5, 0.1); ctx.globalAlpha = out; ctx.fillStyle = accent; rounded(ctx, -bw / 2, h / 2 + W * 0.035, bw, W * 0.008, W * 0.004); ctx.fill();
+  ctx.restore();
+}
+/** Nom affiché avec une image de la banque (« Venom ») : pastille de verre posée sous l'image. */
+export function drawLabel(ctx: Ctx, W: number, H: number, t: number, ov: Overlay, accent = "#30d158") {
+  if (!ov.label) return;
+  const a = fadeIn(ov, t, 0.25), age = t - ov.start, e = spring(age - 0.15, 0.45, 0.25), fs = W * 0.05, pad = W * 0.04;
+  font(ctx, 750, fs, -0.02); const w = ctx.measureText(ov.label).width + pad * 2 + fs * 0.8, h = fs * 1.7;
+  let x = W * 0.05, y = H * (1 - TIKTOK_SAFE.bottom) - h - H * 0.02;
+  if (ov.mode === "pip") { const pw = W * 0.88, ph = Math.min(H * 0.42, pw * 0.75); x = (W - pw) / 2 + W * 0.03; y = H * (TIKTOK_SAFE.top + 0.02) + ph - h - W * 0.03; }
+  ctx.save(); ctx.globalAlpha = a * Math.min(1, Math.max(0, (age - 0.15) / 0.15)); ctx.translate((1 - e) * -W * 0.05, 0);
+  glass(ctx, x, y, w, h, h / 2, W);
+  ctx.beginPath(); ctx.arc(x + pad + fs * 0.15, y + h / 2, fs * 0.17, 0, Math.PI * 2); ctx.fillStyle = accent; ctx.fill();
+  ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.fillStyle = "#fff"; ctx.fillText(ov.label, x + pad + fs * 0.6, y + h / 2 + fs * 0.03);
+  ctx.restore();
 }
 /** Barre de progression fine et arrondie en haut, avec un léger halo. */
 export function drawProgress(ctx: Ctx, W: number, H: number, p: number, accent = "#30d158") {
@@ -366,7 +373,8 @@ export function drawTitle(ctx: Ctx, W: number, H: number, t: number, ti: Title |
   if (ti.kind === "hook") return drawHook(ctx, W, H, t, ti, accent);
   if (ti.kind === "question") return drawQuestion(ctx, W, H, t, ti, accent);
   if (ti.kind === "rank") return drawRank(ctx, W, H, t, ti, accent);
-  if (ti.kind === "quiz") return drawQuiz(ctx, W, H, t, ti, accent);
+  if (ti.kind === "tag") return drawTag(ctx, W, H, t, ti, accent);
+  if (ti.kind === "term") return drawTerm(ctx, W, H, t, ti, accent);
   if (ti.kind === "timeline") return drawTimeline(ctx, W, H, t, ti, accent);
   if (ti.kind === "chapter") return drawChapter(ctx, W, H, t, ti, accent);
   if (ti.kind && ti.kind !== "lower") return; // anciens types retirés (bulle, fiche)

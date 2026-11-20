@@ -84,11 +84,13 @@ const bare = (s: string) => s.replace(/^[«"“(]+|[»"”),.;:!?…]+$/g, "");
 /**
  * Ce que vous dites devient de l'habillage (temps source, mots gardés seulement) :
  *  - « numéro 3 : Venom », « en numéro 3, Venom », « à la troisième place, Venom » → classement ;
- *  - « vrai ou faux : … » → quiz (réponse d'après « c'est vrai / c'est faux » dit ensuite, sinon « vrai » à vérifier) ;
- *  - au moins deux années dites (1938…2099) à moins de 25 s d'écart → frise (« 1984 le costume noir ; 1988 … »).
+ *  - « c'est quoi la Force Phénix ? », « qu'est-ce que le multivers », « on appelle ça… » → concept en grand ;
+ *  - « Terre-616 » → repère d'univers ;
+ *  - une année dite (1938…2099) → repère d'époque ; au moins deux années à moins de 25 s d'écart → frise (« 1984 le costume noir ; 1988 … »).
  */
 export function autoDress(words: Word[], cuts: Range[]): Title[] {
-  const kw = words.filter((w) => !isCutAt(cuts, (w.start + w.end) / 2) && /[\p{L}\p{N}]/u.test(w.text)), out: Title[] = [];
+  const kw: Word[] = [], out: Title[] = [];
+  for (const w of words) { if (isCutAt(cuts, (w.start + w.end) / 2)) continue; if (/[\p{L}\p{N}]/u.test(w.text)) kw.push({ ...w }); else if (kw.length) kw[kw.length - 1].text += w.text.trim(); } // « ? » seul : rattaché au mot d'avant
   const f = kw.map((w) => fold(bare(w.text))), id = (k: string, t: number) => `auto-${k}-${Math.round(t * 100)}`;
   const nameAfter = (j: number) => { const ws: string[] = []; for (let k = j; k < kw.length && ws.length < 4; k++) { const b = bare(kw[k].text); if (!b) break; if (ws.length && !/^\p{Lu}/u.test(b)) break; if (!ws.length && !/^\p{Lu}/u.test(b)) return null; ws.push(b); if (/[,.;:!?…]$/.test(kw[k].text)) break; } return ws.length ? ws.join(" ") : null; };
   for (let i = 0; i < kw.length; i++) {
@@ -98,19 +100,31 @@ export function autoDress(words: Word[], cuts: Range[]): Title[] {
     else if (/^(place|position)$/.test(f[i] ?? "") && i >= 1) { n = numOf(kw[i - 1].text); j = i + 1; }
     if (n != null && n <= 20) { while (j < kw.length && /^(c'?est|cest|on a|il y a|avec|:|,)$/.test(f[j])) j++; const name = nameAfter(j);
       if (name && !out.some((o) => o.kind === "rank" && Math.abs(o.start - kw[i].start) < 2)) out.push({ id: id("rank", kw[i].start), kind: "rank", text: name, sub: String(n), start: Math.max(0, kw[i].start - 0.1), end: kw[i].start + 2.6 }); }
-    // vrai ou faux
-    if (f[i] === "vrai" && f[i + 1] === "ou" && f[i + 2] === "faux") {
-      const st: string[] = []; let k = i + 3; for (; k < kw.length && st.length < 16; k++) { st.push(bare(kw[k].text)); if (/[.!?…]$/.test(kw[k].text) && st.length >= 3) break; }
-      if (st.length >= 3) { let ans = "vrai"; for (let q = k + 1; q < Math.min(kw.length, k + 40); q++) { if (/^(cest|c'est)$/.test(f[q]) && /^(faux|vrai)$/.test(f[q + 1] ?? "")) { ans = f[q + 1]; break; } }
-        const text = st.join(" ").replace(/\s+([?!:;])/g, " $1").replace(/[.…]+$/, ""); out.push({ id: id("quiz", kw[i].start), kind: "quiz", text: text.charAt(0).toUpperCase() + text.slice(1), sub: ans, start: kw[i].start, end: kw[i].start + 6 }); }
+    // concept : « c'est quoi (la) Force Phénix ? », « qu'est-ce que le multivers », « on appelle ça la Speed Force »
+    let tj = -1;
+    if (/^(cest|c'est)$/.test(f[i]) && f[i + 1] === "quoi") tj = i + 2;
+    else if (/^(qu'?est|quest)$/.test(f[i]) && /^(ce|-ce)$/.test(f[i + 1] ?? "") && /^(que|qu'?)/.test(f[i + 2] ?? "")) tj = i + 3;
+    else if (f[i] === "appelle" && /^(ca|cela)$/.test(f[i + 1] ?? "")) tj = i + 2;
+    if (tj > 0) {
+      while (tj < kw.length && /^(le|la|les|l'?|un|une|des|ce|cette|cet|exactement|vraiment|donc)$/.test(f[tj]) && !/'./.test(kw[tj].text)) tj++;
+      const t0 = kw[tj]?.text ?? "", parts: string[] = []; if (/^l'./i.test(t0)) { parts.push(bare(t0).slice(2)); tj++; }
+      for (let q = tj; q < kw.length && parts.length < 4; q++) { const bw = bare(kw[q].text); if (!bw || (parts.length && /^(de|du|des|et|en|qui|que|dans|au|à|a)$/i.test(bw) && !/^\p{Lu}/u.test(kw[q + 1]?.text ?? ""))) break; parts.push(bw); if (/[,.;:!?…]$/.test(kw[q].text)) break; }
+      while (parts.length && /^(de|du|des|et|en|la|le|les)$/i.test(parts[parts.length - 1])) parts.pop();
+      const term = parts.join(" "); if (term.length >= 3 && !out.some((x) => x.kind === "term" && fold(x.text) === fold(term)))
+        out.push({ id: id("term", kw[i].start), kind: "term", text: term.charAt(0).toUpperCase() + term.slice(1), sub: "Concept", start: kw[i].start, end: kw[i].start + 2.4 });
     }
+    // univers : « Terre-616 », « Terre 1610 », « Earth-199999 »
+    { const m = /^(terre|earth)-?(\d{2,6})?$/.exec(fold(bare(kw[i].text)).replace(/\s/g, "")), nx = bare(kw[i + 1]?.text ?? "");
+      const num = m ? m[2] ?? (/^\d{2,6}$/.test(nx) ? nx : null) : null;
+      if (m && num && !out.some((x) => x.kind === "tag" && x.text === `Terre-${num}` && Math.abs(x.start - kw[i].start) < 20)) out.push({ id: id("tag", kw[i].start), kind: "tag", text: `Terre-${num}`, sub: "Univers", start: kw[i].start, end: kw[i].start + 3 }); }
   }
   // frise : années dites, regroupées si moins de 25 s d'écart
   const years: { t: number; y: string; what: string }[] = [];
-  kw.forEach((w, i) => { const b = bare(w.text); if (/^(19[3-9]\d|20\d\d)$/.test(b)) { const what: string[] = []; for (let k = i + 1; k < kw.length && what.length < 4; k++) { if (/^(19[3-9]\d|20\d\d)$/.test(bare(kw[k].text))) break; what.push(bare(kw[k].text)); if (/[,.;!?…]$/.test(kw[k].text)) break; } while (what.length && /^(et|en|puis|au|aux|à|a|dans|de|du|des|le|la|les|un|une|ou|mais)$/i.test(what[what.length - 1])) what.pop(); years.push({ t: w.start, y: b, what: what.join(" ") }); } });
+  kw.forEach((w, i) => { const b = bare(w.text); if (/^(19[3-9]\d|20\d\d)$/.test(b)) { const what: string[] = []; for (let k = i + 1; k < kw.length && what.length < 4 && !/[.!?…]$/.test(w.text); k++) { if (/^(19[3-9]\d|20\d\d)$/.test(bare(kw[k].text))) break; what.push(bare(kw[k].text)); if (/[,.;!?…]$/.test(kw[k].text)) break; } while (what.length && /^(et|en|puis|au|aux|à|a|dans|de|du|des|le|la|les|un|une|ou|mais)$/i.test(what[what.length - 1])) what.pop(); years.push({ t: w.start, y: b, what: what.join(" ") }); } });
   for (let a = 0; a < years.length;) {
     let b = a; while (b + 1 < years.length && years[b + 1].t - years[b].t < 25) b++;
     const g = years.slice(a, b + 1).filter((x, i, arr) => arr.findIndex((z) => z.y === x.y) === i);
+    if (g.length === 1) out.push({ id: id("tag", g[0].t), kind: "tag", text: g[0].y, sub: "Époque", start: Math.max(0, g[0].t - 0.1), end: g[0].t + 3 });
     if (g.length >= 2) out.push({ id: id("timeline", g[0].t), kind: "timeline", text: "Les dates clés", sub: g.slice(0, 6).map((x) => `${x.y} ${x.what}`.trim()).join(" ; "), start: Math.max(0, g[0].t - 0.2), end: Math.max(g[g.length - 1].t + 2, g[0].t + 2.5 + g.length * 1.2) });
     a = b + 1;
   }

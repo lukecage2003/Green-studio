@@ -1,7 +1,7 @@
-// Test navigateur « Workflow » : habillage dit à voix haute, vérification express des raccords, publication TikTok (légende copiée).
+// Test navigateur « Workflow » : habillage dit à voix haute (classement, concept, univers, frise), vérification express des raccords, publication TikTok (légende copiée).
 // node tests/browser/workflow.e2e.cjs (serveur `npx vite --port 5173` lancé).
 const { chromium } = require('playwright'); const assert = require('assert');
-const said = 'En numéro 3, Venom qui a tout changé. euh Numéro deux : Carnage. Vrai ou faux : Venom a déjà été un héros. euh Eh bien c\'est vrai ! Il apparaît en 1984 dans Secret Wars, puis en 1988 comme Venom.'.split(' ');
+const said = 'En numéro 3, Venom qui a tout changé. euh Numéro deux : Carnage. Mais c\'est quoi la Force Phénix ? euh Une entité cosmique. Sur Terre-616 tout change. Il apparaît en 1984 dans Secret Wars, puis en 1988 comme Venom.'.split(' ');
 let t = 0.6; const WORDS = said.map((x) => { const w = { text: x, start: +t.toFixed(2), end: +(t + 0.26).toFixed(2) }; t += x === 'euh' ? 1.1 : 0.36; return w; });
 const FAKE = `self.onmessage = (e) => { if (e.data.type === 'run') self.postMessage({ type: 'done', words: ${JSON.stringify(WORDS)} }); };`;
 (async () => {
@@ -28,7 +28,7 @@ const FAKE = `self.onmessage = (e) => { if (e.data.type === 'run') self.postMess
   await p.click('.qe [data-a=spokenAll]'); let s = await saved();
   console.log('titres :', JSON.stringify(s.titles.map((x) => [x.kind, x.sub, x.text])));
   assert.deepEqual(s.titles.filter((x) => x.kind === 'rank').map((x) => x.sub + ' ' + x.text), ['3 Venom', '2 Carnage']);
-  assert.ok(s.titles.some((x) => x.kind === 'quiz' && x.sub === 'vrai') && s.titles.some((x) => x.kind === 'timeline'));
+  assert.ok(s.titles.some((x) => x.kind === 'term' && x.text === 'Force Phénix') && s.titles.some((x) => x.kind === 'tag' && x.text === 'Terre-616') && s.titles.some((x) => x.kind === 'timeline'));
   assert.equal(await p.$('.qe [data-spoken]'), null, 'plus rien à placer');
   // 2. coupes (les « euh ») puis vérification express des raccords
   await p.click('.qe .tbar [data-a=clean]'); await p.waitForFunction(() => /[1-9]\d* coupe/.test(document.querySelector('.qe [data-r=status]').textContent), null, { timeout: 30000 });
