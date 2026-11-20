@@ -429,8 +429,14 @@ export function refineCuts(cuts: Range[], words: Word[] | null, pcm: Float32Arra
       if (t <= lim) { let bv = Infinity; for (let u = next.start - 0.025; u > lim; u -= hop) if (E(u) < bv) { bv = E(u); t = u + 0.025; } }
       en = Math.min(en, Math.max(lim, Math.min(t - 0.025, next.start - 0.02)));
     }
+    // les mots à couper restent entièrement dans la coupe (le recalage ne doit jamais en rendre un morceau au montage)
+    const inside = words ? words.filter((w) => { const m = (w.start + w.end) / 2; return m >= c.start && m < c.end && /[\p{L}\p{N}]/u.test(w.text); }) : [];
+    if (inside.length) { // sauf si les horaires de la transcription se chevauchent : le mot gardé reste prioritaire
+      const a0 = Math.max(c.start, Math.min(...inside.map((w) => w.start)), prev ? prev.end + 0.035 : -1), b0 = Math.min(c.end, Math.max(...inside.map((w) => w.end)), next ? next.start - 0.02 : Infinity);
+      s = Math.min(s, a0); en = Math.max(en, b0);
+    }
     if (en - s < 0.03) return { start: c.start, end: c.end };
-    return { start: zc(s, s - 0.004, en), end: zc(en, s, en + 0.004) };
+    return { start: zc(s, Math.max(c.start, s - 0.004), en), end: zc(en, s, Math.min(c.end + 0.004, en + 0.004)) };
   });
 }
 

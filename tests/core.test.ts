@@ -518,6 +518,11 @@ test("raccords au millimètre : chute et attaque protégées, passage par zéro,
   const [c] = refineCuts([{ start: 1.02, end: 2.48 }], words, pcm, rate);
   assert.ok(c.start >= 1.08 && c.start < 1.2, `chute gardée : ${c.start}`); assert.ok(c.end <= 2.44 && c.end > 2.3, `attaque gardée : ${c.end}`);
   for (const t of [c.start, c.end]) { const i = Math.round(t * rate); assert.ok(Math.abs(pcm[i]) < 0.01 || (pcm[i - 1] <= 0) !== (pcm[i] <= 0), "bord sur un passage par zéro"); }
+  // bruit continu (jamais de silence) : le mot à couper reste entièrement coupé
+  const hum = new Float32Array(rate * 3); for (let i = 0; i < hum.length; i++) hum[i] = Math.sin(i * 0.05) * 0.3;
+  const ws2 = [{ text: "je", start: 0.5, end: 0.8 }, { text: "vais", start: 0.86, end: 1.12 }, { text: "vais", start: 1.18, end: 1.44 }, { text: "vous", start: 1.5, end: 1.76 }];
+  const [c2] = refineCuts([{ start: 1.15, end: 1.47 }], ws2, hum, rate);
+  assert.ok(c2.start <= 1.18 && c2.end >= 1.44, `mot répété entièrement coupé : ${JSON.stringify(c2)}`);
   const br = detectBreaths(words, pcm, rate); assert.equal(br.length, 1); assert.ok(Math.abs(br[0].start - 1.58) < 0.05 && Math.abs(br[0].end - 1.92) < 0.05, JSON.stringify(br));
 });
 

@@ -52,6 +52,7 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Repère** 📅 : une année dite seule → pastille « ÉPOQUE 1962 » ; « Terre-616 » → pastille « UNIVERS ». Plusieurs années rapprochées → frise (inchangé).
 - **Nom avec les images** : les images de la banque placées automatiquement affichent leur nom (« Le Gant de l'Infini ») ; modifiable avec 🏷 sur chaque image.
 - Tout reste tiré de ce que vous dites : rien n'est inventé.
+- **Correctif raccords** : avec un bruit de fond continu, la finition pouvait rendre au montage un morceau d'un mot à couper (« vais vais ») ; le mot coupé reste maintenant entièrement dans la coupe, sauf chevauchement des horaires de la transcription où le mot gardé reste protégé. Mesures sur les vraies prises inchangées (0 attaque, 0 chute rognée).
 
 ## 3.1.0-beta.23 — workflow
 - **Habillage dit à voix haute** (Habillage → « ✨ Repéré dans ce que vous dites », et l'Express) : « numéro 3, Venom » / « à la troisième place, Venom » → classement ; « vrai ou faux : … » → quiz (réponse lue dans « c'est vrai / c'est faux » dit ensuite) ; au moins deux années dites à moins de 25 s d'écart → frise. Rien n'est inventé : tout vient de la transcription.
