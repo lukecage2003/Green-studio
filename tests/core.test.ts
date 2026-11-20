@@ -526,3 +526,15 @@ test("raccords au millimètre : chute et attaque protégées, passage par zéro,
   for (const t of [c.start, c.end]) { const i = Math.round(t * rate); assert.ok(Math.abs(pcm[i]) < 0.01 || (pcm[i - 1] <= 0) !== (pcm[i] <= 0), "bord sur un passage par zéro"); }
   const br = detectBreaths(words, pcm, rate); assert.equal(br.length, 1); assert.ok(Math.abs(br[0].start - 1.58) < 0.05 && Math.abs(br[0].end - 1.92) < 0.05, JSON.stringify(br));
 });
+
+test("habillage déclenché par la parole : classement, vrai ou faux, frise", async () => {
+  const { autoDress } = await import("../src/core/viral.ts");
+  let t = 0.5; const W = (s: string) => s.split(" ").map((x) => { const w = { text: x, start: +t.toFixed(2), end: +(t + 0.25).toFixed(2) }; t += 0.32; return w; });
+  const words = [...W("En numéro 3, Venom qui a tout changé."), ...W("Numéro deux : Carnage."), ...W("Vrai ou faux : Venom a déjà été un héros."), ...W("Eh bien c'est vrai !"),
+    ...W("Il apparaît en 1984 dans Secret Wars, puis en 1988 comme Venom et en 2018 au cinéma.")];
+  const d = autoDress(words, []); const k = (kind: string) => d.filter((x) => x.kind === kind);
+  assert.deepEqual(k("rank").map((x) => [x.sub, x.text]), [["3", "Venom"], ["2", "Carnage"]]);
+  assert.equal(k("quiz").length, 1); assert.equal(k("quiz")[0].text, "Venom a déjà été un héros"); assert.equal(k("quiz")[0].sub, "vrai");
+  assert.equal(k("timeline").length, 1); assert.match(k("timeline")[0].sub!, /^1984 dans Secret Wars ; 1988 comme Venom ; 2018 au cinéma/);
+  assert.equal(autoDress(words, [{ start: 0, end: 2.6 }]).filter((x) => x.kind === "rank").length, 1, "classement coupé : ignoré");
+});

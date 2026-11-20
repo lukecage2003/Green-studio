@@ -7,7 +7,7 @@ import { Share } from "@capacitor/share";
 export const isNative = () => Capacitor.isNativePlatform();
 
 /** Plugin natif de l'app (android/app/src/main/java/app/greenstudio/GalleryPlugin.java). */
-const Gallery = registerPlugin<{ saveVideo(o: { path: string; name: string; mime: string }): Promise<{ uri: string }> }>("Gallery");
+const Gallery = registerPlugin<{ saveVideo(o: { path: string; name: string; mime: string }): Promise<{ uri: string }>; shareToApp(o: { path: string; pkg: string; text?: string }): Promise<void> }>("Gallery");
 
 const CHUNK = 3 * 1024 * 1024; // multiple de 3 : chaque morceau s'encode en base64 sans remplissage
 const b64 = (b: Blob) => new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1] ?? ""); r.onerror = () => rej(r.error); r.readAsDataURL(b); });
@@ -53,6 +53,13 @@ export const Writer = registerPlugin<any>("Writer");
 export async function shareVideo(blob: Blob, name: string, onProgress?: (p: number) => void) {
   const uri = await toCache(blob, name, onProgress);
   await Share.share({ title: "Green Studio", files: [uri], dialogTitle: "Partager la vidéo" });
+}
+
+/** Ouvre la vidéo directement dans TikTok (appli internationale, puis variante asiatique) ; sinon la feuille de partage Android. */
+export async function shareToTikTok(blob: Blob, name: string, text?: string) {
+  const uri = await toCache(blob, name);
+  for (const pkg of ["com.zhiliaoapp.musically", "com.ss.android.ugc.trill"]) { try { await Gallery.shareToApp({ path: uri, pkg, text }); return "tiktok"; } catch { /* appli suivante */ } }
+  await Share.share({ title: "Green Studio", files: [uri], dialogTitle: "Partager la vidéo" }); return "share";
 }
 
 /** Moteur vidéo natif (android/…/StudioPlugin.java) : caméra CameraX, détourage ML Kit, rendu GPU et enregistrement natifs. */

@@ -2,6 +2,7 @@
  *  Fonctions pures (testées) ; l'interface les affiche. */
 import type { Range, Word } from "./timeline.ts";
 import { sourceToEdited, editedToSource } from "./timeline.ts";
+import type { Title } from "./overlay.ts";
 
 const fold = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9' ]/g, "").trim();
 const isCutAt = (cuts: Range[], t: number) => cuts.some((c) => t >= c.start && t < c.end);
@@ -73,4 +74,45 @@ export function emojiFor(text: string): string | null {
   if (k.length < 2) return null;
   for (const [re, e] of EMOJI) if (re.test(k)) return e;
   return null;
+}
+
+/* ---------- Habillage déclenché par la parole ---------- */
+const NUM: Record<string, number> = { un: 1, une: 1, premier: 1, premiere: 1, deux: 2, deuxieme: 2, trois: 3, troisieme: 3, quatre: 4, quatrieme: 4, cinq: 5, cinquieme: 5, six: 6, sixieme: 6, sept: 7, septieme: 7, huit: 8, huitieme: 8, neuf: 9, neuvieme: 9, dix: 10, dixieme: 10 };
+const numOf = (s: string) => { const f = fold(s).replace(/[^a-z0-9]/g, ""); return /^\d{1,2}$/.test(f) ? +f : NUM[f] ?? null; };
+const bare = (s: string) => s.replace(/^[«"“(]+|[»"”),.;:!?…]+$/g, "");
+
+/**
+ * Ce que vous dites devient de l'habillage (temps source, mots gardés seulement) :
+ *  - « numéro 3 : Venom », « en numéro 3, Venom », « à la troisième place, Venom » → classement ;
+ *  - « vrai ou faux : … » → quiz (réponse d'après « c'est vrai / c'est faux » dit ensuite, sinon « vrai » à vérifier) ;
+ *  - au moins deux années dites (1938…2099) à moins de 25 s d'écart → frise (« 1984 le costume noir ; 1988 … »).
+ */
+export function autoDress(words: Word[], cuts: Range[]): Title[] {
+  const kw = words.filter((w) => !isCutAt(cuts, (w.start + w.end) / 2) && /[\p{L}\p{N}]/u.test(w.text)), out: Title[] = [];
+  const f = kw.map((w) => fold(bare(w.text))), id = (k: string, t: number) => `auto-${k}-${Math.round(t * 100)}`;
+  const nameAfter = (j: number) => { const ws: string[] = []; for (let k = j; k < kw.length && ws.length < 4; k++) { const b = bare(kw[k].text); if (!b) break; if (ws.length && !/^\p{Lu}/u.test(b)) break; if (!ws.length && !/^\p{Lu}/u.test(b)) return null; ws.push(b); if (/[,.;:!?…]$/.test(kw[k].text)) break; } return ws.length ? ws.join(" ") : null; };
+  for (let i = 0; i < kw.length; i++) {
+    // classement
+    let n: number | null = null, j = -1;
+    if ((f[i] === "numero" || f[i] === "top" || f[i] === "n") && i + 1 < kw.length) { n = numOf(kw[i + 1].text); j = i + 2; }
+    else if (/^(place|position)$/.test(f[i] ?? "") && i >= 1) { n = numOf(kw[i - 1].text); j = i + 1; }
+    if (n != null && n <= 20) { while (j < kw.length && /^(c'?est|cest|on a|il y a|avec|:|,)$/.test(f[j])) j++; const name = nameAfter(j);
+      if (name && !out.some((o) => o.kind === "rank" && Math.abs(o.start - kw[i].start) < 2)) out.push({ id: id("rank", kw[i].start), kind: "rank", text: name, sub: String(n), start: Math.max(0, kw[i].start - 0.1), end: kw[i].start + 2.6 }); }
+    // vrai ou faux
+    if (f[i] === "vrai" && f[i + 1] === "ou" && f[i + 2] === "faux") {
+      const st: string[] = []; let k = i + 3; for (; k < kw.length && st.length < 16; k++) { st.push(bare(kw[k].text)); if (/[.!?…]$/.test(kw[k].text) && st.length >= 3) break; }
+      if (st.length >= 3) { let ans = "vrai"; for (let q = k + 1; q < Math.min(kw.length, k + 40); q++) { if (/^(cest|c'est)$/.test(f[q]) && /^(faux|vrai)$/.test(f[q + 1] ?? "")) { ans = f[q + 1]; break; } }
+        const text = st.join(" ").replace(/\s+([?!:;])/g, " $1").replace(/[.…]+$/, ""); out.push({ id: id("quiz", kw[i].start), kind: "quiz", text: text.charAt(0).toUpperCase() + text.slice(1), sub: ans, start: kw[i].start, end: kw[i].start + 6 }); }
+    }
+  }
+  // frise : années dites, regroupées si moins de 25 s d'écart
+  const years: { t: number; y: string; what: string }[] = [];
+  kw.forEach((w, i) => { const b = bare(w.text); if (/^(19[3-9]\d|20\d\d)$/.test(b)) { const what: string[] = []; for (let k = i + 1; k < kw.length && what.length < 4; k++) { if (/^(19[3-9]\d|20\d\d)$/.test(bare(kw[k].text))) break; what.push(bare(kw[k].text)); if (/[,.;!?…]$/.test(kw[k].text)) break; } while (what.length && /^(et|en|puis|au|aux|à|a|dans|de|du|des|le|la|les|un|une|ou|mais)$/i.test(what[what.length - 1])) what.pop(); years.push({ t: w.start, y: b, what: what.join(" ") }); } });
+  for (let a = 0; a < years.length;) {
+    let b = a; while (b + 1 < years.length && years[b + 1].t - years[b].t < 25) b++;
+    const g = years.slice(a, b + 1).filter((x, i, arr) => arr.findIndex((z) => z.y === x.y) === i);
+    if (g.length >= 2) out.push({ id: id("timeline", g[0].t), kind: "timeline", text: "Les dates clés", sub: g.slice(0, 6).map((x) => `${x.y} ${x.what}`.trim()).join(" ; "), start: Math.max(0, g[0].t - 0.2), end: Math.max(g[g.length - 1].t + 2, g[0].t + 2.5 + g.length * 1.2) });
+    a = b + 1;
+  }
+  return out.sort((x, y) => x.start - y.start);
 }

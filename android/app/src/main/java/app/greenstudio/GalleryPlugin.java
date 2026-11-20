@@ -1,6 +1,9 @@
 package app.greenstudio;
 
+import android.content.ActivityNotFoundException;
 import android.content.ContentResolver;
+import android.content.Intent;
+import androidx.core.content.FileProvider;
 import android.content.ContentValues;
 import android.net.Uri;
 import android.os.Build;
@@ -21,6 +24,23 @@ import java.io.OutputStream;
 /** Range une vidéo du cache de l'app dans la Galerie (Movies/Green Studio) via MediaStore, sans autorisation sur Android 10+. */
 @CapacitorPlugin(name = "Gallery")
 public class GalleryPlugin extends Plugin {
+
+    /** Ouvre directement une app (TikTok) avec la vidéo du cache, sans passer par la feuille de partage. */
+    @PluginMethod
+    public void shareToApp(PluginCall call) {
+        String path = call.getString("path"), pkg = call.getString("pkg"), text = call.getString("text");
+        if (path == null || pkg == null) { call.reject("Paramètres manquants"); return; }
+        File f = new File(Uri.parse(path).getPath());
+        if (!f.exists()) { call.reject("Fichier introuvable"); return; }
+        Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f);
+        Intent i = new Intent(Intent.ACTION_SEND);
+        i.setType("video/*"); i.putExtra(Intent.EXTRA_STREAM, uri);
+        if (text != null) i.putExtra(Intent.EXTRA_TEXT, text);
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+        i.setPackage(pkg);
+        try { getContext().startActivity(i); call.resolve(); }
+        catch (ActivityNotFoundException e) { call.reject("absent"); }
+    }
 
     @PluginMethod
     public void saveVideo(PluginCall call) {

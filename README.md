@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.22)
+# Green Studio 3.1 — état réel (beta.23)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,12 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.23 — workflow
+- **Habillage dit à voix haute** (Habillage → « ✨ Repéré dans ce que vous dites », et l'Express) : « numéro 3, Venom » / « à la troisième place, Venom » → classement ; « vrai ou faux : … » → quiz (réponse lue dans « c'est vrai / c'est faux » dit ensuite) ; au moins deux années dites à moins de 25 s d'écart → frise. Rien n'est inventé : tout vient de la transcription.
+- **Vérification express des raccords** (bouton « Raccords ») : 1 s avant / 1 s après chaque coupe, enchaînés automatiquement ; « Annuler la coupe » d'un geste, « ↺ » pour revoir.
+- **Publier sur TikTok** (fin d'export) : légende + hashtags copiés, puis la vidéo s'ouvre directement dans TikTok (sinon la feuille de partage). Hashtags locaux : noms propres d'abord.
+- Test navigateur `workflow.e2e` ; 48 tests unitaires.
 
 ## 3.1.0-beta.22 — raccords au millimètre, visuels « pro »
 - **Raccords au millimètre** (`refineCuts`) : après le recalage sur le silence (10 ms), chaque bord est fini à l'échantillon : la chute du mot gardé avant la coupe n'est jamais rognée (on attend le retour au bruit de fond, 35 ms au moins), l'attaque du mot suivant est protégée (25 ms avant le début d'énergie, consonnes « p, t, k » comprises), et le bord est posé sur un passage par zéro (pas de clic). Appliqué à « Tout supprimer », à l'Express et aux coupes une par une.

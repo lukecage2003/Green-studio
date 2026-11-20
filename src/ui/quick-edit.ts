@@ -15,7 +15,7 @@ import { TICS, RHYTHM, type Rhythm, type SnapMode, snapToQuiet, refineCuts, with
 import { peaks as computePeaks, loudnessGain, speechBounds } from "../core/audio.ts";
 import { buildCaptions, drawCaption, lineAt, CAPTION_DEFAULT, PRESETS, type CapLine, type CaptionStyle, type CaptionPreset } from "../core/captions.ts";
 import { probe, extractAudio, exportEdited, webCodecsAvailable, extractClip, LOOKS, type Transition, type Aspect, type Look } from "../core/media.ts";
-import { hookCheck, staticGaps, keptSentences } from "../core/viral.ts";
+import { hookCheck, staticGaps, keptSentences, autoDress } from "../core/viral.ts";
 import { StudioVoice, loadDenoiser } from "../core/voice.ts";
 import { exportRealtime } from "../core/export.ts";
 
@@ -123,6 +123,8 @@ const CSS = `
 .qe .sg .chips .ib{height:30px;font-size:13px;padding:0 11px}
 .qe .tabs button{font-size:13.5px;letter-spacing:-.01em}
 .qe .tbar .tb span{white-space:nowrap}
+.qe .ib.tt{flex:1;background:linear-gradient(90deg,#25f4ee33,#fe2c5533);border-color:rgba(254,44,85,.6);color:#fff;font-weight:700}
+.qe .revbar{bottom:calc(84px + env(safe-area-inset-bottom,0px))}.qe .revbar .ib{height:34px;padding:0 11px;font-size:13px}
 .qe .sg[data-o],.qe .sg[data-ti],.qe .sg[data-mk],.qe .sg[data-fz]{flex-wrap:wrap;justify-content:flex-end;row-gap:8px}
 .qe .sg[data-o] .t,.qe .sg[data-ti] .t,.qe .sg[data-mk] .t,.qe .sg[data-fz] .t{flex:1 0 100%}
 .qe .sg .t div.chips{white-space:normal;overflow:visible;font-size:inherit;cursor:default}.qe .sg .t div.chips.anim{white-space:nowrap;overflow-x:auto}
@@ -192,7 +194,7 @@ export async function openEditor(o: EditorOptions) {
     <input type="file" data-r="ovFile" accept="image/*,video/*" hidden><input type="file" data-r="withFile" accept="image/*" hidden><input type="file" data-r="bankFile" accept="image/*,video/*" hidden>
     <div class="body" data-r="body"></div>
     <nav class="tbar" aria-label="Outils">
-      <button class="tb" data-a="split" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.6 7.6 20 18M8.6 16.4 20 6"/></svg><span>Scinder</span></button><button class="tb" data-a="del" disabled><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Supprimer</span></button><button class="tb" data-a="rest" hidden><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.6M4 3.5V8.6h5.1"/></svg><span>Restaurer</span></button><button class="tb" data-a="clean" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.6L18.5 9l-4.7 1.8L12 15.5l-1.8-4.7L5.5 9l4.7-1.4zM18.5 15l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/></svg><span>Nettoyer</span></button><button class="tb" data-a="freezeAdd" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21M8.5 8v5M12.5 8v5"/></svg><span>Pause + zoom</span></button>
+      <button class="tb" data-a="split" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.6 7.6 20 18M8.6 16.4 20 6"/></svg><span>Scinder</span></button><button class="tb" data-a="del" disabled><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>Supprimer</span></button><button class="tb" data-a="rest" hidden><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.6M4 3.5V8.6h5.1"/></svg><span>Restaurer</span></button><button class="tb" data-a="clean" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.6L18.5 9l-4.7 1.8L12 15.5l-1.8-4.7L5.5 9l4.7-1.4zM18.5 15l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/></svg><span>Nettoyer</span></button><button class="tb" data-a="review" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h6M15 12h6M9 7v10M15 7v10"/><path d="m6 9-3 3 3 3M18 9l3 3-3 3"/></svg><span>Raccords</span></button><button class="tb" data-a="freezeAdd" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21M8.5 8v5M12.5 8v5"/></svg><span>Pause + zoom</span></button>
       <button class="tb" data-a="annot" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20 17 7M11 7h6v6"/><ellipse cx="9" cy="16" rx="5" ry="3.5" transform="rotate(-15 9 16)" opacity=".6"/></svg><span>Annoter</span></button><button class="tb" data-a="sfx" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 2 5 5-2-2 5 5 2-5 2 2 5-5-2-2 5-2-5-5 2 2-5-5-2 5-2-2-5 5 2z"/></svg><span>Onomatopée</span></button><button class="tb" data-a="ins" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg><span>Insérer</span></button><button class="tb" data-a="title" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M6 4h12M12 4v7"/></svg><span>Bandeau</span></button><button class="tb" data-a="voiceAB" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span>Voix studio</span></button><button class="tb" data-a="pub" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></svg><span>Publication</span></button><button class="tb" data-a="trim" ><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4v16M20 4v16M8 12h8M10 9l-2 3 2 3M14 9l2 3-2 3"/></svg><span>Bords muets</span></button>
       <label class="tb"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6"/><circle cx="12" cy="12" r="2.5"/></svg><span>Zooms</span><input type="checkbox" data-a="zooms"></label>
       <label class="tb"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l7 7-7 7M13 5l7 7-7 7"/></svg><span>Sauter coupes</span><input type="checkbox" data-a="pv" checked></label>
@@ -383,6 +385,14 @@ export async function openEditor(o: EditorOptions) {
     return c;
   }
   const gaps = () => staticGaps(visualChanges(), duration, session.cuts, 3.5);
+  /** Habillage repéré dans ce que vous dites, pas encore placé. */
+  const spoken = () => (words ? autoDress(words, session.cuts).filter((d) => !titles.some((x) => x.id === d.id || (x.kind === d.kind && Math.abs(x.start - d.start) < 1.5))) : []);
+  function placeSpoken(): number { const l = spoken(); for (const d of l) titles.push({ ...d, end: Math.min(duration, d.end) }); if (l.length) titles.sort((a, b) => a.start - b.start); return l.length; }
+  function spokenCard() {
+    const l = spoken(); if (!l.length) return "";
+    const name = (d: Title) => d.kind === "rank" ? `🏆 N°${d.sub} ${d.text}` : d.kind === "quiz" ? `❓ « ${d.text} » (${d.sub})` : `🗓 ${(d.sub ?? "").split(";").length} dates`;
+    return `<div class="card" data-spoken style="margin-bottom:10px"><b>✨ Repéré dans ce que vous dites</b><p>${l.map((d) => esc(name(d)) + " · " + fmt(d.start)).join("<br>")}</p><div class="chips"><button class="ib go" data-a="spokenAll">Tout placer (${l.length})</button></div></div>`;
+  }
   function paceCard() {
     const g = gaps(); if (!duration) return "";
     return `<div class="card" style="margin-bottom:10px"><b>${g.length ? `⚠ ${g.length} passage${g.length > 1 ? "s" : ""} sans changement à l’écran` : "✓ Rythme visuel : ça bouge toutes les 3 s"}</b>
@@ -404,7 +414,7 @@ export async function openEditor(o: EditorOptions) {
         <input data-a="ttext" value="${esc(ti.text)}" placeholder="Titre" style="width:100%;margin-top:6px;background:rgba(255,255,255,.08);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit">
         <input data-a="tsub" value="${esc(ti.sub ?? "")}" placeholder="${ti.kind === "quiz" ? "vrai ou faux" : ti.kind === "rank" ? "Numéro" : ti.kind === "timeline" ? "1962 Création ; 1984 Secret Wars ; …" : "Sous-titre (facultatif)"}" style="width:100%;margin-top:4px;background:rgba(255,255,255,.06);border:0;border-radius:10px;padding:8px;color:#fff;font:inherit;font-size:14px"></div>
         <button class="ib" data-a="tminus" aria-label="Plus court">−</button><button class="ib" data-a="tplus" aria-label="Plus long">+</button><button class="ib" data-a="there">Ici</button><button class="ib" data-a="tdel" aria-label="Supprimer">✕</button></div>`).join("");
-    body.innerHTML = paceCard() + `<div class="tiles">${([["ins", "🖼", "Image"], ["title", "🅣", "Bandeau"], ["chapter", "📖", "Chapitre"], ["timeline", "🗓", "Frise"], ["hookText", "🅰", "Accroche"], ["rank", "🏆", "Classement"], ["quiz", "❓", "Vrai / Faux"], ["question", "👇", "Question fin"], ["annot", "✏️", "Annoter"], ["sfx", "💥", "Onomatopée"], ["freezeAdd", "🔍", "Pause zoom"], ["safe", "📱", "Zones TikTok"]] as const).map(([a, i, l]) => `<button class="tile${a === "safe" && safeOn ? " on" : ""}" data-a="${a}"><span>${i}</span>${l}</button>`).join("")}</div><div class="row" style="padding:0 0 10px">${words && sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length ? `<button class="ib go" data-a="sfxAuto">💥 Placer les onomatopées dites (${sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length})</button>` : ""}</div>
+    body.innerHTML = spokenCard() + paceCard() + `<div class="tiles">${([["ins", "🖼", "Image"], ["title", "🅣", "Bandeau"], ["chapter", "📖", "Chapitre"], ["timeline", "🗓", "Frise"], ["hookText", "🅰", "Accroche"], ["rank", "🏆", "Classement"], ["quiz", "❓", "Vrai / Faux"], ["question", "👇", "Question fin"], ["annot", "✏️", "Annoter"], ["sfx", "💥", "Onomatopée"], ["freezeAdd", "🔍", "Pause zoom"], ["safe", "📱", "Zones TikTok"]] as const).map(([a, i, l]) => `<button class="tile${a === "safe" && safeOn ? " on" : ""}" data-a="${a}"><span>${i}</span>${l}</button>`).join("")}</div><div class="row" style="padding:0 0 10px">${words && sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length ? `<button class="ib go" data-a="sfxAuto">💥 Placer les onomatopées dites (${sfxFromWords(words, (x) => !!inCut(x)).filter((m) => !marks.some((k) => Math.abs(k.start - m.start) < 0.5)).length})</button>` : ""}</div>
       ${ovRows || tiRows || marks.length ? ovRows + tiRows : `<div class="card"><b>Habillez votre vidéo</b><p>Insérez une case de comic, une couverture ou un extrait : il s’affiche par-dessus la vidéo au moment choisi (tête de lecture, ou les mots sélectionnés dans Texte), en plein écran, en incrustation, ou avec vous en petit dans un coin, et animez-la (glissé, pop, zoom…). « Zones TikTok » montre ce que l’appli TikTok recouvre.</p></div>`}` + bankCard();
   }
   /**
@@ -778,6 +788,27 @@ export async function openEditor(o: EditorOptions) {
   };
   function arm() { const v = video as any; if (!v.requestVideoFrameCallback) return; if (vfEl) (vfEl as any).cancelVideoFrameCallback(vfH); vfEl = video; vfH = v.requestVideoFrameCallback(onVF); }
   arm();
+  /* Vérification express des raccords : 1 s avant / 1 s après chaque coupe, enchaînés ; une coupe ratée s'annule d'un geste. */
+  let review: { list: Range[]; i: number; end: number } | null = null, revBar: HTMLElement | null = null;
+  function reviewStart() {
+    const list = session.cuts.filter((c) => c.start > 0.05 && c.end < duration - 0.05);
+    if (!list.length) { toast("Aucun raccord à vérifier.", 2000); return; }
+    review = { list, i: 0, end: 0 }; (q("[data-a=pv]") as HTMLInputElement).checked = true; reviewGo();
+  }
+  function reviewGo() {
+    if (!review) return; const c = review.list[review.i]; seek(Math.max(0, c.start - 1.1)); review.end = c.end + 0.9; follow = true; video.play().catch(() => {});
+    if (!revBar) { revBar = document.createElement("div"); revBar.className = "selbar revbar"; root.appendChild(revBar); }
+    revBar.innerHTML = `<span>Raccord ${review.i + 1} / ${review.list.length} · −${(c.end - c.start).toFixed(2).replace(".", ",")} s</span><button class="ib" data-a="revAgain" aria-label="Revoir">↺</button><button class="ib" data-a="revUndo">Annuler la coupe</button><button class="ib go" data-a="revNext">${review.i + 1 < review.list.length ? "Suivant ›" : "Terminer"}</button><button class="ib" data-a="revStop" aria-label="Arrêter">✕</button>`;
+  }
+  function reviewNext() { if (!review) return; review.i++; if (review.i >= review.list.length) reviewEnd(true); else reviewGo(); }
+  function reviewEnd(done = false) { if (review && done) toast(`✓ ${review.list.length} raccord(s) vérifié(s).`, 2500); review = null; video.pause(); revBar?.remove(); revBar = null; }
+  function reviewAct(a: string) {
+    if (!review) return; const c = review.list[review.i];
+    if (a === "revAgain") reviewGo();
+    else if (a === "revNext") reviewNext();
+    else if (a === "revStop") reviewEnd();
+    else if (a === "revUndo") { session.restore(c); commit(); toast("Coupe annulée.", 1500); review.list.splice(review.i, 1); if (review.i >= review.list.length) reviewEnd(true); else reviewGo(); }
+  }
   function seek(t: number) { stopAt = null; fz = null; lastT = t; video.currentTime = Math.max(0, Math.min(duration, t)); }
   function playRange(a: number, b: number) { video.currentTime = Math.max(0, a); stopAt = b; follow = true; video.play().catch(() => {}); }
   const pvOn = () => (q("[data-a=pv]") as HTMLInputElement).checked;
@@ -791,6 +822,7 @@ export async function openEditor(o: EditorOptions) {
     }
     lastT = t;
     if (!video.paused) {
+      if (review && review.end && t >= review.end && t < review.end + 1.5) { video.pause(); review.end = 0; setTimeout(() => { if (review && video.paused) reviewNext(); }, 450); }
       if (stopAt != null && t >= stopAt) { video.pause(); stopAt = null; }
       else if (pvOn() && stopAt == null) {
         const c = inCut(t + 0.008);
@@ -924,13 +956,13 @@ export async function openEditor(o: EditorOptions) {
   }
   /** Express : nettoyage, images de la banque, export. */
   /** Réglages de l'Express (mémorisés) : ce qui est ajouté tout seul après le nettoyage. */
-  type XP = { loop: boolean; hookText: boolean; question: boolean; open: boolean };
-  const XP_DEF: XP = { loop: true, hookText: true, question: true, open: false };
+  type XP = { loop: boolean; hookText: boolean; question: boolean; open: boolean; spoken: boolean };
+  const XP_DEF: XP = { loop: true, hookText: true, question: true, open: false, spoken: true };
   const xp = (): XP => { try { return { ...XP_DEF, ...JSON.parse(localStorage.getItem("gs.xp") ?? "{}") }; } catch { return XP_DEF; } };
   function xpCard() {
     const P = xp(), row = (k: keyof XP, l: string) => `<label class="opt"><input type="checkbox" data-a="xp" data-v="${k}" ${P[k] ? "checked" : ""}> ${l}</label>`;
     return `<details class="card" style="margin-bottom:10px"><summary><b>⚡ Express : finition automatique</b></summary><p>Après le nettoyage, l’Express ajoute tout seul :</p>
-      ${row("loop", "Fin en boucle (coupe net sur le dernier mot)")}${row("hookText", "Texte d’accroche géant au début")}${row("question", "Question de fin pour les commentaires")}${row("open", "Rejouer la phrase la plus forte en ouverture (si l’accroche est faible)")}</details>`;
+      ${row("loop", "Fin en boucle (coupe net sur le dernier mot)")}${row("hookText", "Texte d’accroche géant au début")}${row("question", "Question de fin pour les commentaires")}${row("spoken", "Classements, vrai / faux et frises repérés dans ce que vous dites")}${row("open", "Rejouer la phrase la plus forte en ouverture (si l’accroche est faible)")}</details>`;
   }
   /** Finition après nettoyage : boucle, accroche, question (selon les réglages). Renvoie ce qui a été fait. */
   function autoPolish(): string[] {
@@ -943,6 +975,7 @@ export async function openEditor(o: EditorOptions) {
       const src = hook ? h.candidates[0] ?? "" : keptSentences(words, session.cuts)[0]?.text ?? "", txt = src.split(/\s+/).slice(0, 7).join(" ").replace(/[,.…;:]+$/, "");
       if (txt.split(/\s+/).length >= 2) { addTitle("hook", txt); done.push("accroche"); } }
     if (P.question && !titles.some((x) => x.kind === "question")) { addTitle("question", endQuestion()); done.push("question de fin"); }
+    if (P.spoken) { const n = placeSpoken(); if (n) done.push(`${n} habillage(s) dit(s)`); }
     commit(); return done;
   }
   const express = () => cleanAll().then(() => { const d = autoPolish(); if (d.length) toast("⚡ " + d.join(" · "), 3000); }).then(() => (myBank().length ? autoPlace() : 0)).catch(() => 0).then(() => runExport(true));
@@ -1014,7 +1047,7 @@ export async function openEditor(o: EditorOptions) {
     root.appendChild(m);
     const st = m.querySelector<HTMLElement>("[data-r=pst]")!, res = m.querySelector<HTMLElement>("[data-r=pres]")!;
     let temp = 0.6;
-    const show = (d: import("../core/writer.ts").Draft) => {
+    const show = (d: import("../core/writer.ts").Draft) => { lastDraft = d;
       const row = (label: string, v: string) => v ? `<div class="sg" style="margin:6px 0"><div class="t"><b>${label}</b><div style="white-space:pre-wrap">${esc(v)}</div></div><button class="ib" data-copy="${esc(v)}">Copier</button></div>` : "";
       const all = [d.description, d.hashtags.join(" ")].filter(Boolean).join(" ").trim();
       st.textContent = d.by === "ia" ? "Rédigé par Gemini Nano, sur votre téléphone." : "Version simple (l’IA de Google n’est pas disponible sur cet appareil).";
@@ -1139,7 +1172,16 @@ export async function openEditor(o: EditorOptions) {
       const file = new File([blob], name, { type: blob.type });
       const canShare = !!navigator.canShare?.({ files: [file] });
       m.querySelector(".card")!.innerHTML = `<b>Export terminé ✓</b><p>${(blob.size / 1e6).toFixed(1)} Mo · ${fmt(session.editedDuration)} · ${how} · ${((performance.now() - t0) / 1000).toFixed(1)} s</p>
-        <div class="row" style="padding:0">${o.save ? `<button class="ib go" data-x="save">Enregistrer dans la Galerie</button>` : `<a class="ib go" href="${href}" download="${name}">Télécharger</a>`}${o.share || canShare ? `<button class="ib" data-x="share">Partager…</button>` : ""}<button class="ib" data-x="ok">Fermer</button></div>`;
+        <div class="row" style="padding:0">${o.save ? `<button class="ib go" data-x="save">Enregistrer dans la Galerie</button>` : `<a class="ib go" href="${href}" download="${name}">Télécharger</a>`}${o.share || canShare ? `<button class="ib" data-x="share">Partager…</button>` : ""}<button class="ib" data-x="ok">Fermer</button></div>
+        <div class="row" style="padding:6px 0 0"><button class="ib tt" data-x="tiktok">♪ Publier sur TikTok</button></div><p data-r="ttcap" style="font-size:12px"></p>`;
+      const tt = m.querySelector<HTMLElement>("[data-x=tiktok]")!;
+      tt.onclick = async () => {
+        const cap = await tiktokCaption(); try { await navigator.clipboard.writeText(cap); } catch { /* */ }
+        m.querySelector<HTMLElement>("[data-r=ttcap]")!.textContent = "Légende copiée : appuyez longuement dans le champ de description de TikTok puis « Coller ». " + cap;
+        const N = await import("../native.ts");
+        if (N.isNative()) { toast("Ouverture de TikTok…", 60000); N.shareToTikTok(blob, name, cap).then((r: string) => toast(r === "tiktok" ? "Légende copiée ✓ — collez-la dans TikTok." : "TikTok introuvable : choisissez l’appli dans la liste. Légende copiée.", 4000)).catch((e: any) => toast("Partage impossible : " + (e?.message ?? e), 5000)); }
+        else (canShare ? navigator.share({ files: [file], text: cap }) : Promise.reject(new Error("partage indisponible"))).catch(() => toast("Légende copiée. Téléchargez la vidéo puis publiez-la dans TikTok.", 4000));
+      };
       m.querySelector<HTMLElement>("[data-x=ok]")!.onclick = () => { URL.revokeObjectURL(href); m.remove(); };
       const sh = m.querySelector<HTMLElement>("[data-x=share]");
       if (sh) sh.onclick = () => (o.share ? o.share(blob, name) : navigator.share({ files: [file], title: "Green Studio" })).catch((e: any) => toast("Partage impossible : " + (e?.message ?? e), 5000));
@@ -1156,6 +1198,12 @@ export async function openEditor(o: EditorOptions) {
     }
   }
 
+  /** Légende TikTok : celle de Publication si déjà rédigée, sinon version locale à partir du texte gardé. */
+  let lastDraft: import("../core/writer.ts").Draft | null = null;
+  async function tiktokCaption(): Promise<string> {
+    const W = await import("../core/writer.ts"), d = lastDraft ?? W.localDraft(keptWords().map((w) => w.text).join(" "));
+    return [d.description, d.hashtags.join(" ")].filter(Boolean).join(" ").trim();
+  }
   /* ---------- Actions ---------- */
   const commit = () => { save(); refresh(); };
   function close() {
@@ -1233,6 +1281,9 @@ export async function openEditor(o: EditorOptions) {
         if (a > 0.05) session.addCut({ start: 0, end: a }); if (b < duration - 0.05) session.addCut({ start: b, end: duration });
         commit(); toast("Fin en boucle : la vidéo s’arrête net sur le dernier mot et repart sans blanc. Astuce : finissez par une phrase qui s’enchaîne avec la première.", 6000); break; }
       case "gapGo": seek(+t.dataset.v! + 0.2); break;
+      case "spokenAll": { const n = placeSpoken(); body.innerHTML = ""; commit(); toast(`${n} élément(s) placé(s). Retouchez le texte dans la liste si besoin.`, 3000); break; }
+      case "review": reviewStart(); break;
+      case "revUndo": case "revNext": case "revAgain": case "revStop": reviewAct(a); break;
       case "safe": safeOn = !safeOn; try { localStorage.setItem("gs.safe", safeOn ? "1" : "0"); } catch { /* */ } body.innerHTML = ""; refresh(); drawCC(); break;
       case "oanim": case "owith": case "olabels": {
         const ov = overlays.find((x) => x.id === t.closest<HTMLElement>("[data-o]")?.dataset.o); if (!ov) break;

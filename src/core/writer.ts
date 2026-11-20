@@ -9,6 +9,7 @@ const STOP = new Set(("a ai alors au aussi aux avec avoir bah bien bon c ca car 
   + "tes toi ton tous tout tres tu un une va vais vas voila vont vos votre vous vraiment y aujourd hui ici la-bas donc enfin bref genre truc chose choses "
   + "parce rien dire dit fais voir vu ok okay salut bonjour merci tout abonnez abonne video videos parle parler parlons parlez montre montrer "
   + "regarde regarder regardez pense penser trouve trouver veux veut voulez allez aller nouveau nouvelle nouveaux grand grande petit petite "
+  + "numero apparait apparu devient quand fois place classement top "
   + "beaucoup toujours jamais maintenant vraie vrai gros autre autres premier premiere dernier derniere chaque quelque quelques peux pouvez sais savoir").split(/\s+/));
 const fold = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
@@ -51,7 +52,8 @@ export function localDraft(transcript: string): Draft {
   }
   const top = [...freq.values()].sort((a, b) => b.n - a.n || b.w.length - a.w.length).slice(0, 6);
   const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-  const hashtags = top.map((t) => "#" + fold(t.w).replace(/[^a-z0-9]/g, "")).filter((h) => h.length > 2).slice(0, 3);
+  const proper = [...freq.values()].filter((t) => /^\p{Lu}/u.test(t.w)).sort((a, b) => b.n - a.n); // noms propres d'abord (personnages, éditeurs)
+  const hashtags = [...new Set([...proper, ...top].map((t) => "#" + fold(t.w).replace(/[^a-z0-9]/g, "")))].filter((h) => h.length > 2).slice(0, 3);
   const ss = sentences(transcript);
   // accroche : parmi les 5 premières phrases, celle avec question / chiffre / mot fort, courte de préférence
   const strong = /\?|!|\d|jamais|toujours|secret|erreur|pourquoi|comment|incroyable|meilleur|pire|personne|vrai|faux/i;

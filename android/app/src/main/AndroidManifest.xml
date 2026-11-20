@@ -36,6 +36,12 @@
         </provider>
     </application>
 
+    <!-- Publication directe dans TikTok (visibilité des applis, Android 11+) -->
+    <queries>
+        <package android:name="com.zhiliaoapp.musically" />
+        <package android:name="com.ss.android.ugc.trill" />
+    </queries>
+
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
