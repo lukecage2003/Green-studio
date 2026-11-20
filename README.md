@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.26)
+# Green Studio 3.1 — état réel (beta.27)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,12 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.27 — détection des cases toutes formes
+- **Nouvelle détection des cases** (`src/core/panels.ts`, idées des détecteurs par contours réécrites ici) : fond de page suivi depuis les bords (un ciel blanc ou une bulle **dans** une case ne casse plus la case), ouverture morphologique (les ponts fins à travers une gouttière sont coupés), composantes connexes (cases **penchées, trapèzes, mises en page en tourniquet** sans gouttière traversante), coupe au « col » quand une **bulle déborde sur la gouttière** et relie deux cases, ancienne découpe en secours pour les grandes zones, fond de page clair ou **noir**, ordre de lecture **occidental ou manga**. Le contour réel des cases non rectangulaires est gardé (le toucher choisit la bonne case le long d'une diagonale).
+  - Testé sur 6 planches difficiles générées (biais, tourniquet, bulle qui déborde, ciel blanc, fond noir, manga).
+- **Correction des cases** dans la planche en direct (✎) : cases numérotées ; toucher une case la retire, glisser en dessine une ; ⇄ sens manga. Les cases détectées s'affichent 3 s à l'ouverture d'une page.
+- **Express → TikTok** (réglage de l'Express) : à la fin, TikTok s'ouvre avec la vidéo, légende copiée.
 
 ## 3.1.0-beta.26 — planche en direct, nouveaux visuels
 - **📖 Planche en direct** (bouton en haut de l'écran de tournage) : choisissez une ou plusieurs planches ; les cases sont détectées toutes seules (`src/core/panels.ts`, découpe sur les gouttières). La planche s'affiche en haut de l'image, en entier ; **toucher une case → zoom dessus**, toucher à nouveau → page entière, ‹ › → case précédente / suivante puis page suivante. Pendant la prise, chaque geste est noté : à l'ouverture du montage, la planche est **rejouée à l'identique** (mêmes zooms aux mêmes instants, mêmes position et taille qu'à l'écran), avec des glissements fluides d'une case à l'autre.

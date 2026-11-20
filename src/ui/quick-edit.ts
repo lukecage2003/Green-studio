@@ -1001,13 +1001,13 @@ export async function openEditor(o: EditorOptions) {
   }
   /** Express : nettoyage, images de la banque, export. */
   /** Réglages de l'Express (mémorisés) : ce qui est ajouté tout seul après le nettoyage. */
-  type XP = { loop: boolean; hookText: boolean; question: boolean; open: boolean; spoken: boolean };
-  const XP_DEF: XP = { loop: true, hookText: true, question: true, open: false, spoken: true };
+  type XP = { loop: boolean; hookText: boolean; question: boolean; open: boolean; spoken: boolean; publish: boolean };
+  const XP_DEF: XP = { loop: true, hookText: true, question: true, open: false, spoken: true, publish: false };
   const xp = (): XP => { try { return { ...XP_DEF, ...JSON.parse(localStorage.getItem("gs.xp") ?? "{}") }; } catch { return XP_DEF; } };
   function xpCard() {
     const P = xp(), row = (k: keyof XP, l: string) => `<label class="opt"><input type="checkbox" data-a="xp" data-v="${k}" ${P[k] ? "checked" : ""}> ${l}</label>`;
     return `<details class="card" style="margin-bottom:10px"><summary><b>⚡ Express : finition automatique</b></summary><p>Après le nettoyage, l’Express ajoute tout seul :</p>
-      ${row("loop", "Fin en boucle (coupe net sur le dernier mot)")}${row("hookText", "Texte d’accroche géant au début")}${row("question", "Question de fin pour les commentaires")}${row("spoken", "Concepts, sources, univers, dates et frises repérés dans ce que vous dites")}${row("open", "Rejouer la phrase la plus forte en ouverture (si l’accroche est faible)")}</details>`;
+      ${row("loop", "Fin en boucle (coupe net sur le dernier mot)")}${row("hookText", "Texte d’accroche géant au début")}${row("question", "Question de fin pour les commentaires")}${row("spoken", "Concepts, sources, univers, dates et frises repérés dans ce que vous dites")}${row("publish", "À la fin : ouvrir TikTok directement, légende copiée (il ne reste qu’à publier)")}${row("open", "Rejouer la phrase la plus forte en ouverture (si l’accroche est faible)")}</details>`;
   }
   /** Finition après nettoyage : boucle, accroche, question (selon les réglages). Renvoie ce qui a été fait. */
   function autoPolish(): string[] {
@@ -1236,6 +1236,7 @@ export async function openEditor(o: EditorOptions) {
       if (auto) { // express : enregistrée tout de suite, il ne reste qu'à partager
         if (sv) sv.click(); else m.querySelector<HTMLAnchorElement>("a[download]")?.click();
         m.querySelector(".card b")!.textContent = "⚡ Vidéo prête ✓";
+        if (xp().publish) setTimeout(() => tt.click(), 600); // Express : direction TikTok
       }
     } catch (e: any) {
       if (e?.name === "AbortError") { toast("Export annulé.", 2000); return; }

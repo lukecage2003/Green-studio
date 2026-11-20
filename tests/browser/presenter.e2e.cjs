@@ -17,6 +17,11 @@ const { chromium } = require('playwright'); const assert = require('assert');
   await p.waitForSelector('.pres:not([hidden])'); await p.waitForFunction(() => /Page · 1\/1/.test(document.querySelector('.presbar [data-p=n]')?.textContent ?? ''));
   const bb = await (await p.$('.pres canvas')).boundingBox(); console.log('planche affichée :', Math.round(bb.width), '×', Math.round(bb.height));
   const px = async (fx, fy) => p.evaluate(([fx, fy]) => { const c = document.querySelector('.pres canvas'); return [...c.getContext('2d').getImageData(Math.round(c.width * fx), Math.round(c.height * fy), 1, 1).data.slice(0, 3)]; }, [fx, fy]);
+  // correction des cases : 4 détectées ; toucher une case la retire, puis on la redessine en glissant
+  await p.click('.presbar [data-p=edit]'); assert.match(await p.textContent('.presbar [data-p=n]'), /4 case/);
+  await p.mouse.click(bb.x + bb.width * 0.75, bb.y + bb.height * 0.55); assert.match(await p.textContent('.presbar [data-p=n]'), /3 case/);
+  await p.mouse.move(bb.x + bb.width * 0.56, bb.y + bb.height * 0.4); await p.mouse.down(); await p.mouse.move(bb.x + bb.width * 0.62, bb.y + bb.height * 0.62, { steps: 5 }); await p.mouse.up();
+  assert.match(await p.textContent('.presbar [data-p=n]'), /4 case/); await p.click('.presbar [data-p=edit]'); assert.match(await p.textContent('.presbar [data-p=n]'), /^Page/);
   // prise
   await p.click('#rec'); await p.waitForSelector('#recChip:not([hidden])', { timeout: 20000 }); await p.waitForTimeout(1500);
   // la vue d'ensemble est recadrée (remplissage) : la case bleue est à gauche, vers le milieu en hauteur
@@ -44,7 +49,7 @@ const { chromium } = require('playwright'); const assert = require('assert');
     const i = new mb.Input({ source: new mb.BlobSource(bl), formats: mb.ALL_FORMATS }), sink = new mb.VideoSampleSink(await i.getPrimaryVideoTrack());
     const s = await sink.getSample(t), c = new OffscreenCanvas(s.displayWidth, s.displayHeight), g = c.getContext('2d'); s.draw(g, 0, 0); s.close();
     return [...g.getImageData(Math.round(c.width * 0.5), Math.round(c.height * 0.33), 1, 1).data.slice(0, 3)];
-  }, Math.min(blue.end - 0.1, blue.start + 0.9));
+  }, (blue.start + blue.end) / 2); // milieu de l’étape : tolère un léger décalage d’horloge quand la machine de test est chargée
   console.log('export, centre de l’incrustation :', r); assert.ok(r[2] > 150 && r[0] < 90, 'case bleue zoomée dans la vidéo exportée');
   console.log('erreurs :', errs); assert.equal(errs.length, 0); console.log('OK'); await b.close();
 })().catch((e) => { console.error('ÉCHEC', e); process.exit(1); });

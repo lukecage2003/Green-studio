@@ -584,3 +584,36 @@ test("chiffre clé, spoiler, multivers repérés ; défilement du chiffre ; éta
   const st = presToOverlays({ pages: ["pA", "pB"], at: 0, aspect: 1.2, end: 20, events: [{ t: 0, page: 0, panel: -1, target: null }, { t: 3, page: 0, panel: 1, target: { z: 2, x: 0.3, y: 0.5 } }, { t: 6, page: 0, panel: -1, target: null }, { t: 9, page: 1, panel: -1, target: null }, { t: 12, page: -1, panel: -1, target: null }] }, 18);
   assert.deepEqual(st.map((x) => [x.src, x.start, x.end, x.seq, x.zfrom ? x.zfrom.z : null, x.zoom ? x.zoom.z : null]), [["pA", 0, 3, "first", null, null], ["pA", 3, 6, "mid", null, 2], ["pA", 6, 9, "last", 2, null], ["pB", 9, 12, "only", null, null]]);
 });
+
+test("cases de toutes formes : biais, tourniquet, bulle qui déborde, ciel blanc, fond noir, manga", async () => {
+  const { detectPanels, panelAt } = await import("../src/core/panels.ts");
+  const page = (w: number, h: number, bgc: number[]) => { const px = new Uint8ClampedArray(w * h * 4); for (let i = 0; i < w * h; i++) { px[i * 4] = bgc[0]; px[i * 4 + 1] = bgc[1]; px[i * 4 + 2] = bgc[2]; px[i * 4 + 3] = 255; } return px; };
+  const poly = (px: Uint8ClampedArray, w: number, h: number, pts: number[][], c: number[], border = 3) => { // case pleine + contour noir
+    const inside = (x: number, y: number, pp: number[][]) => { let k = false; for (let i = 0, j = pp.length - 1; i < pp.length; j = i++) { const [xi, yi] = pp[i], [xj, yj] = pp[j]; if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) k = !k; } return k; };
+    const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length, cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+    const inner = pts.map(([x, y]) => { const d = Math.hypot(x - cx, y - cy) || 1; return [x + ((cx - x) / d) * border, y + ((cy - y) / d) * border]; });
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (inside(x + 0.5, y + 0.5, pts)) { const i = (y * w + x) * 4, col = inside(x + 0.5, y + 0.5, inner) ? c : [15, 15, 15]; px[i] = col[0]; px[i + 1] = col[1]; px[i + 2] = col[2]; } };
+  const R = (x0: number, y0: number, x1: number, y1: number) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+  const fmt = (p: { x: number; y: number; w: number; h: number }[]) => p.map((q) => [q.x, q.y, q.w, q.h].map((v) => v.toFixed(2)).join(","));
+  // 1. gouttière en biais
+  { const w = 300, h = 450, px = page(w, h, [255, 255, 255]); poly(px, w, h, [[10, 10], [290, 10], [290, 170], [10, 215]], [200, 40, 40]); poly(px, w, h, [[10, 230], [290, 185], [290, 440], [10, 440]], [40, 60, 200]);
+    const p = detectPanels(px, w, h); assert.equal(p.length, 2, "biais : " + fmt(p)); assert.ok(p[0].poly && p[1].poly, "contour réel gardé");
+    assert.equal(panelAt(p, 0.9, 0.42), 1, "sous la diagonale à droite : 2e case"); assert.equal(panelAt(p, 0.1, 0.42), 0, "au-dessus à gauche : 1re case"); }
+  // 2. tourniquet (aucune gouttière ne traverse toute la page)
+  { const w = 300, h = 450, px = page(w, h, [250, 248, 240]);
+    for (const [r, c] of [[R(10, 10, 190, 140), [200, 40, 40]], [R(200, 10, 290, 290), [40, 160, 60]], [R(110, 300, 290, 440), [40, 60, 200]], [R(10, 150, 100, 440), [160, 40, 160]], [R(110, 150, 190, 290), [220, 160, 30]]] as const) poly(px, w, h, r as unknown as number[][], c as unknown as number[]);
+    const p = detectPanels(px, w, h); assert.equal(p.length, 5, "tourniquet : " + fmt(p)); }
+  // 3. bulle blanche qui déborde sur la gouttière entre deux cases
+  { const w = 300, h = 450, px = page(w, h, [255, 255, 255]); poly(px, w, h, R(10, 10, 290, 215), [70, 90, 130]); poly(px, w, h, R(10, 225, 290, 440), [130, 90, 70]);
+    const bal: number[][] = []; for (let k = 0; k < 24; k++) { const a = (k / 24) * Math.PI * 2; bal.push([150 + Math.cos(a) * 60, 220 + Math.sin(a) * 34]); } poly(px, w, h, bal, [255, 255, 255], 2);
+    const p = detectPanels(px, w, h); assert.equal(p.length, 2, "bulle : " + fmt(p)); assert.ok(p[0].h > 0.4 && p[1].h > 0.4, "chaque case garde sa taille"); }
+  // 4. ciel blanc dans une case à contour noir : la case reste entière
+  { const w = 300, h = 450, px = page(w, h, [255, 255, 255]); poly(px, w, h, R(10, 10, 290, 215), [255, 255, 255]); poly(px, w, h, R(10, 160, 290, 215).map(([x, y]) => [x, y]) as number[][], [60, 120, 60], 0); poly(px, w, h, R(10, 225, 290, 440), [40, 60, 200]);
+    const p = detectPanels(px, w, h); assert.equal(p.length, 2, "ciel blanc : " + fmt(p)); assert.ok(p[0].h > 0.42, "case au ciel blanc entière"); }
+  // 5. fond de page noir, gouttières noires
+  { const w = 300, h = 450, px = page(w, h, [8, 8, 8]); poly(px, w, h, R(10, 10, 145, 440), [200, 200, 60], 0); poly(px, w, h, R(155, 10, 290, 440), [60, 200, 200], 0);
+    const p = detectPanels(px, w, h); assert.equal(p.length, 2, "fond noir : " + fmt(p)); }
+  // 6. ordre manga (droite → gauche)
+  { const w = 300, h = 300, px = page(w, h, [255, 255, 255]); poly(px, w, h, R(10, 10, 145, 290), [200, 40, 40]); poly(px, w, h, R(155, 10, 290, 290), [40, 60, 200]);
+    assert.ok(detectPanels(px, w, h)[0].x < 0.2); assert.ok(detectPanels(px, w, h, { rtl: true })[0].x > 0.4); }
+});

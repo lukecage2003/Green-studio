@@ -3,7 +3,7 @@
  * Toucher une case → zoom dessus ; toucher à nouveau → vue d'ensemble ; ‹ › → case précédente / suivante (puis page suivante).
  * Pendant l'enregistrement, chaque geste est noté (instant, page, cadrage) ; le montage rejoue exactement la même chose.
  */
-import { detectPanels, panelTarget, panelAt, pageTarget, type Panel } from "../core/panels.ts";
+import { detectPanels, panelTarget, panelAt, pageTarget, readingOrder, type Panel } from "../core/panels.ts";
 import { zoomRect, zoomEase, type ZoomTarget } from "../core/overlay.ts";
 import { mediaPut } from "./mediastore.ts";
 
@@ -29,6 +29,8 @@ export class Presenter {
   private imgs: ImageBitmap[] = []; private panels: Panel[][] = []; private ids: string[] = [];
   private page = 0; private panel = -1; private from: ZoomTarget = ALL; private to: ZoomTarget | null = null; private t0 = 0; private raf = 0;
   private events: PresEvent[] = []; private recording = false;
+  private editing = false; private down: { x: number; y: number } | null = null; private shownAt = 0;
+  private rtl = (() => { try { return localStorage.getItem("gs.manga") === "1"; } catch { return false; } })();
   private frame: HTMLElement; private recT: () => number | null;
   constructor(frame: HTMLElement, recT: () => number | null) {
     this.frame = frame; this.recT = recT;
@@ -37,10 +39,13 @@ export class Presenter {
     this.cv = document.createElement("canvas"); this.hint = document.createElement("div"); this.hint.className = "hint"; this.hint.textContent = "Touchez une case pour zoomer";
     this.box.append(this.cv, this.hint);
     this.bar = document.createElement("div"); this.bar.className = "presbar"; this.bar.hidden = true;
-    this.bar.innerHTML = `<i class="rec" aria-hidden="true"></i><button data-p="prev" aria-label="Case précédente">‹</button><span data-p="n"></span><button data-p="next" aria-label="Case suivante">›</button><button data-p="close" aria-label="Fermer la planche">✕</button>`;
+    this.bar.innerHTML = `<i class="rec" aria-hidden="true"></i><button data-p="prev" aria-label="Case précédente">‹</button><span data-p="n"></span><button data-p="next" aria-label="Case suivante">›</button><button data-p="edit" aria-label="Revoir les cases">✎</button><button data-p="close" aria-label="Fermer la planche">✕</button>`;
     frame.append(this.box, this.bar);
-    this.cv.addEventListener("pointerup", (e) => this.tap(e));
-    this.bar.addEventListener("click", (e) => { const a = (e.target as HTMLElement).closest<HTMLElement>("[data-p]")?.dataset.p; if (a === "prev") this.step(-1); else if (a === "next") this.step(1); else if (a === "close") this.close(); });
+    this.cv.addEventListener("pointerup", (e) => (this.editing ? this.editTap(e) : this.tap(e)));
+    this.bar.addEventListener("click", (e) => { const a = (e.target as HTMLElement).closest<HTMLElement>("[data-p]")?.dataset.p;
+      if (a === "prev") this.step(-1); else if (a === "next") this.step(1); else if (a === "close") this.close(); else if (a === "edit") this.setEdit(!this.editing);
+      else if (a === "manga") { this.rtl = !this.rtl; try { localStorage.setItem("gs.manga", this.rtl ? "1" : "0"); } catch { /* */ } this.panels = this.panels.map((p) => readingOrder(p, this.rtl)); this.label(); } });
+    this.cv.addEventListener("pointerdown", (e) => { this.down = { x: e.clientX, y: e.clientY }; });
     addEventListener("resize", () => this.layout());
   }
   get open() { return !this.box.hidden; }
@@ -50,11 +55,11 @@ export class Presenter {
     for (const [i, f] of files.entries()) {
       const bmp = await createImageBitmap(f); this.imgs.push(bmp);
       const k = Math.min(1, 420 / bmp.width), c = new OffscreenCanvas(Math.max(8, Math.round(bmp.width * k)), Math.max(8, Math.round(bmp.height * k))), g = c.getContext("2d")!;
-      g.drawImage(bmp, 0, 0, c.width, c.height); this.panels.push(detectPanels(g.getImageData(0, 0, c.width, c.height).data, c.width, c.height));
+      g.drawImage(bmp, 0, 0, c.width, c.height); this.panels.push(detectPanels(g.getImageData(0, 0, c.width, c.height).data, c.width, c.height, { rtl: this.rtl }));
       const id = "pg" + Date.now().toString(36) + i; this.ids.push(id); await mediaPut(id, f).catch(() => {});
     }
     this.page = 0; this.panel = -1; this.events = []; this.from = this.to = this.whole();
-    this.box.hidden = false; this.bar.hidden = false; this.hint.style.opacity = "1"; this.layout(); this.log(); this.loop();
+    this.box.hidden = false; this.bar.hidden = false; this.hint.style.opacity = "1"; this.shownAt = performance.now(); this.layout(); this.log(); this.loop();
     return this.panels.map((p) => p.length);
   }
   close() { this.log(true); this.box.hidden = true; this.bar.hidden = true; cancelAnimationFrame(this.raf); }
@@ -87,16 +92,43 @@ export class Presenter {
     const z = zoomRect(img.width, img.height, this.cv.width, this.cv.height, this.cur(), 1), fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height;
     this.go(panelAt(this.panels[this.page], (z.sx + fx * z.sw) / img.width, (z.sy + fy * z.sh) / img.height));
   }
+  /** Correction des cases : toucher une case la retire, glisser dessine une nouvelle case. */
+  private setEdit(on: boolean) {
+    this.editing = on; if (on && this.panel >= 0) this.go(-1);
+    const b = this.bar.querySelector<HTMLElement>("[data-p=edit]")!; b.textContent = on ? "✓" : "✎"; b.setAttribute("aria-label", on ? "Terminer" : "Revoir les cases");
+    let m = this.bar.querySelector<HTMLElement>("[data-p=manga]"); if (on && !m) { m = document.createElement("button"); m.dataset.p = "manga"; m.textContent = "⇄"; m.setAttribute("aria-label", "Sens de lecture manga"); this.bar.insertBefore(m, b); } else if (!on) m?.remove();
+    this.hint.textContent = on ? "Touchez une case pour la retirer · glissez pour en dessiner une" : "Touchez une case pour zoomer"; this.hint.style.opacity = on ? "1" : "0"; this.label();
+  }
+  private toPage(cx: number, cy: number) { const img = this.imgs[this.page], r = this.cv.getBoundingClientRect(), z = zoomRect(img.width, img.height, this.cv.width, this.cv.height, this.cur(), 1);
+    return [(z.sx + ((cx - r.left) / r.width) * z.sw) / img.width, (z.sy + ((cy - r.top) / r.height) * z.sh) / img.height]; }
+  private editTap(e: PointerEvent) {
+    const img = this.imgs[this.page]; if (!img) return; const [x1, y1] = this.toPage(e.clientX, e.clientY), d = this.down; this.down = null;
+    const list = this.panels[this.page];
+    if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 14) { const [x0, y0] = this.toPage(d.x, d.y), p = { x: Math.max(0, Math.min(x0, x1)), y: Math.max(0, Math.min(y0, y1)), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
+      if (p.w > 0.04 && p.h > 0.03) list.push(p); }
+    else { const i = list.findIndex((p) => x1 >= p.x && x1 <= p.x + p.w && y1 >= p.y && y1 <= p.y + p.h); if (i >= 0 && list.length > 1) list.splice(i, 1); }
+    this.panels[this.page] = readingOrder(list, this.rtl); this.label();
+  }
+  private label() { (this.bar.querySelector("[data-p=n]") as HTMLElement).textContent = this.editing ? `${this.panels[this.page]?.length ?? 0} case(s)${this.rtl ? " · manga" : ""}` : `${this.panel >= 0 ? `Case ${this.panel + 1}/${this.panels[this.page]?.length ?? 0}` : "Page"} · ${this.page + 1}/${this.imgs.length}`; }
+  /** Contours numérotés des cases (correction, ou brièvement à l'ouverture d'une page). */
+  private outlines(g: CanvasRenderingContext2D, img: ImageBitmap, alpha: number) {
+    const r = zoomRect(img.width, img.height, this.cv.width, this.cv.height, this.cur(), 1), X = (x: number) => ((x * img.width - r.sx) / r.sw) * this.cv.width, Y = (y: number) => ((y * img.height - r.sy) / r.sh) * this.cv.height;
+    g.save(); g.globalAlpha = alpha; g.lineWidth = Math.max(2, this.cv.width * 0.006); g.strokeStyle = "#ffd60a"; g.fillStyle = "rgba(255,214,10,.12)"; g.font = `800 ${Math.round(this.cv.width * 0.045)}px system-ui`; g.textAlign = "center"; g.textBaseline = "middle";
+    (this.panels[this.page] ?? []).forEach((p, i) => {
+      g.beginPath(); if (p.poly) p.poly.forEach(([x, y], k) => (k ? g.lineTo(X(x), Y(y)) : g.moveTo(X(x), Y(y)))); else g.rect(X(p.x), Y(p.y), X(p.x + p.w) - X(p.x), Y(p.y + p.h) - Y(p.y)); g.closePath(); g.fill(); g.stroke();
+      const cx = X(p.x + p.w / 2), cy = Y(p.y + p.h / 2), rr = this.cv.width * 0.04; g.fillStyle = "#ffd60a"; g.beginPath(); g.arc(cx, cy, rr, 0, 7); g.fill(); g.fillStyle = "#000"; g.fillText(String(i + 1), cx, cy + 1); g.fillStyle = "rgba(255,214,10,.12)";
+    });
+    g.restore();
+  }
   /** Case suivante / précédente ; au bout de la page, page suivante (vue d'ensemble). */
   private step(d: number) {
     const n = this.panels[this.page]?.length ?? 0, p = this.panel + d;
     if (p >= 0 && p < n) return this.go(p);
     const np = this.page + d; if (np < 0 || np >= this.imgs.length) { if (this.panel >= 0) this.go(-1); return; }
-    this.page = np; this.panel = -1; this.from = this.to = this.whole(); this.t0 = performance.now(); this.log();
+    this.page = np; this.panel = -1; this.from = this.to = this.whole(); this.t0 = performance.now(); this.shownAt = performance.now(); this.log();
   }
   private log(hide = false) {
-    const t = this.recording ? this.recT() : null;
-    (this.bar.querySelector("[data-p=n]") as HTMLElement).textContent = `${this.panel >= 0 ? `Case ${this.panel + 1}/${this.panels[this.page]?.length ?? 0}` : "Page"} · ${this.page + 1}/${this.imgs.length}`;
+    const t = this.recording ? this.recT() : null; this.label();
     if (t == null) return;
     this.events.push({ t: Math.max(0, t), page: hide ? -1 : this.page, panel: this.panel, target: this.to });
   }
@@ -104,7 +136,8 @@ export class Presenter {
     cancelAnimationFrame(this.raf);
     const draw = () => {
       if (this.box.hidden) return; const img = this.imgs[this.page], g = this.cv.getContext("2d")!;
-      if (img) { const r = zoomRect(img.width, img.height, this.cv.width, this.cv.height, this.cur(), 1); g.fillStyle = "#111"; g.fillRect(0, 0, this.cv.width, this.cv.height); g.drawImage(img, r.sx, r.sy, r.sw, r.sh, 0, 0, this.cv.width, this.cv.height); }
+      if (img) { const r = zoomRect(img.width, img.height, this.cv.width, this.cv.height, this.cur(), 1); g.fillStyle = "#111"; g.fillRect(0, 0, this.cv.width, this.cv.height); g.drawImage(img, r.sx, r.sy, r.sw, r.sh, 0, 0, this.cv.width, this.cv.height);
+        const since = (performance.now() - this.shownAt) / 1000; if (this.editing) this.outlines(g, img, 1); else if (this.panel < 0 && since < 3 && !this.recording) this.outlines(g, img, Math.min(1, (3 - since) / 0.6)); }
       this.raf = requestAnimationFrame(draw);
     };
     draw();
