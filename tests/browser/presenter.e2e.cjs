@@ -19,7 +19,7 @@ const { chromium } = require('playwright'); const assert = require('assert');
   const px = async (fx, fy) => p.evaluate(([fx, fy]) => { const c = document.querySelector('.pres canvas'); return [...c.getContext('2d').getImageData(Math.round(c.width * fx), Math.round(c.height * fy), 1, 1).data.slice(0, 3)]; }, [fx, fy]);
   // correction des cases : 4 détectées ; toucher une case la retire, puis on la redessine en glissant
   await p.click('.presbar [data-p=edit]'); assert.match(await p.textContent('.presbar [data-p=n]'), /4 case/);
-  await p.mouse.click(bb.x + bb.width * 0.75, bb.y + bb.height * 0.55); assert.match(await p.textContent('.presbar [data-p=n]'), /3 case/);
+  await p.mouse.click(bb.x + bb.width * 0.62, bb.y + bb.height * 0.52); assert.match(await p.textContent('.presbar [data-p=n]'), /3 case/); // case verte (page entière au centre, bandes sur les côtés)
   await p.mouse.move(bb.x + bb.width * 0.56, bb.y + bb.height * 0.4); await p.mouse.down(); await p.mouse.move(bb.x + bb.width * 0.62, bb.y + bb.height * 0.62, { steps: 5 }); await p.mouse.up();
   assert.match(await p.textContent('.presbar [data-p=n]'), /4 case/); await p.click('.presbar [data-p=edit]'); assert.match(await p.textContent('.presbar [data-p=n]'), /^Page/);
   // prise
