@@ -120,6 +120,7 @@ const CSS = `
 .qe .sg .chips .ib{height:30px;font-size:13px;padding:0 11px}
 .qe .tabs button{font-size:13.5px;letter-spacing:-.01em}
 .qe .tbar .tb span{white-space:nowrap}
+.qe .ib.big1{flex:1 1 100%;height:48px;font-size:16px;border-radius:24px}
 .qe .ib.tt{flex:1;background:linear-gradient(90deg,#25f4ee33,#fe2c5533);border-color:rgba(254,44,85,.6);color:#fff;font-weight:700}
 .qe .revbar{bottom:calc(84px + env(safe-area-inset-bottom,0px))}.qe .revbar .ib{height:34px;padding:0 11px;font-size:13px}
 .qe .sg[data-o],.qe .sg[data-ti],.qe .sg[data-mk],.qe .sg[data-fz]{flex-wrap:wrap;justify-content:flex-end;row-gap:8px}
@@ -371,8 +372,9 @@ export async function openEditor(o: EditorOptions) {
     const open = sugs.filter((s) => !ignored.has(s.id) && !covered(s.range));
     const all = open.filter((s) => s.confidence >= AUTO_MIN).length, sil = open.filter((s) => s.type === "long_silence").length;
     const take = takeInfo ? `<div class="card" style="margin-bottom:10px"><b>Meilleure prise</b><p>${esc(takeSummary())}</p>${takeInfo.missing.length ? `<p>Non dit : ${takeInfo.missing.map((m) => "« " + esc(m) + " »").join(", ")}</p>` : ""}</div>` : "";
-    body.innerHTML = hookCard() + xpCard() + coachCard() + take + rhythmCard() + ticsCard() + `<div class="row" style="padding:0 0 8px"><button class="ib go" data-a="clean" ${all ? "" : "disabled"}>✨ Tout supprimer (${all})</button>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}
-      <button class="ib" data-a="sil" ${sil ? "" : "disabled"}>Couper les silences (${sil})</button></div>` +
+    // l'action principale d'abord (un geste), les réglages et bilans ensuite
+    body.innerHTML = `<div class="row" style="padding:0 0 10px"><button class="ib go big1" data-a="clean" ${all ? "" : "disabled"}>✨ Nettoyer tout · ${all} défaut${all > 1 ? "s" : ""}</button>${scriptText() ? `<button class="ib" data-a="take">🎬 Meilleure prise</button>` : ""}
+      <button class="ib" data-a="sil" ${sil ? "" : "disabled"}>Silences seulement (${sil})</button><button class="ib" data-a="review">↔ Vérifier les raccords</button></div>` + hookCard() + xpCard() + coachCard() + take + rhythmCard() + ticsCard() +
       sugs.map((s) => { const on = covered(s.range), ign = ignored.has(s.id);
         return `<div class="sg ${on ? "on" : ""} ${ign ? "ign" : ""}" data-s="${esc(s.id)}"><div class="t"><b>${LABEL[s.type]} · ${Math.round(s.confidence * 100)} %${on ? " · coupé" : ""}</b>
           <div data-a="hear" title="Écouter">▶ ${esc(s.excerpt)}</div></div>

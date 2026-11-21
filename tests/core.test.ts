@@ -316,8 +316,16 @@ test("rythme : Dynamique coupe les pauses moyennes, Posé les garde", async () =
   const w = [{ text: "Bonjour.", start: 0, end: 0.5 }, { text: "Aujourd'hui", start: 1.3, end: 1.8 }, { text: "on", start: 1.85, end: 2 }, { text: "parle", start: 2.5, end: 2.8 }];
   const sil = (r: keyof typeof RHYTHM) => analyze(w, { longSilence: RHYTHM[r].longSilence, keepPause: RHYTHM[r].keepPause }).filter((s) => s.type === "long_silence");
   assert.equal(sil("calm").length, 0, "pause de 0,8 s gardée");
-  const n = sil("natural"); assert.equal(n.length, 1); assert.ok(Math.abs(n[0].range.end - n[0].range.start - 0.5) < 1e-9, "0,8 s → 0,3 s");
-  const p = sil("punchy"); assert.equal(p.length, 2, "la pause de 0,5 s aussi"); assert.ok(p.every((s) => s.confidence >= 0.5));
+  assert.equal(sil("natural").length, 0, "Naturel : 0,8 s après une phrase = respiration, gardée");
+  const p = sil("punchy"); assert.equal(p.length, 2, "Dynamique : les deux pauses resserrées"); assert.ok(p.every((s) => s.confidence >= 0.5));
+  assert.ok(Math.abs(p[0].range.end - p[0].range.start - (0.8 - 0.1 * 1.8)) < 1e-9 && Math.abs(p[1].range.end - p[1].range.start - (0.5 - 0.1 * 0.7)) < 1e-9);
+});
+
+test("silences : la pause gardée suit la ponctuation (fin de phrase > virgule > milieu de phrase)", async () => {
+  const { analyze, RHYTHM } = await import("../src/core/speech-analysis.ts"), R = RHYTHM.natural;
+  const kept = (txt: string) => { const r = analyze([{ text: txt, start: 0, end: 0.5 }, { text: "suite", start: 1.7, end: 2 }], { longSilence: R.longSilence, keepPause: R.keepPause }).find((s) => s.type === "long_silence")!; return +(1.2 - (r.range.end - r.range.start)).toFixed(3); };
+  const a = kept("fin."), b = kept("virgule,"), c = kept("milieu");
+  assert.ok(a > b && b > c, `${a} > ${b} > ${c}`); assert.equal(a, 0.54); assert.equal(c, 0.21);
 });
 
 test("transcription nettoyée : élisions recollées, génériques inventés et boucles retirés", async () => {

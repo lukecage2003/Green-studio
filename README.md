@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.28)
+# Green Studio 3.1 — état réel (beta.29)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,12 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.29 — bulles, double appui, silences naturels
+- **Cases et bulles différenciées** : la classe « texte » du détecteur repère bulles de dialogue et cartouches ; une « case » qui est surtout une bulle est écartée (cases en trop sur le banc : 10 → 8, cases trouvées inchangées 13/16). Bulles affichées en pointillés bleus (ouverture d'une planche, correction ✎).
+- **Double appui** dans la planche : zoom ×2,5 à l'endroit touché (encore une fois → plus près), ou sur la bulle touchée. Appui simple immédiat (case, ou retour à la page) ; une case absente sous le doigt → zoom à cet endroit, sans ajouter de fausse case.
+- **Silences selon la ponctuation** : fin de phrase → vraie respiration gardée (×1,8 la pause du rythme), virgule → courte (×1,2), milieu de phrase → resserrée (×0,7) ; un peu plus de silence gardé après le mot qu'avant le suivant.
+- **Nettoyage plus simple** : « ✨ Nettoyer tout · N défauts » en haut de l'onglet, avec « Silences seulement » et « Vérifier les raccords » ; les cartes de réglage ensuite.
 
 ## 3.1.0-beta.28 — planche en décor, détection des cases par IA
 - **La planche devient le décor** (plus de rectangle par-dessus l'image) : vous êtes devant, détouré ; toucher une case → **le décor zoome dessus** en douceur ; toucher à nouveau → page entière ; ‹ › → case suivante / précédente puis page suivante ; une **case large** est parcourue en **panoramique** (zoom sur sa hauteur, glissement de gauche à droite). Le zoom passe par le cadrage du décor (même moteur, web et Android) : il est **gravé dans la prise**, rien à rejouer au montage. À la fermeture, décor et cadrage d'origine reviennent. Planche chargée en pleine définition (4096 px) avec mipmaps (nette en vue d'ensemble comme en gros plan).

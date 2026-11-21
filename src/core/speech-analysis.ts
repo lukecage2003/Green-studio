@@ -209,11 +209,14 @@ export function analyze(words: Word[], opt: Partial<AnalysisOptions> = {}): Sugg
       push("false_start", i, j - 1, 0.42); break; // le tic lui-même est traité à part
     }
   }
-  // 5. Silences longs : plage = le silence en excès (on garde une pause naturelle de 0,4 s)
+  // 5. Silences longs : plage = le silence en excès. La pause gardée suit la ponctuation, comme un monteur :
+  //    fin de phrase → vraie respiration (×1,8) ; virgule → courte (×1,2) ; milieu de phrase → resserrée (×0,7, un blanc y sonne comme une hésitation).
   for (let i = 0; i + 1 < words.length; i++) {
     const nxt = words[i + 1].pre ?? words[i + 1].start, gap = nxt - words[i].end; // mot recalé : la parole avalée est traitée à part
-    if (gap >= o.longSilence) {
-      const keep = o.keepPause, s = words[i].end + keep / 2, e = nxt - keep / 2;
+    const t = words[i].text.trim(), kind = /[.!?…]["»”)]*$/.test(t) ? 1.8 : /[,;:]["»”)]*$/.test(t) ? 1.2 : 0.7;
+    const keep = o.keepPause * kind, min = Math.max(o.longSilence * (kind > 1.5 ? 1.15 : kind < 1 ? 0.85 : 1), keep + 0.12);
+    if (gap >= min) {
+      const s = words[i].end + keep * 0.55, e = nxt - keep * 0.45; // un peu plus de silence après le mot (la voix retombe) qu'avant le suivant
       out.push({ id: `long_silence-${i}`, type: "long_silence", firstWord: i, lastWord: i + 1, range: { start: s, end: e },
         excerpt: `[silence ${gap.toFixed(1)} s]`, confidence: Math.min(0.95, 0.5 + (gap - o.longSilence) * 0.2) });
     }
