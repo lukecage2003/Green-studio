@@ -1,4 +1,4 @@
-# Green Studio 3.1 — état réel (beta.27)
+# Green Studio 3.1 — état réel (beta.28)
 
 Décor en direct sans fond vert, téléprompteur, profils, et **montage par le texte**. Tout reste sur le téléphone.
 
@@ -45,6 +45,12 @@ Décor en direct sans fond vert, téléprompteur, profils, et **montage par le t
 - **Démarrage rapide** : IA préparée dès l'ouverture de la page, caméra affichée sans attendre l'IA, montage et bibliothèque préchargés.
 - **Micro** : choix mémorisé, puce « 🎙 » en haut (toucher = choisir), micro branché utilisé automatiquement, retour au micro du téléphone s'il est débranché — sans couper l'enregistrement.
 - **Lecture du montage sans pause** : deux lecteurs, l'un déjà calé sur la suite ; vérification image par image (`requestVideoFrameCallback`).
+
+## 3.1.0-beta.28 — planche en décor, détection des cases par IA
+- **La planche devient le décor** (plus de rectangle par-dessus l'image) : vous êtes devant, détouré ; toucher une case → **le décor zoome dessus** en douceur ; toucher à nouveau → page entière ; ‹ › → case suivante / précédente puis page suivante ; une **case large** est parcourue en **panoramique** (zoom sur sa hauteur, glissement de gauche à droite). Le zoom passe par le cadrage du décor (même moteur, web et Android) : il est **gravé dans la prise**, rien à rejouer au montage. À la fermeture, décor et cadrage d'origine reviennent. Planche chargée en pleine définition (4096 px) avec mipmaps (nette en vue d'ensemble comme en gros plan).
+- **Détection des cases par IA sur le téléphone** (`src/core/panelsml.ts`) : détecteur YOLO26-nano, page entière + moitiés haute et basse agrandies, combiné à une détection par segments droits (bordures) qui comble les trous et redécoupe les blocs incertains. Banc d'essai sur 5 vraies planches modernes (Black Panther, Hank Pym, Daredevil, Justice League, Wakanda) : **13 cases trouvées sur 16** (4 sur 16 avec la méthode précédente). Une case non trouvée sous le doigt : zoom sur la zone touchée. Corrections (✎) et analyses mémorisées par planche.
+  - Modèle : [leoxs22/manga-panel-detector-yolo26n](https://huggingface.co/leoxs22/manga-panel-detector-yolo26n) (Leandro Narosky), export ONNX [mednasserallah/manga-panel-detector-yolo26n-onnx](https://huggingface.co/mednasserallah/manga-panel-detector-yolo26n-onnx), licence Apache-2.0 (`public/models/panels-yolo26n-LICENSE`), entraîné sur le jeu de données Manga109-s. Utilisé sans modification.
+- « ✂ Découper en cases » (montage) utilise la même détection.
 
 ## 3.1.0-beta.27 — détection des cases toutes formes
 - **Nouvelle détection des cases** (`src/core/panels.ts`, idées des détecteurs par contours réécrites ici) : fond de page suivi depuis les bords (un ciel blanc ou une bulle **dans** une case ne casse plus la case), ouverture morphologique (les ponts fins à travers une gouttière sont coupés), composantes connexes (cases **penchées, trapèzes, mises en page en tourniquet** sans gouttière traversante), coupe au « col » quand une **bulle déborde sur la gouttière** et relie deux cases, ancienne découpe en secours pour les grandes zones, fond de page clair ou **noir**, ordre de lecture **occidental ou manga**. Le contour réel des cases non rectangulaires est gardé (le toucher choisit la bonne case le long d'une diagonale).

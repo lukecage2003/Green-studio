@@ -1342,8 +1342,8 @@ export async function openEditor(o: EditorOptions) {
       case "revUndo": case "revNext": case "revAgain": case "revStop": reviewAct(a); break;
       case "safe": safeOn = !safeOn; try { localStorage.setItem("gs.safe", safeOn ? "1" : "0"); } catch { /* */ } body.innerHTML = ""; refresh(); drawCC(); break;
       case "ocut": { const ov = overlays.find((x) => x.id === t.closest<HTMLElement>("[data-o]")?.dataset.o), img = ov ? ovSrc.get(ov.src ?? ov.id)?.img : null; if (!ov || !img) break;
-        const { detectPanels, panelTarget } = await import("../core/panels.ts"), k = Math.min(1, 420 / img.width), c = new OffscreenCanvas(Math.max(8, Math.round(img.width * k)), Math.max(8, Math.round(img.height * k))), g = c.getContext("2d")!;
-        g.drawImage(img, 0, 0, c.width, c.height); const pn = detectPanels(g.getImageData(0, 0, c.width, c.height).data, c.width, c.height);
+        const { panelTarget } = await import("../core/panels.ts"), { detectPanelsSmart } = await import("../core/panelsml.ts");
+        toast("Analyse des cases…", 60000); const pn = await detectPanelsSmart(img, img.width, img.height); // IA + bordures
         if (pn.length < 2) { toast("Aucune gouttière trouvée : cette image n’a pas de cases séparées.", 3500); break; }
         delete ov.zoom; ov.path = pn.slice(0, 8).map((p) => panelTarget(p, img.width, img.height, ovAspect(ov)));
         const need = pathDuration(ov.path.length); if (ov.end - ov.start < need) ov.end = Math.min(duration, ov.start + need);

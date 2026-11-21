@@ -492,6 +492,7 @@ public class StudioEngine {
         if (tw != vidW || th != vidH) {
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, tex[4]);
             GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA, tw, th, 0, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, null);
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR); // vidéo : pas de mipmaps (texture réécrite à chaque image)
             vidW = tw; vidH = th; bgW = tw; bgH = th;
         }
         if (fbo == 0) { int[] f = new int[1]; GLES30.glGenFramebuffers(1, f, 0); fbo = f[0]; }
@@ -595,6 +596,9 @@ public class StudioEngine {
     }
     private static void uploadBitmap(int t, Bitmap b) {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, t); GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, b, 0);
+        // décor fixe (planche de comic en 4096 px comprise) : mipmaps → traits fins nets en vue d'ensemble, sans scintillement
+        GLES30.glGenerateMipmap(GLES30.GL_TEXTURE_2D);
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR_MIPMAP_LINEAR);
     }
 
     private void makeWindow(Surface s) {

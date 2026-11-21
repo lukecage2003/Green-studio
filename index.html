@@ -674,6 +674,7 @@ function texFor(id, s) {
   let e = texCache.get(id); if (e) return e;
   const t = tex(3), w = s.videoWidth ?? s.width, h = s.videoHeight ?? s.height;
   if (w && h) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, s);
+  if (w && h && !(s instanceof HTMLVideoElement)) { gl.generateMipmap(gl.TEXTURE_2D); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); } // image fixe : nette en vue d'ensemble
   e = { id, t, w: w || 1, h: h || 1, src: s, video: s instanceof HTMLVideoElement, mean: bgMean(s) }; texCache.set(id, e); return e;
 }
 /** Couleur moyenne d'un décor (image ou image courante d'une vidéo), pour assortir la lumière du visage. */
@@ -1077,8 +1078,8 @@ async function sendBgNative(e) { // image : envoyée une fois en JPEG ; vidéo :
   let d = bgData.get(e.id);
   if (!d) {
     const src = e.src, w = src.videoWidth || src.width, h = src.videoHeight || src.height; if (!w || !h) return;
-    const k = Math.min(1, 1920 / Math.max(w, h)), c = document.createElement("canvas"); c.width = Math.round(w * k); c.height = Math.round(h * k);
-    c.getContext("2d").drawImage(src, 0, 0, c.width, c.height); d = c.toDataURL("image/jpeg", 0.92); if (!(src instanceof HTMLVideoElement)) bgData.set(e.id, d);
+    const big = String(e.id).startsWith("pres-"), k = Math.min(1, (big ? 4096 : 1920) / Math.max(w, h)), c = document.createElement("canvas"); c.width = Math.round(w * k); c.height = Math.round(h * k); // planche : pleine définition (on zoome dedans)
+    c.getContext("2d").drawImage(src, 0, 0, c.width, c.height); d = c.toDataURL("image/jpeg", big ? 0.95 : 0.92); if (!(src instanceof HTMLVideoElement)) bgData.set(e.id, d);
   }
   St.setBackground({ data: d }).catch(() => {});
 }
@@ -1194,14 +1195,34 @@ setInterval(() => { if (!analyser) return; analyser.getFloatTimeDomainData(abuf)
 
 /* ---------- Enregistrement ---------- */
 let rec = null, t0r = 0, recTimer = 0, recMime = "";
-/* Planche de comic présentée en direct (src/ui/presenter.ts) : chargée à la demande. */
+/* Planche de comic présentée en direct (src/ui/presenter.ts) : chargée à la demande. La planche devient le décor ;
+   le présentateur pilote le cadrage du décor (zoom, décalages) — le même que dans les réglages, donc gravé dans la prise. */
 let pres = null;
+const presStage = window.gsPresStage = {
+  saved: null,
+  async show(blob) {
+    for (let k = lib.length - 1; k >= 0; k--) if (String(lib[k].id).startsWith('pres-')) lib.splice(k, 1); // une seule planche à la fois
+    const id = 'pres-' + Date.now(); lib.push({ id, kind: 'img', blob, thumb: await makeThumb(blob, false) }); renderStrip(); await setBg(lib.length - 1);
+    for (let k = 0; k < 200 && !(bgCur && bgCur.w && lib[bi]?.id === id); k++) await new Promise((r) => setTimeout(r, 50));
+    return { w: bgCur?.w || 1, h: bgCur?.h || 1 };
+  },
+  get: () => ({ zoom: S.zoom, px: S.px, py: S.py }),
+  set: (v) => { S.zoom = v.zoom; S.px = v.px; S.py = v.py; },
+  cover: (z, px, py) => cover(bgCur?.w || 1080, bgCur?.h || 1920, z, px, py),
+  begin() { this.saved = { zoom: S.zoom, px: S.px, py: S.py, par: S.par, id: lib[bi]?.id }; S.par = 0; },
+  end() {
+    const sv = this.saved; this.saved = null; if (!sv) return;
+    S.zoom = sv.zoom; S.px = sv.px; S.py = sv.py; S.par = sv.par;
+    for (let k = lib.length - 1; k >= 0; k--) if (String(lib[k].id).startsWith('pres-')) lib.splice(k, 1);
+    renderStrip(); const i = lib.findIndex((x) => x.id === sv.id); setBg(i >= 0 ? i : 0);
+  },
+};
 $("bPage").onclick = () => { if (pres?.open) { pres.close(); return; } $("pageFile").click(); };
 $("pageFile").onchange = async (e) => {
   const files = [...e.target.files]; e.target.value = ""; if (!files.length) return;
   try { const { Presenter } = await import("/src/ui/presenter.ts");
-    pres ??= new Presenter(document.querySelector(".frame"), () => (rec && rec.state === "recording" ? (performance.now() - t0r) / 1000 : null));
-    const n = await pres.load(files); toast(`📖 ${files.length} planche(s) · ${n.join(" + ")} case(s) repérée(s). Touchez une case pour zoomer, ‹ › pour avancer.`, 5000);
+    pres ??= new Presenter(document.querySelector(".frame"), presStage);
+    const n = await pres.load(files, (m) => toast(m, 60000)); toast(`📖 ${files.length} planche(s) en décor · ${n.join(" + ")} case(s) repérée(s). Touchez une case pour zoomer, ‹ › pour avancer, ✎ pour corriger.`, 5000);
   } catch (err) { toast("Planche illisible : " + (err?.message ?? err), 5000); }
 };
 const MIMES = ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
@@ -1536,7 +1557,7 @@ async function srcFor(i) {
   if (it.kind === 'gen') s = genCanvas(it.g);
   else if (it.kind === 'blur') s = genCanvas(['#2c3036', '#4a5058']); // texture de secours (le fond réel est calculé par le GPU)
   else if (it.kind === 'img') {
-    const bmp = await createImageBitmap(it.blob); const k = Math.min(1, 1920 / Math.max(bmp.width, bmp.height));
+    const bmp = await createImageBitmap(it.blob); const k = Math.min(1, (String(it.id).startsWith('pres-') ? 4096 : 1920) / Math.max(bmp.width, bmp.height)); // planche : pleine définition
     const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
     c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height); bmp.close(); s = c;
   } else { const v = document.createElement('video'); v.src = URL.createObjectURL(it.blob); v.loop = true; v.muted = true; v.playsInline = true; await v.play(); v.pause(); s = v; }

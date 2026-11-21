@@ -13,6 +13,9 @@ console.log("MediaPipe", v, "->", dst);
 const MODELS = {
   "selfie_segmenter.tflite": "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite",
   "selfie_multiclass_256x256.tflite": "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite",
+  // détecteur de cases de comics (YOLO26-nano, Apache-2.0, entraîné sur Manga109-s) — version figée ; voir src/core/panelsml.ts
+  "panels-yolo26n-1024.onnx": "https://huggingface.co/mednasserallah/manga-panel-detector-yolo26n-onnx/resolve/f6b7f3cb2bada1ec7d8b16501f9c984890811445/manga_panel_detector_fp32_1024.onnx",
+  "panels-yolo26n-LICENSE": "https://huggingface.co/mednasserallah/manga-panel-detector-yolo26n-onnx/resolve/f6b7f3cb2bada1ec7d8b16501f9c984890811445/LICENSE",
 };
 mkdirSync("public/models", { recursive: true });
 for (const [name, url] of Object.entries(MODELS)) {
