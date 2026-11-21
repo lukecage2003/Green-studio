@@ -5,7 +5,7 @@ const { chromium } = require('playwright'); const assert = require('assert');
 (async () => {
   const b = await chromium.launch({ args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--enable-unsafe-swiftshader'] });
   const ctx = await b.newContext({ viewport: { width: 384, height: 832 } }); const p = await ctx.newPage(); const errs = [];
-  p.on('pageerror', (e) => errs.push(e.message)); p.on('dialog', (d) => d.accept());
+  p.on('pageerror', (e) => { errs.push(e.message); console.log('[erreur page]', e.message); }); p.on('dialog', (d) => d.accept());
   await ctx.addInitScript(() => { localStorage.setItem('gs.q', 'fast'); localStorage.setItem('gs.cd', '0'); localStorage.setItem('gs.onb', '1');
     const f = MediaRecorder.isTypeSupported; MediaRecorder.isTypeSupported = (m) => !m.startsWith('video/mp4') && f.call(MediaRecorder, m); });
   await p.goto('http://localhost:5173/'); await p.click('#go'); await p.waitForSelector('#rec:not([hidden])', { timeout: 30000 });
@@ -22,13 +22,17 @@ const { chromium } = require('playwright'); const assert = require('assert');
   const fb = await (await p.$('.prestap')).boundingBox(), view = () => p.evaluate(() => window.gsPresStage.get());
   // vue d'ensemble : la page remplit l'écran (recadrée sur les côtés) ; case bleue : x ≈ 0,26 de la page → 0,22 de l'écran
   const [sx1, , ox] = await p.evaluate(() => window.gsPresStage.cover(1, 0, 0)), fx = (0.2625 - ox) / sx1;
-  await p.mouse.click(fb.x + fb.width * fx, fb.y + fb.height * 0.52); await p.waitForTimeout(900);
+  await p.mouse.click(fb.x + fb.width * fx, fb.y + fb.height * 0.52); await p.waitForTimeout(1600);
   let v = await view(); console.log('zoom sur la case bleue :', JSON.stringify(v), await p.textContent('.presbar [data-p=n]'));
   assert.ok(v.zoom > 1.8 && v.px < -0.3, 'le décor zoome sur la case bleue (à gauche)'); assert.match(await p.textContent('.presbar [data-p=n]'), /Case 2\/4/);
   const [bsx, bsy, box, boy] = await p.evaluate((v) => window.gsPresStage.cover(v.zoom, v.px, v.py), v);
   assert.ok(box < 0.06 && box + bsx > 0.46 && boy < 0.37 && boy + bsy > 0.66, 'toute la case bleue est visible');
-  await p.mouse.click(fb.x + fb.width * 0.5, fb.y + fb.height * 0.5); await p.waitForTimeout(900); v = await view(); assert.ok(Math.abs(v.zoom - 1) < 0.01, 'retour à la page entière');
-  await p.click('.presbar [data-p=next]'); await p.waitForTimeout(900); v = await view(); assert.ok(v.zoom > 1.2 && v.py < -0.5, 'case 1 (en haut)'); const px0 = v.px; await p.waitForTimeout(2500); v = await view(); console.log('panoramique :', px0.toFixed(2), '→', v.px.toFixed(2)); assert.ok(v.px > px0 + 0.3, 'case large : panoramique de gauche à droite'); assert.match(await p.textContent('.presbar [data-p=n]'), /Case 1\/4/);
+  await p.mouse.click(fb.x + fb.width * 0.5, fb.y + fb.height * 0.5); for (let k = 0; k < 8; k++) { await p.waitForTimeout(200); console.log('t+' + (k + 1) * 200, JSON.stringify(await view())); } v = await view(); console.log('après appui :', JSON.stringify(v), await p.textContent('.presbar [data-p=n]')); assert.ok(Math.abs(v.zoom - 1) < 0.01, 'retour à la page entière');
+  // double appui : zoom à l'endroit touché (ici entre deux cases), simple appui ensuite → page entière
+  await p.mouse.dblclick(fb.x + fb.width * 0.5, fb.y + fb.height * 0.3); await p.waitForTimeout(1600); v = await view(); console.log('double appui :', JSON.stringify(v), await p.textContent('.presbar [data-p=n]'));
+  assert.ok(v.zoom >= 2.4, 'zoom libre'); assert.match(await p.textContent('.presbar [data-p=n]'), /^Zoom/);
+  await p.mouse.click(fb.x + fb.width * 0.5, fb.y + fb.height * 0.5); await p.waitForTimeout(1600); v = await view(); assert.ok(Math.abs(v.zoom - 1) < 0.01, 'retour à la page entière après le zoom libre');
+  await p.click('.presbar [data-p=next]'); await p.waitForTimeout(1600); v = await view(); assert.ok(v.zoom > 1.2 && v.py < -0.5, 'case 1 (en haut)'); const px0 = v.px; await p.waitForTimeout(2500); v = await view(); console.log('panoramique :', px0.toFixed(2), '→', v.px.toFixed(2)); assert.ok(v.px > px0 + 0.3, 'case large : panoramique de gauche à droite'); assert.match(await p.textContent('.presbar [data-p=n]'), /Case 1\/4/);
   // prise : le zoom est dans la vidéo (décor), rien n'est laissé à rejouer au montage
   await p.click('#rec'); await p.waitForSelector('#recChip:not([hidden])', { timeout: 20000 }); await p.waitForTimeout(1500); await p.click('.presbar [data-p=next]'); await p.waitForTimeout(1500); await p.click('#rec');
   await p.waitForSelector('#pv:not([hidden])', { timeout: 90000 }); /* finalisation de la prise : lente sur une machine de test chargée */

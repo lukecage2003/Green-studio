@@ -5,7 +5,7 @@
  * Cases : IA sur le téléphone + bordures (panelsml.ts), corrigeables (✎).
  */
 import { readingOrder, type Panel } from "../core/panels.ts";
-import { detectPanelsSmart, warmPanels } from "../core/panelsml.ts";
+import { detectPageSmart, warmPanels } from "../core/panelsml.ts";
 import { zoomEase, type ZoomTarget } from "../core/overlay.ts";
 
 /** Ce que l'écran de tournage met à disposition : le décor et ses réglages de cadrage (zoom, décalages). */
@@ -34,7 +34,8 @@ const CSS = `
 
 export class Presenter {
   private tapEl: HTMLDivElement; private cv: HTMLCanvasElement; private bar: HTMLDivElement; private hint: HTMLDivElement;
-  private files: File[] = []; private keys: string[] = []; private sizes: { w: number; h: number }[] = []; private panels: Panel[][] = [];
+  private files: File[] = []; private keys: string[] = []; private sizes: { w: number; h: number }[] = []; private panels: Panel[][] = []; private bubbles: Panel[][] = [];
+  private lastTap = { t: 0, x: 0, y: 0 }; private prevView: { v: View; panel: number } | null = null;
   private page = 0; private panel = -1; private from: View = WHOLE; private to: View = WHOLE; private t0 = 0; private raf = 0;
   private editing = false; private down: { x: number; y: number } | null = null; private shownAt = 0; private active = false; private recording = false;
   private rtl = (() => { try { return localStorage.getItem("gs.manga") === "1"; } catch { return false; } })();
@@ -58,14 +59,14 @@ export class Presenter {
   /** Charge une ou plusieurs planches : la première devient le décor, les cases sont repérées (IA + bordures). */
   async load(files: File[], onStatus?: (s: string) => void) {
     if (!this.active) this.stage.begin();
-    this.files = files; this.sizes = []; this.panels = [];
+    this.files = files; this.sizes = []; this.panels = []; this.bubbles = [];
     for (const [i, f] of files.entries()) {
       onStatus?.(`Analyse des cases… ${i + 1}/${files.length}`);
       const bmp = await createImageBitmap(f); this.sizes.push({ w: bmp.width, h: bmp.height });
-      const key = `gs.cases.${f.name}.${f.size}.${f.lastModified}`; let ps: Panel[] | null = null; // planche déjà analysée (ou corrigée) : immédiat
-      try { ps = JSON.parse(localStorage.getItem(key) ?? "null"); } catch { /* */ }
-      if (!ps) { ps = await detectPanelsSmart(bmp, bmp.width, bmp.height, { rtl: this.rtl }); try { localStorage.setItem(key, JSON.stringify(ps)); } catch { /* */ } }
-      this.keys[i] = key; this.panels.push(readingOrder(ps, this.rtl)); bmp.close();
+      const key = `gs.cases2.${f.name}.${f.size}.${f.lastModified}`; let d: { panels: Panel[]; bubbles: Panel[] } | null = null; // planche déjà analysée (ou corrigée) : immédiat
+      try { d = JSON.parse(localStorage.getItem(key) ?? "null"); } catch { /* */ }
+      if (!d) { d = await detectPageSmart(bmp, bmp.width, bmp.height, { rtl: this.rtl }); try { localStorage.setItem(key, JSON.stringify(d)); } catch { /* */ } }
+      this.keys[i] = key; this.panels.push(readingOrder(d.panels, this.rtl)); this.bubbles.push(d.bubbles ?? []); bmp.close();
     }
     this.active = true; this.tapEl.hidden = false; this.bar.hidden = false;
     await this.showPage(0);
@@ -82,7 +83,7 @@ export class Presenter {
   private async showPage(i: number) {
     this.page = i; this.panel = -1; await this.stage.show(this.files[i]);
     this.from = this.to = WHOLE; this.stage.set(WHOLE); this.t0 = performance.now(); this.shownAt = performance.now();
-    this.hint.textContent = "Touchez une case pour zoomer"; this.hint.style.opacity = "1"; this.label(); this.loop();
+    this.hint.textContent = "Touchez une case pour zoomer · deux fois pour zoomer où vous voulez"; this.hint.style.opacity = "1"; this.label(); this.loop();
   }
   /** Cadrage du décor qui montre toute la case (marge de 8 %). */
   private viewFor(p: Panel): View {
@@ -103,22 +104,38 @@ export class Presenter {
     return { zoom: this.from.zoom + (to.zoom - this.from.zoom) * k, px, py: this.from.py + (to.py - this.from.py) * k };
   }
   /** Point de l'écran → point de la page (fractions), avec le cadrage actuel. */
-  private toPage(cx: number, cy: number) { const r = this.tapEl.getBoundingClientRect(), v = this.cur(), [sx, sy, ox, oy] = this.stage.cover(v.zoom, v.px, v.py); return [ox + ((cx - r.left) / r.width) * sx, oy + ((cy - r.top) / r.height) * sy]; }
+  private toPage(cx: number, cy: number, v: View = this.cur()) { const r = this.tapEl.getBoundingClientRect(), [sx, sy, ox, oy] = this.stage.cover(v.zoom, v.px, v.py); return [ox + ((cx - r.left) / r.width) * sx, oy + ((cy - r.top) / r.height) * sy]; }
   private go(panel: number) {
     this.from = this.cur(); this.panel = panel; this.to = panel >= 0 ? this.viewFor(this.panels[this.page][panel]) : WHOLE; this.t0 = performance.now();
     this.hint.style.opacity = "0"; this.label(); this.loop();
   }
+  /** Appui : simple → case (ou retour à la page) ; double → zoom à l'endroit touché (ou sur la bulle touchée). */
   private tap(e: PointerEvent) {
     const d = this.down; this.down = null; if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 14) return; // glissé : ignoré
-    if (this.panel >= 0) return this.go(-1);
+    const now = performance.now(), dbl = now - this.lastTap.t < 320 && Math.hypot(e.clientX - this.lastTap.x, e.clientY - this.lastTap.y) < 48;
+    // le simple appui agit tout de suite ; un second appui rapproché prend le relais (zoom à l'endroit touché), sans saut
+    if (dbl) { this.lastTap.t = 0; const base = this.prevView?.v; if (this.prevView) this.panel = this.prevView.panel; this.zoomAt(e.clientX, e.clientY, base); return; }
+    this.lastTap = { t: now, x: e.clientX, y: e.clientY }; this.prevView = { v: this.cur(), panel: this.panel };
+    this.single(e.clientX, e.clientY);
+  }
+  /** Double appui : zoom sur la bulle touchée, sinon ×2,5 centré sur le point touché ; encore une fois au même endroit → plus près. */
+  private zoomAt(cx: number, cy: number, base: View = this.cur()) {
+    const [x, y] = this.toPage(cx, cy, base), b = (this.bubbles[this.page] ?? []).find((q) => x >= q.x && x <= q.x + q.w && y >= q.y && y <= q.y + q.h);
+    if (b && this.panel !== -2) { const m = 0.35; this.from = this.cur(); this.panel = -2; this.to = this.viewFor({ x: b.x - b.w * m, y: b.y - b.h * m, w: b.w * (1 + 2 * m), h: b.h * (1 + 2 * m) }); this.to.pan = undefined; this.t0 = performance.now(); this.hint.style.opacity = "0"; this.label(); this.loop(); return; }
+    const v = this.cur(), [sx1, sy1] = this.stage.cover(1, 0, 0), zoom = Math.max(2.5, Math.min(6, base.zoom * 2)), sx = sx1 / zoom, sy = sy1 / zoom;
+    const off = (c: number, s2: number) => (s2 >= 1 ? 0 : (2 * Math.max(0, Math.min(1 - s2, c - s2 / 2))) / (1 - s2) - 1);
+    this.from = v; this.panel = -2; this.to = { zoom, px: off(x, sx), py: off(y, sy) }; this.t0 = performance.now(); this.hint.style.opacity = "0"; this.label(); this.loop();
+  }
+  private single(cx: number, cy: number) {
+    if (this.panel !== -1) return this.go(-1);
+    const e = { clientX: cx, clientY: cy };
     const [x, y] = this.toPage(e.clientX, e.clientY), list = this.panels[this.page] ?? [];
-    let i = list.findIndex((p) => x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h);
-    if (i < 0) { // aucune case sous le doigt : zoom sur la zone touchée
-      list.push({ x: Math.max(0, x - 0.2), y: Math.max(0, y - 0.12), w: 0.4, h: 0.24 }); i = list.length - 1; }
+    const i = list.findIndex((p) => x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h);
+    if (i < 0) return this.zoomAt(cx, cy); // aucune case sous le doigt : zoom à l'endroit touché
     this.go(i);
   }
   private step(d: number) {
-    const n = this.panels[this.page]?.length ?? 0, p = this.panel + d;
+    const n = this.panels[this.page]?.length ?? 0, p = Math.max(-1, this.panel) + d;
     if (p >= 0 && p < n) return this.go(p);
     const np = this.page + d; if (np < 0 || np >= this.files.length) { if (this.panel >= 0) this.go(-1); return; }
     void this.showPage(np);
@@ -127,16 +144,16 @@ export class Presenter {
     this.editing = on; if (on && this.panel >= 0) this.go(-1);
     const b = this.bar.querySelector<HTMLElement>("[data-p=edit]")!; b.textContent = on ? "✓" : "✎"; b.setAttribute("aria-label", on ? "Terminer" : "Revoir les cases");
     let m = this.bar.querySelector<HTMLElement>("[data-p=manga]"); if (on && !m) { m = document.createElement("button"); m.dataset.p = "manga"; m.textContent = "⇄"; m.setAttribute("aria-label", "Sens de lecture manga"); this.bar.insertBefore(m, b); } else if (!on) m?.remove();
-    this.hint.textContent = on ? "Touchez une case pour la retirer · glissez pour en dessiner une" : "Touchez une case pour zoomer"; this.hint.style.opacity = on ? "1" : "0"; this.label(); this.loop();
+    this.hint.textContent = on ? "Touchez une case pour la retirer · glissez pour en dessiner une (bulles en bleu)" : "Touchez une case pour zoomer · deux fois pour zoomer où vous voulez"; this.hint.style.opacity = on ? "1" : "0"; this.label(); this.loop();
   }
   private editTap(e: PointerEvent) {
     const [x1, y1] = this.toPage(e.clientX, e.clientY), d = this.down; this.down = null; const list = this.panels[this.page];
     if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 14) { const [x0, y0] = this.toPage(d.x, d.y), p = { x: Math.max(0, Math.min(x0, x1)), y: Math.max(0, Math.min(y0, y1)), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) }; if (p.w > 0.04 && p.h > 0.03) list.push(p); }
     else { const i = list.findIndex((p) => x1 >= p.x && x1 <= p.x + p.w && y1 >= p.y && y1 <= p.y + p.h); if (i >= 0) list.splice(i, 1); }
     this.panels[this.page] = readingOrder(list, this.rtl); this.label();
-    try { localStorage.setItem(this.keys[this.page], JSON.stringify(this.panels[this.page])); } catch { /* */ } // correction mémorisée
+    try { localStorage.setItem(this.keys[this.page], JSON.stringify({ panels: this.panels[this.page], bubbles: this.bubbles[this.page] })); } catch { /* */ } // correction mémorisée
   }
-  private label() { (this.bar.querySelector("[data-p=n]") as HTMLElement).textContent = this.editing ? `${this.panels[this.page]?.length ?? 0} case(s)${this.rtl ? " · manga" : ""}` : `${this.panel >= 0 ? `Case ${this.panel + 1}/${this.panels[this.page]?.length ?? 0}` : "Page"} · ${this.page + 1}/${this.files.length}`; }
+  private label() { (this.bar.querySelector("[data-p=n]") as HTMLElement).textContent = this.editing ? `${this.panels[this.page]?.length ?? 0} case(s)${this.rtl ? " · manga" : ""}` : `${this.panel >= 0 ? `Case ${this.panel + 1}/${this.panels[this.page]?.length ?? 0}` : this.panel === -2 ? "Zoom" : "Page"} · ${this.page + 1}/${this.files.length}`; }
   /** Boucle : cadrage animé du décor, et contours numérotés (correction, ou 3 s à l'ouverture d'une page, jamais pendant une prise). */
   private loop() {
     cancelAnimationFrame(this.raf);
@@ -156,6 +173,9 @@ export class Presenter {
   private outlines(g: CanvasRenderingContext2D, W: number, H: number, v: View, alpha: number) {
     const [sx, sy, ox, oy] = this.stage.cover(v.zoom, v.px, v.py), X = (x: number) => ((x - ox) / sx) * W, Y = (y: number) => ((y - oy) / sy) * H;
     g.save(); g.globalAlpha = alpha; g.lineWidth = Math.max(2, W * 0.006); g.strokeStyle = "#ffd60a"; g.font = `800 ${Math.round(W * 0.05)}px system-ui`; g.textAlign = "center"; g.textBaseline = "middle";
+    g.save(); g.setLineDash([W * 0.012, W * 0.01]); g.strokeStyle = "rgba(100,210,255,.95)"; g.lineWidth = Math.max(1.5, W * 0.004); // bulles et cartouches : pointillés bleus (ce ne sont pas des cases)
+    for (const b of this.bubbles[this.page] ?? []) { g.beginPath(); (g as any).roundRect ? (g as any).roundRect(X(b.x), Y(b.y), X(b.x + b.w) - X(b.x), Y(b.y + b.h) - Y(b.y), W * 0.02) : g.rect(X(b.x), Y(b.y), X(b.x + b.w) - X(b.x), Y(b.y + b.h) - Y(b.y)); g.stroke(); }
+    g.restore();
     (this.panels[this.page] ?? []).forEach((p, i) => {
       g.beginPath(); g.rect(X(p.x), Y(p.y), X(p.x + p.w) - X(p.x), Y(p.y + p.h) - Y(p.y)); g.fillStyle = "rgba(255,214,10,.1)"; g.fill(); g.stroke();
       const cx = X(p.x + p.w / 2), cy = Y(p.y + p.h / 2), rr = W * 0.045; g.fillStyle = "#ffd60a"; g.beginPath(); g.arc(cx, cy, rr, 0, 7); g.fill(); g.fillStyle = "#000"; g.fillText(String(i + 1), cx, cy + 1);
